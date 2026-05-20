@@ -1187,6 +1187,7 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - UDP demo 能验证 `DEMO_TRANSPORT_V1` envelope 的 session/stream 映射层
 - UDP demo 能验证 intentional loss、reorder、delay、receiver NACK、server retransmission、server -> sender uplink TWCC、RTCP SR/RR RTT、server -> sender rate cap、receiver Annex-B AU 输出
 - `run_udp_netem_matrix.sh` 能多轮验证 baseline/drop、reorder、delay、reorder+delay 场景，并硬校验 NACK、重传、RR、rate cap、PLI 转发、IDR resend、最终帧数
+- `run_udp_netem_matrix.sh` 能输出 `${LOG_DIR}/metrics.jsonl` 和 `${LOG_DIR}/summary.json`，并按阈值校验恢复帧数、RTT、最终码率、NACK/重传成功率、观测丢包、上报丢包和 jitter
 - `run_udp_soak.sh` 能按时长重复执行弱网矩阵，并统计 pass/fail，作为接入业务传输前的长稳入口
 - `verify_role_linking.sh` 能证明 push/server/play/transport 四种角色可按需链接小库，不依赖一个巨大 `libwebrtc.a`
 - `verify_cmake_package.sh` 能证明外部工程通过 `find_package(WebRtcQosSdk CONFIG REQUIRED)` 链接 `role_transport / role_server / role_push / role_play / role_prototype`
@@ -1268,6 +1269,7 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - UDP demo 已覆盖 intentional packet loss、receiver NACK、server retransmission、uplink TWCC、WebRTC-backed video jitter output
 - UDP demo 已覆盖 `PLI -> server forward -> sender IDR resend -> receiver keyframe output`
 - UDP 弱网矩阵已支持 baseline/drop、reorder、delay、reorder+delay 多轮验证
+- UDP 弱网矩阵已支持 JSONL/summary 指标输出和阈值验收
 - UDP soak 脚本已支持按时长重复执行弱网矩阵并汇总 pass/fail
 - WebRTC-backed video jitter bridge 已处理重传包先到、原包后到导致的重复帧去重
 - synthetic/file 风格 loopback demo
@@ -1316,6 +1318,13 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 ```
 
 `verify_cmake_package.sh` 覆盖模块级 target、可选 WebRTC adapter/bridge imported target，以及 `role_transport / role_server / role_push / role_play / role_prototype` 角色级 target。
+
+弱网指标输出：
+
+- `${LOG_DIR}/metrics.jsonl`：每个 scenario/run 一行 JSON 指标
+- `${LOG_DIR}/summary.json`：矩阵级聚合指标
+- 当前覆盖指标：恢复帧数、sender RTT、最终目标码率、NACK 次数、重传次数、重传成功率、观测丢包率、上报 loss_q8、jitter frames、rate cap 是否生效
+- 当前阈值失败会导致矩阵脚本直接失败，不再只依赖人工读日志
 
 Phase-1a SDK 交付状态：
 

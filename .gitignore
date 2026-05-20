@@ -3,4 +3,5 @@ build_*/
 *.o
 *.a
 *.log
+__pycache__/
 compile_commands.json

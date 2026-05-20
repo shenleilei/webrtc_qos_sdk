@@ -203,6 +203,11 @@ RUNS=3 bash webrtc_qos_sdk/scripts/run_udp_netem_matrix.sh
 ```
 
 This runs baseline/drop, reorder, delay, and reorder+delay scenarios repeatedly and checks TWCC, RTCP RR, NACK, retransmission, PLI forwarding, IDR resend, sender rate cap, and recovered frame count from the logs.
+It also writes machine-readable metrics:
+
+- `${LOG_DIR}/metrics.jsonl`: one JSON object per scenario run.
+- `${LOG_DIR}/summary.json`: aggregate min/max/avg values for frames, RTT, final bitrate, retransmission success ratio, observed loss, reported loss, and jitter.
+- Threshold failures include missing feedback/RR/rate-cap/PLI/NACK/retransmission, insufficient recovered frames, missing reorder/delay observation, and failed rate-cap application.
 
 UDP soak entry:
 
