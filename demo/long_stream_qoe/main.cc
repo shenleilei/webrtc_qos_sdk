@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstdint>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -8,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "webrtc_qos/ffmpeg_h264_decoder.h"
@@ -46,6 +48,9 @@ struct PhaseMetrics {
   uint32_t keyframes = 0;
   uint32_t decoded_frames = 0;
   uint32_t decode_errors = 0;
+  uint32_t quality_samples = 0;
+  double psnr_min = std::numeric_limits<double>::infinity();
+  double psnr_sum = 0.0;
   uint32_t network_drops = 0;
   uint64_t sent_bytes = 0;
   uint32_t adaptation_samples = 0;
@@ -80,9 +85,20 @@ struct Summary {
   uint32_t receiver_frames = 0;
   uint32_t decoded_frames = 0;
   uint32_t decode_errors = 0;
+  uint32_t quality_samples = 0;
+  double psnr_min = std::numeric_limits<double>::infinity();
+  double psnr_sum = 0.0;
   uint32_t keyframes = 0;
   uint32_t probe_packets = 0;
   uint64_t sent_bytes = 0;
+};
+
+struct I420Frame {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  std::vector<uint8_t> y;
+  std::vector<uint8_t> u;
+  std::vector<uint8_t> v;
 };
 
 bool IsSupportedScenario(const std::string& scenario) {
@@ -234,6 +250,49 @@ void FillI420Frame(uint32_t width,
             static_cast<uint8_t>(150 - (frame_index % 8)));
 }
 
+double ComputePlaneSse(const uint8_t* reference,
+                       const uint8_t* decoded,
+                       size_t size) {
+  double sse = 0.0;
+  for (size_t i = 0; i < size; ++i) {
+    const int diff = static_cast<int>(reference[i]) - static_cast<int>(decoded[i]);
+    sse += static_cast<double>(diff * diff);
+  }
+  return sse;
+}
+
+double ComputeI420Psnr(const I420Frame& reference,
+                       const webrtc_qos::DecodedVideoFrame& decoded) {
+  if (reference.width != decoded.width || reference.height != decoded.height ||
+      reference.y.empty() || reference.u.empty() || reference.v.empty() ||
+      decoded.y_plane.empty() || decoded.u_plane.empty() ||
+      decoded.v_plane.empty()) {
+    return 0.0;
+  }
+  const size_t y_size = static_cast<size_t>(reference.width) * reference.height;
+  const size_t uv_size = static_cast<size_t>(reference.width / 2) *
+                         (reference.height / 2);
+  if (reference.y.size() != y_size || reference.u.size() != uv_size ||
+      reference.v.size() != uv_size || decoded.y_plane.size() != y_size ||
+      decoded.u_plane.size() != uv_size || decoded.v_plane.size() != uv_size) {
+    return 0.0;
+  }
+  const double sse =
+      ComputePlaneSse(reference.y.data(), decoded.y_plane.data(), y_size) +
+      ComputePlaneSse(reference.u.data(), decoded.u_plane.data(), uv_size) +
+      ComputePlaneSse(reference.v.data(), decoded.v_plane.data(), uv_size);
+  const double samples = static_cast<double>(y_size + 2 * uv_size);
+  if (sse <= 0.0) {
+    return 99.0;
+  }
+  const double mse = sse / samples;
+  return 10.0 * std::log10((255.0 * 255.0) / mse);
+}
+
+double AveragePsnr(double sum, uint32_t samples) {
+  return samples > 0 ? sum / static_cast<double>(samples) : 0.0;
+}
+
 void WriteSummary(const std::string& path,
                   const Summary& summary,
                   const std::vector<PhaseMetrics>& phases) {
@@ -256,6 +315,11 @@ void WriteSummary(const std::string& path,
   out << "  \"receiver_frames\": " << summary.receiver_frames << ",\n";
   out << "  \"decoded_frames\": " << summary.decoded_frames << ",\n";
   out << "  \"decode_errors\": " << summary.decode_errors << ",\n";
+  out << "  \"quality_samples\": " << summary.quality_samples << ",\n";
+  out << "  \"psnr_min\": "
+      << (summary.quality_samples > 0 ? summary.psnr_min : 0.0) << ",\n";
+  out << "  \"psnr_avg\": "
+      << AveragePsnr(summary.psnr_sum, summary.quality_samples) << ",\n";
   out << "  \"keyframes\": " << summary.keyframes << ",\n";
   out << "  \"probe_packets\": " << summary.probe_packets << ",\n";
   out << "  \"sent_bytes\": " << summary.sent_bytes << ",\n";
@@ -288,6 +352,11 @@ void WriteSummary(const std::string& path,
         << "\"receiver_frames\": " << phase.receiver_frames << ", "
         << "\"decoded_frames\": " << phase.decoded_frames << ", "
         << "\"decode_errors\": " << phase.decode_errors << ", "
+        << "\"quality_samples\": " << phase.quality_samples << ", "
+        << "\"psnr_min\": "
+        << (phase.quality_samples > 0 ? phase.psnr_min : 0.0) << ", "
+        << "\"psnr_avg\": "
+        << AveragePsnr(phase.psnr_sum, phase.quality_samples) << ", "
         << "\"keyframes\": " << phase.keyframes << ", "
         << "\"network_drops\": " << phase.network_drops << ", "
         << "\"encode_fps\": " << encode_fps << ", "
@@ -423,6 +492,7 @@ int main(int argc, char** argv) {
   int64_t link_available_us = 0;
   int64_t last_keyframe_encode_us = -10000000;
   std::set<uint32_t> rendered_timestamps;
+  std::unordered_map<uint32_t, I420Frame> source_frames;
 
   auto schedule_downlink = [&](const RtpPacket& packet,
                                int64_t send_time_us,
@@ -585,6 +655,22 @@ int main(int argc, char** argv) {
     phase_metrics[phase_index].decoded_frames +=
         static_cast<uint32_t>(decoded_frames.size());
     summary.decoded_frames += static_cast<uint32_t>(decoded_frames.size());
+    auto source_it = source_frames.find(frame.rtp_timestamp);
+    if (source_it != source_frames.end()) {
+      for (const DecodedVideoFrame& decoded_frame : decoded_frames) {
+        const double psnr = ComputeI420Psnr(source_it->second, decoded_frame);
+        if (psnr > 0.0) {
+          ++phase_metrics[phase_index].quality_samples;
+          phase_metrics[phase_index].psnr_sum += psnr;
+          phase_metrics[phase_index].psnr_min =
+              std::min(phase_metrics[phase_index].psnr_min, psnr);
+          ++summary.quality_samples;
+          summary.psnr_sum += psnr;
+          summary.psnr_min = std::min(summary.psnr_min, psnr);
+        }
+      }
+      source_frames.erase(source_it);
+    }
     ++phase_metrics[phase_index].receiver_frames;
     ++summary.receiver_frames;
     if (frame.keyframe) {
@@ -798,8 +884,18 @@ int main(int argc, char** argv) {
     }
 
     while (now_us >= next_encode_us) {
+      const uint32_t rtp_timestamp =
+          kVideoClockRateHz + static_cast<uint32_t>(frame_index) *
+                                  (kVideoClockRateHz / 30);
       FillI420Frame(encoder_config.width, encoder_config.height, frame_index,
                     &y, &u, &v);
+      I420Frame source_frame;
+      source_frame.width = encoder_config.width;
+      source_frame.height = encoder_config.height;
+      source_frame.y = y;
+      source_frame.u = u;
+      source_frame.v = v;
+      source_frames[rtp_timestamp] = std::move(source_frame);
       const bool keyframe_needed = force_keyframe_next ||
                                    adaptation.request_keyframe ||
                                    frame_index == 0;
@@ -911,6 +1007,8 @@ int main(int argc, char** argv) {
     ok &= Expect(summary.decode_errors == 0, "decode errors == 0");
     ok &= Expect(summary.decoded_frames >= summary.receiver_frames,
                  "decoded frames >= receiver frames");
+    ok &= Expect(summary.quality_samples >= summary.receiver_frames,
+                 "quality samples >= receiver frames");
   }
   summary.ok = ok;
 
@@ -929,6 +1027,11 @@ int main(int argc, char** argv) {
             << " receiver_frames=" << summary.receiver_frames
             << " decoded_frames=" << summary.decoded_frames
             << " decode_errors=" << summary.decode_errors
+            << " quality_samples=" << summary.quality_samples
+            << " psnr_avg=" << AveragePsnr(summary.psnr_sum,
+                                           summary.quality_samples)
+            << " psnr_min="
+            << (summary.quality_samples > 0 ? summary.psnr_min : 0.0)
             << " keyframes=" << summary.keyframes
             << " probe_packets=" << summary.probe_packets
             << " sent_bytes=" << summary.sent_bytes << "\n";
@@ -950,6 +1053,11 @@ int main(int argc, char** argv) {
               << " receiver_frames=" << phase.receiver_frames
               << " decoded_frames=" << phase.decoded_frames
               << " decode_errors=" << phase.decode_errors
+              << " quality_samples=" << phase.quality_samples
+              << " psnr_avg=" << AveragePsnr(phase.psnr_sum,
+                                             phase.quality_samples)
+              << " psnr_min="
+              << (phase.quality_samples > 0 ? phase.psnr_min : 0.0)
               << " keyframes=" << phase.keyframes
               << " network_drops=" << phase.network_drops
               << " target_bps_min="

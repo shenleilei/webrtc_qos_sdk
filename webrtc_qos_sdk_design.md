@@ -1229,8 +1229,9 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `ffmpeg_encoder_demo` 在存在 FFmpeg/libx264 时必须跑通真实 I420 -> H264 Annex-B -> `VideoSender` -> `SenderPacer` 链路
 - `long_stream_qoe_demo` 在存在 FFmpeg/libx264 时必须跑通真实 H264 长流：`VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer`
 - `run_long_stream_qoe_matrix.sh` 必须比较 `adaptive / balanced / bitrate_only / fixed` 四类策略，并输出 smoothness-only 与 balanced-QoE 两套目标函数结果
-- `run_long_stream_qoe_matrix.sh` 在存在 FFmpeg/libavcodec 时必须真实解码每个 receiver Annex-B AU，`decode_errors` 和 `decoded_frames` 必须进入 QoE 分数
-- WebRTC backend 可用时，长流矩阵必须硬性验证：`webrtc/adaptive` 每个场景 `decode_errors=0`，满足弱网降档和好网恢复阈值，每个场景都是 best balanced-QoE，且 aggregate best balanced-QoE 也是 `webrtc/adaptive`
+- `run_long_stream_qoe_matrix.sh` 在存在 FFmpeg/libavcodec/libswscale 时必须真实解码每个 receiver Annex-B AU，输出 I420，并按 RTP timestamp 与源 I420 帧对齐计算 PSNR
+- `decode_errors`、`decoded_frames`、`quality_samples`、`psnr_avg`、`psnr_min` 必须进入 QoE 分数
+- WebRTC backend 可用时，长流矩阵必须硬性验证：`webrtc/adaptive` 每个场景 `decode_errors=0`、每个 receiver frame 都有 source-aligned quality sample、`psnr_avg >= 20.0dB`、`psnr_min >= 14.0dB`，满足弱网降档和好网恢复阈值，每个场景都是 best balanced-QoE，且 aggregate best balanced-QoE 也是 `webrtc/adaptive`
 - `bitrate_only / fixed` 等负面对照策略允许单 case 阈值失败，但脚本必须继续采集 summary 并纳入统一评分，不能因为第一个失败对照中断矩阵
 - 长流 QoE 结论必须限定在预定义场景、候选策略集合和目标函数内，不能宣称全局最优
 
@@ -1326,8 +1327,8 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `run_dynamic_qos_matrix.sh` 已支持 JSONL/summary 指标输出和阈值验收，覆盖弱网降档、恢复升档、关键帧请求
 - `ffmpeg_encoder_demo` 已支持真实 FFmpeg/libx264 I420 -> H264 Annex-B 编码，并将输出接入 `VideoSender + SenderPacer`
 - `long_stream_qoe_demo` 已支持真实 FFmpeg/libx264 H264 长流穿过 `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer`
-- `libwebrtc_qos_ffmpeg_decoder.a` 已支持真实 FFmpeg/libavcodec H264 decode，长流 QoE 矩阵只有解码成功的 receiver Annex-B AU 才计入 receiver frame
-- `run_long_stream_qoe_matrix.sh` 已支持 `adaptive / balanced / bitrate_only / fixed` 策略对比，并输出 smoothness-only 与包含 decode-error 惩罚的 balanced-QoE 两套分数
+- `libwebrtc_qos_ffmpeg_decoder.a` 已支持真实 FFmpeg/libavcodec H264 decode，并输出 I420 平面供 QoE 验证计算 PSNR
+- `run_long_stream_qoe_matrix.sh` 已支持 `adaptive / balanced / bitrate_only / fixed` 策略对比，并输出 smoothness-only 与包含 decode-error/PSNR 惩罚的 balanced-QoE 两套分数
 - UDP soak 脚本已支持按时长重复执行弱网矩阵并汇总 pass/fail
 - WebRTC-backed video jitter bridge 已处理重传包先到、原包后到导致的重复帧去重
 - synthetic/file 风格 loopback demo
@@ -1416,42 +1417,44 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 - `webrtc`：WebRTC GoogCC bridge + WebRTC H264 video jitter bridge，仍保留 SDK pacer/NACK/server recovery
 - 候选策略：`adaptive`、`balanced`、`bitrate_only`、`fixed`
 - `smoothness_score`：只优化连续性，包含 freeze count、max freeze、network drops、弱网期 receiver FPS、恢复期 receiver FPS
-- `balanced_qoe_score`：在 `smoothness_score` 基础上强惩罚 duplicate frames、network drops、弱网不降码率/FPS、好网不恢复码率/FPS，避免“重复帧不卡顿”或“不自适应但看起来平滑”被误判成高质量
+- `balanced_qoe_score`：在 `smoothness_score` 基础上强惩罚 duplicate frames、network drops、弱网不降码率/FPS、好网不恢复码率/FPS、decode errors、decoded-frame gaps、低 PSNR，避免“重复帧不卡顿”“不可解码”“画质明显劣化”或“不自适应但看起来平滑”被误判成高质量
 - `decode_errors`：真实 FFmpeg H264 decoder 解码失败次数，权重为 `50/次`
 - `decoded_frames`：真实 decoder 输出帧数；若 receiver AU 未能产生 decoded frame，则按 decoded-frame gap 追加惩罚
+- `quality_samples`：receiver frame 与源 I420 帧按 RTP timestamp 对齐后的 PSNR 样本数
+- `psnr_avg / psnr_min`：源 I420 与解码 I420 的 PSNR，当前低于 `23dB` 均值或 `16dB` 最低值会进入 balanced-QoE 惩罚；WebRTC/adaptive 硬阈值为每场景 `psnr_avg >= 20dB`、`psnr_min >= 14dB`
 - 当前本地结果：`smoothness_score` 最优仍可能被高输出策略打平，因此不能单独作为产品结论
-- 当前本地结果：aggregate `balanced_qoe_score` 最优为 `webrtc/adaptive=27.0`，三个场景 `decode_errors=0`
+- 当前本地结果：aggregate `balanced_qoe_score` 最优为 `webrtc/adaptive=27.0`，三个场景 `decode_errors=0`，aggregate `psnr_avg=56.071dB`、`psnr_min=21.271dB`
 - 当前本地结果：WebRTC backend 已补齐 periodic process、`data_in_flight`、probe cluster、route-change recovery、server `SENDER_RATE_CAP_V1` 后，在当前 synthetic multi-scenario dynamic weak-network 矩阵中成为 balanced-QoE 最优候选
 
 当前长流 QoE 结果表：
 
-| Scenario | Best balanced QoE | Score | Freeze | Drops | Duplicate | Outage FPS | Poor FPS | Recovered FPS | 弱网 target bps | 恢复 target bps | 结论 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |
-| `walking_dead_zone` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 4.00 | 5.67 | 28.0 | 144000 / 132000 | 2032038 | 深度掉网恢复无 freeze/drop/duplicate |
-| `jitter_loss_oscillation` | `webrtc/adaptive` | 27.000 | 0 | 9 | 0 | 9.00 | 9.33 | 28.8 | 182930 / 186768 | 2063557 | 振荡网络下少量 network drops，但无 freeze/duplicate |
-| `bandwidth_staircase` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 12.75 | 5.00 | 29.2 | 390000 / 156000 | 2095566 | 阶梯降带宽和恢复均符合场景化阈值 |
+| Scenario | Best balanced QoE | Score | Freeze | Drops | Duplicate | PSNR avg/min | Outage FPS | Poor FPS | Recovered FPS | 弱网 target bps | 恢复 target bps | 结论 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |
+| `walking_dead_zone` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 62.18 / 55.16 | 4.00 | 5.67 | 28.0 | 144000 / 132000 | 2032038 | 深度掉网恢复无 freeze/drop/duplicate，画质样本充足 |
+| `jitter_loss_oscillation` | `webrtc/adaptive` | 27.000 | 0 | 9 | 0 | 60.57 / 27.36 | 9.00 | 9.33 | 28.8 | 182930 / 186768 | 2063557 | 振荡网络下少量 network drops，但无 freeze/duplicate/decode error |
+| `bandwidth_staircase` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 46.32 / 21.27 | 12.75 | 5.00 | 29.2 | 390000 / 156000 | 2095566 | 阶梯降带宽和恢复均符合场景化阈值 |
 
 当前 aggregate 长流 QoE 排名：
 
-| Backend/strategy | Aggregate balanced QoE | Decode errors | Drops | Duplicates | Failed cases |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `webrtc/adaptive` | 27.000 | 0 | 9 | 0 | 0 |
-| `webrtc/balanced` | 73.000 | 0 | 11 | 0 | 0 |
-| `lightweight/adaptive` | 1113.833 | 9 | 10 | 40 | 0 |
-| `lightweight/balanced` | 2299.000 | 30 | 11 | 80 | 0 |
-| `webrtc/bitrate_only` | 3922.000 | 34 | 14 | 0 | 3 |
-| `lightweight/bitrate_only` | 5986.000 | 41 | 17 | 341 | 0 |
-| `webrtc/fixed` | 17001.500 | 27 | 1756 | 0 | 2 |
-| `lightweight/fixed` | 29028.000 | 234 | 1927 | 66 | 0 |
+| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Decode errors | Drops | Duplicates | Failed cases |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `webrtc/adaptive` | 27.000 | 56.071 / 21.271 | 0 | 9 | 0 | 0 |
+| `webrtc/balanced` | 73.000 | 60.610 / 27.374 | 0 | 11 | 0 | 0 |
+| `lightweight/adaptive` | 1227.241 | 22.589 / 15.813 | 9 | 10 | 40 | 0 |
+| `lightweight/balanced` | 2361.252 | 22.561 / 16.621 | 30 | 11 | 80 | 0 |
+| `webrtc/bitrate_only` | 3922.000 | 57.313 / 20.646 | 34 | 14 | 0 | 3 |
+| `lightweight/bitrate_only` | 6045.696 | 22.515 / 17.477 | 41 | 17 | 341 | 0 |
+| `webrtc/fixed` | 17001.500 | 60.543 / 22.041 | 27 | 1756 | 0 | 2 |
+| `lightweight/fixed` | 29302.342 | 21.126 / 13.883 | 234 | 1927 | 66 | 0 |
 
 当前判断：
 
 - 不能再只说“adaptive 能降码率/FPS，所以 QoS 正确”
-- QoS 最优必须先定义目标函数：smoothness-only 会偏向高输出策略；当前 balanced-QoE 同时惩罚 duplicate frames、network drops、decode errors、弱网不自适应和好网不恢复，因此选出 `webrtc/adaptive`
+- QoS 最优必须先定义目标函数：smoothness-only 会偏向高输出策略；当前 balanced-QoE 同时惩罚 duplicate frames、network drops、decode errors、低 PSNR、弱网不自适应和好网不恢复，因此选出 `webrtc/adaptive`
 - 当前证据只证明在这个动态弱网场景集合、backend 集合和候选策略集合中，`webrtc/adaptive` 是 balanced-QoE 目标下的最优候选
 - WebRTC backend 之所以从弱于 lightweight 变成最优，是因为补齐了缺失闭环：周期性 `OnProcessInterval`、`data_in_flight`、probe cluster 发送和回馈、网络恢复 route-change、server 根据下行质量生成 `SENDER_RATE_CAP_V1`
 - C/S 架构下，server 确认链路进入 `good_again` 后应给 sender 触发 route-change，并使用健康链路 start bitrate（当前 demo 为 `2Mbps`）帮助 GoogCC 从深度弱网后的保守状态快速恢复
-- 后续接真实解码/渲染后，需要补 WebRTC stats 同类指标：`freezeCount`、`totalFreezesDuration`、`jitterBufferDelay`、`framesDecoded`、`framesDropped`、QP、端到端延迟和真实画质指标
+- 后续接真实渲染后，需要补 WebRTC stats 同类指标：`freezeCount`、`totalFreezesDuration`、`jitterBufferDelay`、`framesDecoded`、`framesDropped`、QP、端到端延迟和真实 render queue 指标
 - 后续如果要证明“生产最优”，必须扩展到多内容类型、多分辨率、多码率、多时长、多接收端和真实业务传输链路
 
 弱网场景定义：

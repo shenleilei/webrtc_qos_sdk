@@ -85,7 +85,8 @@ if(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER)
     NAMES libavcodec/avcodec.h)
   find_library(AVCODEC_LIBRARY avcodec)
   find_library(AVUTIL_LIBRARY avutil)
-  if(FFMPEG_INCLUDE_DIR AND AVCODEC_LIBRARY AND AVUTIL_LIBRARY)
+  find_library(SWSCALE_LIBRARY swscale)
+  if(FFMPEG_INCLUDE_DIR AND AVCODEC_LIBRARY AND AVUTIL_LIBRARY AND SWSCALE_LIBRARY)
     add_library(webrtc_qos_ffmpeg_encoder STATIC
       src/ffmpeg_h264_encoder.cc)
     target_include_directories(webrtc_qos_ffmpeg_encoder
@@ -111,7 +112,7 @@ if(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER)
     target_compile_options(webrtc_qos_ffmpeg_decoder
       PRIVATE -Wall -Wextra -Wpedantic)
     target_link_libraries(webrtc_qos_ffmpeg_decoder
-      INTERFACE ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY})
+      INTERFACE ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
     list(APPEND WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS
       webrtc_qos_ffmpeg_encoder
       webrtc_qos_ffmpeg_decoder)
@@ -166,7 +167,8 @@ if(TARGET webrtc_qos_ffmpeg_encoder)
     webrtc_qos_ffmpeg_decoder
     webrtc_qos
     ${AVCODEC_LIBRARY}
-    ${AVUTIL_LIBRARY})
+    ${AVUTIL_LIBRARY}
+    ${SWSCALE_LIBRARY})
   list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS
     ffmpeg_encoder_demo
     long_stream_qoe_demo)

@@ -240,7 +240,7 @@ The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `en
 
 When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
-When FFmpeg's H264 decoder is available, the long-stream QoE matrix also decodes every receiver Annex-B AU before counting it as a rendered receiver frame. `decode_errors` and `decoded_frames` are therefore hard QoE inputs, not log-only diagnostics.
+When FFmpeg's H264 decoder is available, the long-stream QoE matrix also decodes every receiver Annex-B AU before counting it as a rendered receiver frame. The decoder outputs I420 frames, and the matrix compares them with the generated source I420 frames by RTP timestamp to produce PSNR. `decode_errors`, `decoded_frames`, `quality_samples`, `psnr_avg`, and `psnr_min` are therefore hard QoE inputs, not log-only diagnostics.
 
 Long-stream encoder QoE strategy matrix:
 
@@ -269,11 +269,13 @@ For each backend, it compares:
 The script writes `${LOG_DIR}/metrics.jsonl` and `${LOG_DIR}/summary.json`. It reports two objective functions rather than a single ambiguous "best":
 
 - `smoothness_score`: freezes, max freeze duration, network drops, weak-phase receiver FPS, and recovery FPS.
-- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, real FFmpeg H264 decode errors, decoded-frame gaps, weak-network non-adaptation, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames, outputs undecodable frames, or refuses to adapt from being marked best just because it does not visibly freeze.
+- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, real FFmpeg H264 decode errors, decoded-frame gaps, low decoded-frame PSNR, weak-network non-adaptation, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames, outputs undecodable frames, visibly degrades picture quality, or refuses to adapt from being marked best just because it does not visibly freeze.
 
 The matrix now has hard validation rules when the WebRTC backend is available:
 
 - `webrtc/adaptive` must produce `decode_errors=0` in every scenario.
+- `webrtc/adaptive` must produce one source-aligned PSNR sample for every receiver frame.
+- `webrtc/adaptive` must keep `psnr_avg >= 20.0 dB` and `psnr_min >= 14.0 dB` in every scenario.
 - `webrtc/adaptive` must meet per-scenario weak-network downshift and good-network recovery thresholds for bitrate and FPS.
 - `webrtc/adaptive` must be the best `balanced_qoe_score` candidate in every scenario.
 - The aggregate best `balanced_qoe_score` across all scenarios must also be `webrtc/adaptive`.
@@ -281,26 +283,26 @@ The matrix now has hard validation rules when the WebRTC backend is available:
 
 Latest local long-stream QoE result:
 
-| Scenario | Best balanced QoE | Score | Freeze | Drops | Duplicates | Outage FPS | Poor FPS | Recovered FPS | Weak target bps | Recovered target bps |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| walking_dead_zone | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 4.00 | 5.67 | 28.0 | 144000 / 132000 | 2032038 |
-| jitter_loss_oscillation | webrtc/adaptive | 27.000 | 0 | 9 | 0 | 9.00 | 9.33 | 28.8 | 182930 / 186768 | 2063557 |
-| bandwidth_staircase | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 12.75 | 5.00 | 29.2 | 390000 / 156000 | 2095566 |
+| Scenario | Best balanced QoE | Score | Freeze | Drops | Duplicates | PSNR avg/min | Outage FPS | Poor FPS | Recovered FPS | Weak target bps | Recovered target bps |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| walking_dead_zone | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 62.18 / 55.16 | 4.00 | 5.67 | 28.0 | 144000 / 132000 | 2032038 |
+| jitter_loss_oscillation | webrtc/adaptive | 27.000 | 0 | 9 | 0 | 60.57 / 27.36 | 9.00 | 9.33 | 28.8 | 182930 / 186768 | 2063557 |
+| bandwidth_staircase | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 46.32 / 21.27 | 12.75 | 5.00 | 29.2 | 390000 / 156000 | 2095566 |
 
 Latest aggregate ranking:
 
-| Backend/strategy | Aggregate balanced QoE | Decode errors | Drops | Duplicates | Failed cases |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 27.000 | 0 | 9 | 0 | 0 |
-| webrtc/balanced | 73.000 | 0 | 11 | 0 | 0 |
-| lightweight/adaptive | 1113.833 | 9 | 10 | 40 | 0 |
-| lightweight/balanced | 2299.000 | 30 | 11 | 80 | 0 |
-| webrtc/bitrate_only | 3922.000 | 34 | 14 | 0 | 3 |
-| lightweight/bitrate_only | 5986.000 | 41 | 17 | 341 | 0 |
-| webrtc/fixed | 17001.500 | 27 | 1756 | 0 | 2 |
-| lightweight/fixed | 29028.000 | 234 | 1927 | 66 | 0 |
+| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Decode errors | Drops | Duplicates | Failed cases |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| webrtc/adaptive | 27.000 | 56.071 / 21.271 | 0 | 9 | 0 | 0 |
+| webrtc/balanced | 73.000 | 60.610 / 27.374 | 0 | 11 | 0 | 0 |
+| lightweight/adaptive | 1227.241 | 22.589 / 15.813 | 9 | 10 | 40 | 0 |
+| lightweight/balanced | 2361.252 | 22.561 / 16.621 | 30 | 11 | 80 | 0 |
+| webrtc/bitrate_only | 3922.000 | 57.313 / 20.646 | 34 | 14 | 0 | 3 |
+| lightweight/bitrate_only | 6045.696 | 22.515 / 17.477 | 41 | 17 | 341 | 0 |
+| webrtc/fixed | 17001.500 | 60.543 / 22.041 | 27 | 1756 | 0 | 2 |
+| lightweight/fixed | 29302.342 | 21.126 / 13.883 | 234 | 1927 | 66 | 0 |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, candidate set, backend set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, and WebRTC H264 jitter output that survives real FFmpeg decoding. Under the current synthetic multi-scenario dynamic weak-network matrix, `webrtc/adaptive` is the best balanced-QoE candidate.
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, candidate set, backend set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, and WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks. Under the current synthetic multi-scenario dynamic weak-network matrix, `webrtc/adaptive` is the best balanced-QoE candidate.
 
 UDP weak-network matrix:
 
@@ -373,8 +375,8 @@ Implementation boundary in this slice:
 - `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.
 - `run_dynamic_qos_matrix.sh` proves the sender adaptation surface reacts in both directions: it degrades under bandwidth/RTT/loss impairment and climbs back when the network recovers.
 - `ffmpeg_encoder_demo` proves real H264 encoder output can enter the same Annex-B -> RTP -> pacer path used by synthetic/file demos.
-- `libwebrtc_qos_ffmpeg_decoder.a` and `run_long_stream_qoe_matrix.sh` prove receiver Annex-B AU output can be decoded by a real H264 decoder before it is counted as a QoE receiver frame.
-- `run_long_stream_qoe_matrix.sh` compares adaptive, balanced, bitrate-only, and fixed strategies with real H264 output over dynamic weak-network transitions and separates smoothness-only scoring from balanced QoE scoring with decode-error penalties.
+- `libwebrtc_qos_ffmpeg_decoder.a` and `run_long_stream_qoe_matrix.sh` prove receiver Annex-B AU output can be decoded by a real H264 decoder before it is counted as a QoE receiver frame, and compute source-aligned I420 PSNR for objective picture quality.
+- `run_long_stream_qoe_matrix.sh` compares adaptive, balanced, bitrate-only, and fixed strategies with real H264 output over dynamic weak-network transitions and separates smoothness-only scoring from balanced QoE scoring with decode-error and PSNR penalties.
 - `run_udp_soak.sh` repeats the weak-network matrix by duration and provides the local soak/stress entry point before replacing `DEMO_TRANSPORT_V1`.
 - `verify_role_linking.sh` proves role-based integration can avoid a monolithic `libwebrtc.a`.
 

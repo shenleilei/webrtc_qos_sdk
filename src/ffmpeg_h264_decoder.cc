@@ -7,6 +7,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
+#include <libswscale/swscale.h>
 }
 
 namespace webrtc_qos {
@@ -23,6 +24,8 @@ std::string FfmpegError(int ret) {
 struct FfmpegH264Decoder::Impl {
   AVCodecContext* context = nullptr;
   AVFrame* frame = nullptr;
+  SwsContext* sws_context = nullptr;
+  AVFrame* i420_frame = nullptr;
   FfmpegH264DecoderStats stats;
 };
 
@@ -55,6 +58,12 @@ Status FfmpegH264Decoder::Open() {
   if (!impl_->frame) {
     Close();
     return Status::Error(StatusCode::kInternalError, "av_frame_alloc failed");
+  }
+  impl_->i420_frame = av_frame_alloc();
+  if (!impl_->i420_frame) {
+    Close();
+    return Status::Error(StatusCode::kInternalError,
+                         "i420 av_frame_alloc failed");
   }
   return Status::Ok();
 }
@@ -101,13 +110,78 @@ Status FfmpegH264Decoder::DecodeAnnexB(
                            "avcodec_receive_frame failed: " +
                                FfmpegError(ret));
     }
-    decoded_frames->push_back(DecodedVideoFrame{
-        static_cast<uint32_t>(std::max(0, impl_->frame->width)),
-        static_cast<uint32_t>(std::max(0, impl_->frame->height)),
-        impl_->frame->pts,
-    });
+    const int width = impl_->frame->width;
+    const int height = impl_->frame->height;
+    if (width <= 0 || height <= 0 || width % 2 != 0 || height % 2 != 0) {
+      ++impl_->stats.decode_errors;
+      av_frame_unref(impl_->frame);
+      return Status::Error(StatusCode::kMalformedPacket,
+                           "invalid decoded frame dimensions");
+    }
+    impl_->sws_context = sws_getCachedContext(
+        impl_->sws_context, width, height,
+        static_cast<AVPixelFormat>(impl_->frame->format), width, height,
+        AV_PIX_FMT_YUV420P, SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+    if (!impl_->sws_context) {
+      ++impl_->stats.decode_errors;
+      av_frame_unref(impl_->frame);
+      return Status::Error(StatusCode::kInternalError,
+                           "sws_getCachedContext failed");
+    }
+    impl_->i420_frame->format = AV_PIX_FMT_YUV420P;
+    impl_->i420_frame->width = width;
+    impl_->i420_frame->height = height;
+    ret = av_frame_get_buffer(impl_->i420_frame, 32);
+    if (ret < 0) {
+      ++impl_->stats.decode_errors;
+      av_frame_unref(impl_->frame);
+      return Status::Error(StatusCode::kInternalError,
+                           "i420 av_frame_get_buffer failed: " +
+                               FfmpegError(ret));
+    }
+    ret = sws_scale(impl_->sws_context, impl_->frame->data,
+                    impl_->frame->linesize, 0, height,
+                    impl_->i420_frame->data, impl_->i420_frame->linesize);
+    if (ret != height) {
+      ++impl_->stats.decode_errors;
+      av_frame_unref(impl_->frame);
+      av_frame_unref(impl_->i420_frame);
+      return Status::Error(StatusCode::kInternalError, "sws_scale failed");
+    }
+
+    DecodedVideoFrame decoded;
+    decoded.width = static_cast<uint32_t>(width);
+    decoded.height = static_cast<uint32_t>(height);
+    decoded.pts = impl_->frame->pts;
+    decoded.y_stride = static_cast<uint32_t>(width);
+    decoded.u_stride = static_cast<uint32_t>(width / 2);
+    decoded.v_stride = static_cast<uint32_t>(width / 2);
+    decoded.y_plane.resize(static_cast<size_t>(width) * height);
+    decoded.u_plane.resize(static_cast<size_t>(width / 2) * (height / 2));
+    decoded.v_plane.resize(static_cast<size_t>(width / 2) * (height / 2));
+    for (int row = 0; row < height; ++row) {
+      std::copy(impl_->i420_frame->data[0] +
+                    row * impl_->i420_frame->linesize[0],
+                impl_->i420_frame->data[0] +
+                    row * impl_->i420_frame->linesize[0] + width,
+                decoded.y_plane.data() + row * width);
+    }
+    for (int row = 0; row < height / 2; ++row) {
+      std::copy(impl_->i420_frame->data[1] +
+                    row * impl_->i420_frame->linesize[1],
+                impl_->i420_frame->data[1] +
+                    row * impl_->i420_frame->linesize[1] + width / 2,
+                decoded.u_plane.data() + row * (width / 2));
+      std::copy(impl_->i420_frame->data[2] +
+                    row * impl_->i420_frame->linesize[2],
+                impl_->i420_frame->data[2] +
+                    row * impl_->i420_frame->linesize[2] + width / 2,
+                decoded.v_plane.data() + row * (width / 2));
+    }
+    decoded_frames->push_back(std::move(decoded));
     ++impl_->stats.decoded_frames;
     av_frame_unref(impl_->frame);
+    av_frame_unref(impl_->i420_frame);
   }
   return Status::Ok();
 }
@@ -122,6 +196,13 @@ void FfmpegH264Decoder::Close() {
   }
   if (impl_->frame) {
     av_frame_free(&impl_->frame);
+  }
+  if (impl_->i420_frame) {
+    av_frame_free(&impl_->i420_frame);
+  }
+  if (impl_->sws_context) {
+    sws_freeContext(impl_->sws_context);
+    impl_->sws_context = nullptr;
   }
   if (impl_->context) {
     avcodec_free_context(&impl_->context);

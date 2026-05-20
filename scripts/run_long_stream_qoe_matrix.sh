@@ -35,7 +35,7 @@ if [[ -f "${PREFIX}/include/webrtc_qos/googcc_adapter.h" &&
     "${PREFIX}/lib/libwebrtc_qos_googcc_adapter.a" \
     "${PREFIX}/lib/libwebrtc_qos_video_jitter_adapter.a" \
     -L"${LIBATOMIC_DIR}" \
-    -lavcodec -lavutil -lpthread -ldl -lrt -latomic \
+    -lavcodec -lavutil -lswscale -lpthread -ldl -lrt -latomic \
     -o "${WEBRTC_DEMO}"
   webrtc_backend_available=1
 else
@@ -82,7 +82,8 @@ with jsonl_path.open("a", encoding="utf-8") as handle:
 print(
     "metrics scenario={scenario} backend={backend} strategy={strategy} freeze={freeze} "
     "max_freeze_ms={max_freeze} drops={drops} frames={frames} "
-    "decoded={decoded} decode_errors={decode_errors} duplicates={duplicates}".format(
+    "decoded={decoded} decode_errors={decode_errors} psnr_avg={psnr_avg} "
+    "psnr_min={psnr_min} duplicates={duplicates}".format(
         scenario=data.get("scenario"),
         backend=data.get("backend"),
         strategy=data.get("strategy"),
@@ -92,6 +93,8 @@ print(
         frames=data.get("receiver_frames"),
         decoded=data.get("decoded_frames"),
         decode_errors=data.get("decode_errors"),
+        psnr_avg=data.get("psnr_avg"),
+        psnr_min=data.get("psnr_min"),
         duplicates=data.get("duplicate_frames"),
     )
 )
@@ -200,12 +203,18 @@ def balanced_qoe_score(row):
         row.get("receiver_frames", 0) - row.get("decoded_frames", 0),
     )
     decode_gap_penalty = decode_gap * 20
+    quality_samples = row.get("quality_samples", 0)
+    psnr_avg = row.get("psnr_avg", 0.0) if quality_samples else 0.0
+    psnr_min = row.get("psnr_min", 0.0) if quality_samples else 0.0
+    psnr_penalty = max(0.0, 23.0 - psnr_avg) * 40
+    psnr_penalty += max(0.0, 16.0 - psnr_min) * 20
     return round(
         smoothness_score(row)
         + duplicate_penalty
         + drop_penalty
         + decode_error_penalty
         + decode_gap_penalty
+        + psnr_penalty
         + adaptation_penalty(row),
         3,
     )
@@ -275,6 +284,9 @@ for row in rows:
             "balanced_qoe_score_total": 0.0,
             "smoothness_score_total": 0.0,
             "decode_errors_total": 0,
+            "quality_samples_total": 0,
+            "psnr_avg_weighted_sum": 0.0,
+            "psnr_min": None,
             "network_drops_total": 0,
             "duplicate_frames_total": 0,
             "failed_cases": 0,
@@ -284,6 +296,16 @@ for row in rows:
     item["balanced_qoe_score_total"] += row["balanced_qoe_score"]
     item["smoothness_score_total"] += row["smoothness_score"]
     item["decode_errors_total"] += row.get("decode_errors", 0)
+    quality_samples = row.get("quality_samples", 0)
+    item["quality_samples_total"] += quality_samples
+    if quality_samples:
+        item["psnr_avg_weighted_sum"] += row.get("psnr_avg", 0.0) * quality_samples
+        row_psnr_min = row.get("psnr_min", 0.0)
+        item["psnr_min"] = (
+            row_psnr_min
+            if item["psnr_min"] is None
+            else min(item["psnr_min"], row_psnr_min)
+        )
     item["network_drops_total"] += row.get("network_drops", 0)
     item["duplicate_frames_total"] += row.get("duplicate_frames", 0)
     if not row.get("ok", False):
@@ -295,6 +317,14 @@ for item in aggregate_by_backend_strategy.values():
         item["balanced_qoe_score_total"] / count, 3
     )
     item["smoothness_score_avg"] = round(item["smoothness_score_total"] / count, 3)
+    if item["quality_samples_total"]:
+        item["psnr_avg"] = round(
+            item["psnr_avg_weighted_sum"] / item["quality_samples_total"], 3
+        )
+    else:
+        item["psnr_avg"] = 0.0
+    item["psnr_min"] = round(item["psnr_min"] or 0.0, 3)
+    item.pop("psnr_avg_weighted_sum", None)
     item["balanced_qoe_score_total"] = round(item["balanced_qoe_score_total"], 3)
     item["smoothness_score_total"] = round(item["smoothness_score_total"], 3)
 
@@ -340,6 +370,20 @@ if webrtc_rows:
         if adaptive.get("decoded_frames", 0) < adaptive.get("receiver_frames", 0):
             validation_failures.append(
                 f"{scenario}: decoded frames below receiver frames"
+            )
+        if adaptive.get("quality_samples", 0) < adaptive.get("receiver_frames", 0):
+            validation_failures.append(
+                f"{scenario}: quality samples below receiver frames"
+            )
+        if adaptive.get("psnr_avg", 0.0) < 20.0:
+            validation_failures.append(
+                f"{scenario}: webrtc/adaptive psnr_avg="
+                f"{adaptive.get('psnr_avg', 0.0):.3f} below 20.0"
+            )
+        if adaptive.get("psnr_min", 0.0) < 14.0:
+            validation_failures.append(
+                f"{scenario}: webrtc/adaptive psnr_min="
+                f"{adaptive.get('psnr_min', 0.0):.3f} below 14.0"
             )
         if adaptation_penalty(adaptive) != 0:
             validation_failures.append(
@@ -389,6 +433,9 @@ summary = {
             "duplicate_frames": row.get("duplicate_frames"),
             "decoded_frames": row.get("decoded_frames"),
             "decode_errors": row.get("decode_errors"),
+            "quality_samples": row.get("quality_samples"),
+            "psnr_avg": row.get("psnr_avg"),
+            "psnr_min": row.get("psnr_min"),
             "receiver_frames": row.get("receiver_frames"),
             "outage_receiver_fps": phase(row, "outage").get("receiver_fps"),
             "poor_receiver_fps": phase(row, "poor").get("receiver_fps"),
@@ -434,10 +481,11 @@ summary = {
         "smoothness_score optimizes continuity only; balanced_qoe_score also "
         "penalizes duplicate output, network drops, weak-network non-adaptation, "
         "real FFmpeg H264 decode errors/gaps, and failure to recover when the "
-        "route becomes good again. Validation requires webrtc/adaptive to meet "
-        "per-scenario decode/adaptation thresholds and win the aggregate "
-        "balanced QoE score inside this scenario set; it is not a global "
-        "mathematical optimum."
+        "route becomes good again. It also penalizes low decoded-frame PSNR "
+        "against the generated I420 source. Validation requires "
+        "webrtc/adaptive to meet per-scenario decode/quality/adaptation "
+        "thresholds and win the aggregate balanced QoE score inside this "
+        "scenario set; it is not a global mathematical optimum."
     ),
 }
 summary_path.write_text(
