@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PREFIX="${PREFIX:-/root/output}"
+WORK_DIR="${WORK_DIR:-/tmp/webrtc_qos_cmake_consumer}"
+
+rm -rf "${WORK_DIR}"
+mkdir -p "${WORK_DIR}"
+
+cat > "${WORK_DIR}/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 3.16)
+project(webrtc_qos_cmake_consumer LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(WebRtcQosSdk REQUIRED CONFIG)
+
+add_executable(consumer main.cc)
+target_link_libraries(consumer PRIVATE
+  WebRtcQosSdk::role_transport
+  WebRtcQosSdk::webrtc_qos_rtcp)
+
+add_executable(server_role server_role.cc)
+target_link_libraries(server_role PRIVATE WebRtcQosSdk::role_server)
+
+add_executable(push_role push_role.cc)
+target_link_libraries(push_role PRIVATE WebRtcQosSdk::role_push)
+
+add_executable(play_role play_role.cc)
+target_link_libraries(play_role PRIVATE WebRtcQosSdk::role_play)
+
+add_executable(prototype_role prototype_role.cc)
+target_link_libraries(prototype_role PRIVATE WebRtcQosSdk::role_prototype)
+EOF
+
+cat > "${WORK_DIR}/main.cc" <<'EOF'
+#include <vector>
+
+#include "webrtc_qos/production_transport_adapter.h"
+#include "webrtc_qos/rtcp_packets.h"
+#include "webrtc_qos/transport_port.h"
+
+int main() {
+  webrtc_qos::TransportIds ids{1, 1, 1, 0x12345678, 2};
+  webrtc_qos::TransportPort port(
+      [](const webrtc_qos::TransportMessage& message) {
+        return message.type == webrtc_qos::TransportMessageType::kRtcpPli
+                   ? webrtc_qos::Status::Ok()
+                   : webrtc_qos::Status::Error(
+                         webrtc_qos::StatusCode::kInvalidArgument,
+                         "unexpected message type");
+      });
+  webrtc_qos::RtcpPli pli;
+  pli.sender_ssrc = ids.receiver_id;
+  pli.media_ssrc = ids.sender_ssrc;
+  std::vector<uint8_t> payload = webrtc_qos::SerializeRtcpPli(pli);
+  if (!port.Send(webrtc_qos::TransportMessageType::kRtcpPli, ids, payload,
+                 1000000)) {
+    return 1;
+  }
+
+  webrtc_qos::OwnedTransportMessage queued;
+  webrtc_qos::ProductionTransportAdapter adapter(
+      [&](const webrtc_qos::OwnedTransportMessage& message) {
+        queued = message;
+        return webrtc_qos::Status::Ok();
+      });
+  if (!adapter.Send(webrtc_qos::TransportMessageType::kRtcpPli, ids, payload,
+                    1000000)) {
+    return 2;
+  }
+  return queued.lane == webrtc_qos::ProductionTransportLane::kUnreliableControl
+             ? 0
+             : 3;
+}
+EOF
+
+cat > "${WORK_DIR}/server_role.cc" <<'EOF'
+#include "webrtc_qos/retransmission_cache.h"
+#include "webrtc_qos/rtcp_packets.h"
+#include "webrtc_qos/rtp_packet.h"
+
+int main() {
+  webrtc_qos::RtpPacket packet;
+  packet.sequence_number = 7;
+  packet.transport_sequence_number = 9;
+  packet.ssrc = 0x12345678;
+  packet.payload = {0x65, 1, 2, 3};
+  auto encoded = webrtc_qos::SerializeRtpPacket(packet);
+  webrtc_qos::RtpPacket parsed;
+  if (!webrtc_qos::ParseRtpPacket(encoded.data(), encoded.size(), &parsed)) {
+    return 1;
+  }
+  webrtc_qos::RetransmissionCache cache;
+  cache.Store(parsed, 1000000);
+  webrtc_qos::RtcpNack nack;
+  nack.sender_ssrc = 2;
+  nack.media_ssrc = packet.ssrc;
+  nack.lost_rtp_sequence_numbers = {7};
+  auto nack_bytes = webrtc_qos::SerializeRtcpNack(nack);
+  return cache.Find(7, 10).has_value() && !nack_bytes.empty() ? 0 : 1;
+}
+EOF
+
+cat > "${WORK_DIR}/push_role.cc" <<'EOF'
+#include "webrtc_qos/sender_qos_googcc_bridge.h"
+#include "webrtc_qos/sender_pacer.h"
+#include "webrtc_qos/video_sender.h"
+
+int main() {
+  webrtc_qos::TransportIds ids{1, 1, 1, 0x12345678, 2};
+  webrtc_qos::SenderQosControllerConfig qos_config;
+  qos_config.ids = ids;
+  auto qos = webrtc_qos::CreateGoogCcSenderQosController(qos_config, 1000000);
+  webrtc_qos::SenderPacer pacer(
+      webrtc_qos::SenderPacerConfig{},
+      [&](const webrtc_qos::RtpPacket& packet) {
+        return qos.OnPacketSent(packet.transport_sequence_number,
+                                packet.payload.size() + 20, 1000000);
+      });
+  webrtc_qos::VideoSender sender(webrtc_qos::VideoSenderConfig{ids}, &pacer);
+  const uint8_t au[] = {0, 0, 0, 1, 0x67, 0x42, 0xe0, 0x1f,
+                        0, 0, 0, 1, 0x68, 0xce, 0x3c, 0x80,
+                        0, 0, 0, 1, 0x65, 1,    2,    3};
+  return sender.SendAnnexBAccessUnit(au, sizeof(au), 1000000) ? 0 : 1;
+}
+EOF
+
+cat > "${WORK_DIR}/play_role.cc" <<'EOF'
+#include "webrtc_qos/receiver_qos_observer.h"
+#include "webrtc_qos/rtp_packet.h"
+#include "webrtc_qos/video_jitter_bridge.h"
+
+int main() {
+  webrtc_qos::TransportIds ids{1, 1, 1, 0x12345678, 2};
+  webrtc_qos::ReceiverQosObserver observer(
+      webrtc_qos::ReceiverQosObserverConfig{ids, 200});
+  auto jitter = webrtc_qos::CreateWebRtcVideoJitterPlayer(
+      webrtc_qos::VideoJitterPlayerConfig{ids.sender_ssrc});
+  webrtc_qos::RtpPacket packet;
+  packet.marker = true;
+  packet.sequence_number = 1;
+  packet.timestamp = 90000;
+  packet.ssrc = ids.sender_ssrc;
+  packet.transport_sequence_number = 1;
+  packet.payload = {0x65, 1, 2, 3};
+  observer.OnRtpPacketReceived(packet, 1000000);
+  return jitter.InsertPacket(packet, 1000000) ? 0 : 1;
+}
+EOF
+
+cat > "${WORK_DIR}/prototype_role.cc" <<'EOF'
+#include "webrtc_qos/sender_qos_googcc_bridge.h"
+#include "webrtc_qos/video_jitter_bridge.h"
+
+int main() {
+  webrtc_qos::TransportIds ids{1, 1, 1, 0x12345678, 2};
+  webrtc_qos::SenderQosControllerConfig qos_config;
+  qos_config.ids = ids;
+  auto qos = webrtc_qos::CreateGoogCcSenderQosController(qos_config, 1000000);
+  auto jitter = webrtc_qos::CreateWebRtcVideoJitterPlayer(
+      webrtc_qos::VideoJitterPlayerConfig{ids.sender_ssrc});
+  return qos.GetTargetRates(1000000).googcc_target_bps > 0 &&
+                 !jitter.HasFrame()
+             ? 0
+             : 1;
+}
+EOF
+
+cmake -S "${WORK_DIR}" -B "${WORK_DIR}/build" \
+  -DCMAKE_PREFIX_PATH="${PREFIX}" >/dev/null
+cmake --build "${WORK_DIR}/build" -j2 >/dev/null
+"${WORK_DIR}/build/consumer"
+"${WORK_DIR}/build/server_role"
+"${WORK_DIR}/build/push_role"
+"${WORK_DIR}/build/play_role"
+"${WORK_DIR}/build/prototype_role"
+
+echo "cmake package verification passed"

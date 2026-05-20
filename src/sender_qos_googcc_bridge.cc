@@ -1,0 +1,88 @@
+#include "webrtc_qos/sender_qos_googcc_bridge.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+#include "webrtc_qos/googcc_adapter.h"
+
+namespace webrtc_qos {
+namespace {
+
+class GoogCcSenderQosBackend final : public SenderQosBackend {
+ public:
+  GoogCcSenderQosBackend(const SenderQosControllerConfig& config,
+                         int64_t start_time_us)
+      : adapter_(GoogCcAdapterConfig{config.start_bitrate_bps,
+                                     config.min_bitrate_bps,
+                                     config.max_bitrate_bps}) {
+    adapter_.OnNetworkAvailable(start_time_us);
+    rates_ = adapter_.rates();
+  }
+
+  Status OnPacketSent(uint16_t transport_sequence_number,
+                      size_t packet_size,
+                      int64_t send_time_us) override {
+    adapter_.OnSentPacket(transport_sequence_number,
+                          static_cast<uint32_t>(
+                              std::min<size_t>(packet_size, UINT32_MAX)),
+                          send_time_us);
+    rates_ = adapter_.rates();
+    return Status::Ok();
+  }
+
+  Status OnUplinkTransportFeedback(
+      const UplinkTransportFeedback& feedback) override {
+    std::vector<GoogCcPacketFeedback> packets;
+    packets.reserve(feedback.packets.size());
+    for (const auto& packet : feedback.packets) {
+      packets.push_back(GoogCcPacketFeedback{
+          packet.transport_sequence_number,
+          packet.send_time_us,
+          packet.receive_time_us,
+          static_cast<uint32_t>(
+              std::min<size_t>(packet.packet_size, UINT32_MAX)),
+      });
+    }
+    const int64_t feedback_time_us =
+        feedback.reference_time_us > 0 ? feedback.reference_time_us : 0;
+    adapter_.OnTransportFeedback(packets, feedback_time_us);
+    adapter_.OnProcessInterval(feedback_time_us);
+    rates_ = adapter_.rates();
+    return Status::Ok();
+  }
+
+  Status OnRtcpReceiverReport(const RtcpReceiverReport& report) override {
+    adapter_.OnRoundTripTime(report.rtt_ms, report.receive_time_us);
+    adapter_.OnProcessInterval(report.receive_time_us);
+    rates_ = adapter_.rates();
+    return Status::Ok();
+  }
+
+  uint32_t target_bitrate_bps() const override {
+    return rates_.target_bitrate_bps;
+  }
+
+ private:
+  GoogCcAdapter adapter_;
+  GoogCcAdapterRates rates_;
+};
+
+}  // namespace
+
+std::unique_ptr<SenderQosBackend> CreateGoogCcSenderQosBackend(
+    const SenderQosControllerConfig& config,
+    int64_t start_time_us) {
+  return std::make_unique<GoogCcSenderQosBackend>(config, start_time_us);
+}
+
+SenderQosController CreateGoogCcSenderQosController(
+    const SenderQosControllerConfig& config,
+    int64_t start_time_us) {
+  return SenderQosController(config,
+                             CreateGoogCcSenderQosBackend(config,
+                                                           start_time_us));
+}
+
+}  // namespace webrtc_qos
