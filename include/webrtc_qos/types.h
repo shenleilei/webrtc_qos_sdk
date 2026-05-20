@@ -139,6 +139,12 @@ struct TargetRates {
   double loss_fraction = 0.0;
 };
 
+struct EncoderAdaptation {
+  uint32_t target_bitrate_bps = 1200000;
+  uint32_t max_fps = 30;
+  bool request_keyframe = false;
+};
+
 struct RetransmissionCacheConfig {
   uint32_t hold_ms = 1000;
   uint32_t max_hold_ms = 3000;

@@ -101,6 +101,9 @@ target_link_libraries(transport_port_demo PRIVATE webrtc_qos)
 add_executable(production_transport_demo demo/production_transport/main.cc)
 target_link_libraries(production_transport_demo PRIVATE webrtc_qos)
 
+add_executable(dynamic_qos_demo demo/dynamic_qos/main.cc)
+target_link_libraries(dynamic_qos_demo PRIVATE webrtc_qos)
+
 add_executable(webrtc_qos_selftest tests/selftest.cc)
 target_link_libraries(webrtc_qos_selftest PRIVATE webrtc_qos)
 
@@ -123,6 +126,7 @@ install(TARGETS
   receive_play_demo
   transport_port_demo
   production_transport_demo
+  dynamic_qos_demo
   RUNTIME DESTINATION demo)
 
 install(EXPORT WebRtcQosSdkTargets

@@ -47,6 +47,7 @@ class SenderQosController {
   Status OnSenderRateCap(const SenderRateCap& cap);
 
   TargetRates GetTargetRates(int64_t now_us) const;
+  EncoderAdaptation GetEncoderAdaptation(int64_t now_us) const;
 
  private:
   SenderQosControllerConfig config_;

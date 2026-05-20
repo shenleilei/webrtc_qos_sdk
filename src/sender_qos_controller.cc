@@ -137,4 +137,26 @@ TargetRates SenderQosController::GetTargetRates(int64_t now_us) const {
                      loss_fraction_};
 }
 
+EncoderAdaptation SenderQosController::GetEncoderAdaptation(
+    int64_t now_us) const {
+  const TargetRates rates = GetTargetRates(now_us);
+  EncoderAdaptation adaptation;
+  adaptation.target_bitrate_bps = rates.final_target_bps;
+  if (rates.final_target_bps < 150000 || rates.rtt_ms >= 800 ||
+      rates.loss_fraction >= 0.30) {
+    adaptation.max_fps = 5;
+  } else if (rates.final_target_bps < 300000 || rates.rtt_ms >= 500 ||
+             rates.loss_fraction >= 0.15) {
+    adaptation.max_fps = 10;
+  } else if (rates.final_target_bps < 800000 || rates.rtt_ms >= 250 ||
+             rates.loss_fraction >= 0.05) {
+    adaptation.max_fps = 15;
+  } else {
+    adaptation.max_fps = 30;
+  }
+  adaptation.request_keyframe =
+      rates.rtt_ms >= 500 || rates.loss_fraction >= 0.15;
+  return adaptation;
+}
+
 }  // namespace webrtc_qos

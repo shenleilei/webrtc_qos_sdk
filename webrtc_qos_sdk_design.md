@@ -484,6 +484,16 @@ sender 最终发送目标码率计算固定为：
 
 - `final_target_bps = min(googcc_target_bps, sender_rate_cap_bps)`
 
+编码器自适应决策：
+
+- SDK 对外输出 `EncoderAdaptation`
+- `target_bitrate_bps` 来自 `final_target_bps`
+- `max_fps` 根据 `final_target_bps / RTT / loss_fraction` 分档
+- 低码率、高 RTT、高丢包时下调 FPS
+- 网络恢复后随 QoS 估算恢复 FPS
+- `request_keyframe` 用于高 RTT/高丢包恢复后的关键帧刷新建议
+- `Phase-1a` 不直接控制真实编码器；业务 encoder 需要消费该决策并应用到实际码率/FPS
+
 ### 8.13 sender_rate_cap 防抖
 
 `worst-receiver wins` 需要防抖，第一阶段固定如下：
@@ -1158,6 +1168,7 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `GoogCC / network_control` 输出目标码率变化可观测
 - `sender_rate_cap` 生效可观测
 - SDK 内置 pacer 生效可观测
+- 动态网络 `good -> outage -> poor -> recovering -> good_again` 下，SDK encoder adaptation 能在网络变差时下调 bitrate/FPS，在网络恢复后提升 FPS
 
 ### 20.3 接收侧 jitter 验收
 
@@ -1193,6 +1204,7 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `run_udp_soak.sh` 能按时长重复执行弱网矩阵，并统计 pass/fail，作为接入业务传输前的长稳入口
 - `verify_role_linking.sh` 能证明 push/server/play/transport 四种角色可按需链接小库，不依赖一个巨大 `libwebrtc.a`
 - `verify_cmake_package.sh` 能证明外部工程通过 `find_package(WebRtcQosSdk CONFIG REQUIRED)` 链接 `role_transport / role_server / role_push / role_play / role_prototype`
+- `dynamic_qos_demo` 能验证时变网络下的码率/FPS 自适应决策
 
 ## 21. 外部参考
 
@@ -1250,6 +1262,7 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `SENDER_RATE_CAP_V1` 二进制编解码
 - `transport_port.h` 业务传输接入 port
 - `production_transport_adapter.h` 生产传输接入模板
+- `EncoderAdaptation` 编码器自适应决策输出
 - 标准 RTCP `SR / RR / TWCC / NACK / PLI` helper
 - SDK 轻量 NACK/恢复库 `libwebrtc_qos_nack.a`
 - 重传缓存，重传时保持 RTP 身份并分配新的 transport sequence number
@@ -1272,6 +1285,7 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - UDP demo 已覆盖 `PLI -> server forward -> sender IDR resend -> receiver keyframe output`
 - UDP 弱网矩阵已支持配置驱动的预定义弱网场景：单点丢包、突发丢包、乱序、固定延迟、周期性 jitter、混合损伤
 - UDP 弱网矩阵已支持 JSONL/summary 指标输出和阈值验收
+- `dynamic_qos_demo` 已支持时变网络 good/outage/poor/recovering/good_again 的码率/FPS 决策验证
 - UDP soak 脚本已支持按时长重复执行弱网矩阵并汇总 pass/fail
 - WebRTC-backed video jitter bridge 已处理重传包先到、原包后到导致的重复帧去重
 - synthetic/file 风格 loopback demo

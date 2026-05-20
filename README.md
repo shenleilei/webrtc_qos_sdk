@@ -186,6 +186,7 @@ Transport integration boundary:
 ```bash
 ./output/demo/transport_port_demo
 ./output/demo/production_transport_demo
+./output/demo/dynamic_qos_demo
 ```
 
 Production transport code should implement the `TransportPort` send/deliver callbacks and map SDK message types to the business wire protocol. `TransportMessage::payload` is a borrowed view valid only during the callback, so async socket/reliable-channel code must copy it before returning. `DEMO_TRANSPORT_V1` is only the UDP demo envelope; it is not required by the SDK.
@@ -195,6 +196,8 @@ Production transport code should implement the `TransportPort` send/deliver call
 - RTP: unreliable media.
 - RTCP SR/RR/TWCC/NACK/PLI: unreliable control.
 - `DOWNLINK_QUALITY_V1` / `SENDER_RATE_CAP_V1` / `BYE`: reliable control.
+
+`dynamic_qos_demo` simulates `good -> outage -> poor -> recovering -> good_again` feedback. It verifies that SDK encoder adaptation decisions reduce bitrate/FPS under high RTT/loss and restore FPS when feedback improves. Phase-1a exposes the decision surface through `EncoderAdaptation`; applying those values to a real encoder remains a business encoder integration step.
 
 UDP weak-network matrix:
 
