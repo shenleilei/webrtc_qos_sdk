@@ -2,17 +2,24 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "webrtc_qos/ffmpeg_h264_encoder.h"
+#include "webrtc_qos/receiver_qos_observer.h"
 #include "webrtc_qos/retransmission_cache.h"
 #include "webrtc_qos/sender_pacer.h"
 #include "webrtc_qos/sender_qos_controller.h"
-#include "webrtc_qos/video_receiver.h"
+#include "webrtc_qos/video_jitter_player.h"
 #include "webrtc_qos/video_sender.h"
+
+#ifdef WEBRTC_QOS_ENABLE_WEBRTC_BACKEND
+#include "webrtc_qos/sender_qos_googcc_bridge.h"
+#include "webrtc_qos/video_jitter_bridge.h"
+#endif
 
 namespace {
 
@@ -44,6 +51,7 @@ struct ScheduledPacket {
 };
 
 struct Summary {
+  std::string backend;
   std::string strategy;
   bool ok = true;
   int64_t degrade_time_ms = -1;
@@ -76,47 +84,66 @@ size_t FindPhaseIndex(const std::vector<Phase>& phases, int64_t now_us) {
   return phases.size() - 1;
 }
 
-uint16_t NextSeq(uint16_t* seq) {
-  const uint16_t out = *seq;
-  *seq = static_cast<uint16_t>(*seq + 1);
-  return out;
-}
-
 webrtc_qos::UplinkTransportFeedback BuildFeedback(
     const webrtc_qos::TransportIds& ids,
-    uint16_t* transport_seq,
+    std::vector<webrtc_qos::PacketFeedback>* pending_packets,
     int64_t now_us,
+    uint16_t feedback_seq,
     uint32_t ack_bps,
     double loss_fraction) {
   webrtc_qos::UplinkTransportFeedback feedback;
   feedback.ids = ids;
   feedback.reference_time_us = now_us;
-  feedback.feedback_seq = static_cast<uint16_t>(now_us / 100000);
+  feedback.feedback_seq = feedback_seq;
+  if (!pending_packets || pending_packets->empty()) {
+    return feedback;
+  }
 
-  constexpr size_t kPackets = 30;
-  const size_t lost_packets =
-      static_cast<size_t>(loss_fraction * static_cast<double>(kPackets) + 0.5);
-  const size_t acked_packets = kPackets - lost_packets;
-  const size_t packet_size = 1000;
+  std::vector<webrtc_qos::PacketFeedback> due;
+  due.reserve(pending_packets->size());
+  auto it = pending_packets->begin();
+  while (it != pending_packets->end()) {
+    if (it->send_time_us <= now_us - 20000) {
+      due.push_back(*it);
+      it = pending_packets->erase(it);
+    } else {
+      ++it;
+    }
+  }
+  if (due.empty()) {
+    return feedback;
+  }
+
+  std::vector<bool> lost_flags(due.size(), false);
+  const uint32_t loss_threshold =
+      static_cast<uint32_t>(std::max(0.0, std::min(1.0, loss_fraction)) *
+                            1000.0 + 0.5);
+  size_t acked_packets = 0;
+  size_t acked_bytes = 0;
+  for (size_t i = 0; i < due.size(); ++i) {
+    const uint32_t hash =
+        static_cast<uint32_t>((i + 1) * 1103515245u + feedback_seq * 2654435761u);
+    lost_flags[i] = loss_threshold > 0 && (hash % 1000u) < loss_threshold;
+    if (!lost_flags[i]) {
+      ++acked_packets;
+      acked_bytes += due[i].packet_size;
+    }
+  }
   const int64_t span_us =
       ack_bps > 0
-          ? static_cast<int64_t>((acked_packets * packet_size * 8.0 * 1000000.0) /
+          ? static_cast<int64_t>((acked_bytes * 8.0 * 1000000.0) /
                                  static_cast<double>(ack_bps))
           : 1000000;
   const int64_t step_us =
       acked_packets > 1 ? span_us / static_cast<int64_t>(acked_packets - 1)
                         : span_us;
-  int64_t receive_time_us = now_us;
-  for (size_t i = 0; i < kPackets; ++i) {
-    const uint16_t seq = NextSeq(transport_seq);
-    webrtc_qos::PacketFeedback packet;
-    packet.transport_sequence_number = seq;
-    packet.send_time_us = now_us - 100000 + static_cast<int64_t>(i) * 3000;
-    packet.packet_size = packet_size;
-    if (i < lost_packets) {
+  int64_t receive_time_us = now_us - span_us;
+  for (size_t i = 0; i < due.size(); ++i) {
+    webrtc_qos::PacketFeedback packet = due[i];
+    if (lost_flags[i]) {
       packet.receive_time_us = -1;
     } else {
-      packet.receive_time_us = receive_time_us;
+      packet.receive_time_us = std::max(packet.send_time_us, receive_time_us);
       receive_time_us += step_us;
     }
     feedback.packets.push_back(packet);
@@ -165,6 +192,7 @@ void WriteSummary(const std::string& path,
   }
   std::ofstream out(path);
   out << "{\n";
+  out << "  \"backend\": \"" << summary.backend << "\",\n";
   out << "  \"strategy\": \"" << summary.strategy << "\",\n";
   out << "  \"ok\": " << (summary.ok ? "true" : "false") << ",\n";
   out << "  \"degrade_time_ms\": " << summary.degrade_time_ms << ",\n";
@@ -214,6 +242,7 @@ int main(int argc, char** argv) {
   using namespace webrtc_qos;
 
   std::string summary_path;
+  std::string backend = "lightweight";
   std::string strategy = "adaptive";
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -225,6 +254,11 @@ int main(int argc, char** argv) {
     const std::string strategy_prefix = "--strategy=";
     if (arg.rfind(strategy_prefix, 0) == 0) {
       strategy = arg.substr(strategy_prefix.size());
+      continue;
+    }
+    const std::string backend_prefix = "--backend=";
+    if (arg.rfind(backend_prefix, 0) == 0) {
+      backend = arg.substr(backend_prefix.size());
     }
   }
   if (strategy != "adaptive" && strategy != "balanced" &&
@@ -232,7 +266,18 @@ int main(int argc, char** argv) {
     std::cerr << "unsupported strategy: " << strategy << "\n";
     return 1;
   }
-  const bool enforce_thresholds = strategy == "adaptive";
+  if (backend != "lightweight" && backend != "webrtc") {
+    std::cerr << "unsupported backend: " << backend << "\n";
+    return 1;
+  }
+#ifndef WEBRTC_QOS_ENABLE_WEBRTC_BACKEND
+  if (backend == "webrtc") {
+    std::cerr << "webrtc backend support was not compiled in\n";
+    return 1;
+  }
+#endif
+  const bool enforce_thresholds =
+      backend == "lightweight" && strategy == "adaptive";
 
   const std::vector<Phase> phases = {
       {"good", 0, 3000000, 10000000, 0.0, 20, 4000000, 5, 0},
@@ -252,7 +297,13 @@ int main(int argc, char** argv) {
   qos_config.start_bitrate_bps = 1200000;
   qos_config.min_bitrate_bps = 80000;
   qos_config.max_bitrate_bps = 2500000;
-  SenderQosController qos(qos_config);
+  std::unique_ptr<SenderQosBackend> qos_backend;
+#ifdef WEBRTC_QOS_ENABLE_WEBRTC_BACKEND
+  if (backend == "webrtc") {
+    qos_backend = CreateGoogCcSenderQosBackend(qos_config, 0);
+  }
+#endif
+  SenderQosController qos(qos_config, std::move(qos_backend));
 
   FfmpegH264EncoderConfig encoder_config;
   encoder_config.width = 320;
@@ -268,13 +319,15 @@ int main(int argc, char** argv) {
   }
 
   int64_t now_us = 0;
-  uint16_t feedback_transport_seq = 1;
+  uint16_t feedback_seq = 1;
   uint16_t retransmission_transport_seq = 50000;
   RetransmissionCache cache;
+  std::vector<PacketFeedback> pending_uplink_feedback;
   std::vector<ScheduledPacket> downlink;
   bool force_keyframe_next = true;
   int64_t last_frame_out_us = -1;
   Summary summary;
+  summary.backend = backend;
   summary.strategy = strategy;
   int64_t link_available_us = 0;
   int64_t last_keyframe_encode_us = -10000000;
@@ -327,6 +380,12 @@ int main(int argc, char** argv) {
         if (!sent_status) {
           return sent_status;
         }
+        pending_uplink_feedback.push_back(PacketFeedback{
+            packet.transport_sequence_number,
+            now_us,
+            -1,
+            bytes,
+        });
         const size_t phase_index = FindPhaseIndex(phases, now_us);
         phase_metrics[phase_index].sent_bytes += bytes;
         summary.sent_bytes += bytes;
@@ -336,49 +395,90 @@ int main(int argc, char** argv) {
       });
   VideoSender sender(VideoSenderConfig{ids}, &pacer);
 
-  VideoReceiver receiver(
-      VideoReceiverConfig{ids},
-      VideoReceiverCallbacks{
-          [&](const EncodedVideoFrame& frame) {
-            if (!rendered_timestamps.insert(frame.rtp_timestamp).second) {
-              ++summary.duplicate_frames;
-              return;
-            }
-            const size_t phase_index = FindPhaseIndex(phases, now_us);
-            ++phase_metrics[phase_index].receiver_frames;
-            ++summary.receiver_frames;
-            if (frame.keyframe) {
-              ++phase_metrics[phase_index].keyframes;
-              ++summary.keyframes;
-            }
-            if (last_frame_out_us >= 0) {
-              const int64_t gap_ms = (now_us - last_frame_out_us) / 1000;
-              if (gap_ms > 1000) {
-                ++summary.freeze_count;
-                summary.max_freeze_ms = std::max(summary.max_freeze_ms, gap_ms);
-              }
-            }
-            last_frame_out_us = now_us;
-          },
-          nullptr,
-          [&](const RecoveryRequest& request) {
-            if (request.type == RecoveryRequest::Type::kPli) {
-              if (now_us - last_keyframe_encode_us >= 2000000) {
-                force_keyframe_next = true;
-              }
-              return;
-            }
-            if (request.type != RecoveryRequest::Type::kNack) {
-              return;
-            }
-            for (uint16_t sequence : request.missing_rtp_sequence_numbers) {
-              std::optional<RtpPacket> retransmission =
-                  cache.Find(sequence, retransmission_transport_seq++);
-              if (retransmission.has_value()) {
-                schedule_downlink(*retransmission, now_us, true);
-              }
-            }
-          }});
+  ReceiverQosObserver receiver_observer(ReceiverQosObserverConfig{ids, 200});
+  std::unique_ptr<VideoJitterBackend> jitter_backend;
+#ifdef WEBRTC_QOS_ENABLE_WEBRTC_BACKEND
+  if (backend == "webrtc") {
+    jitter_backend =
+        CreateWebRtcVideoJitterBackend(VideoJitterPlayerConfig{ids.sender_ssrc});
+  }
+#endif
+  VideoJitterPlayer jitter(VideoJitterPlayerConfig{ids.sender_ssrc},
+                           std::move(jitter_backend));
+
+  auto handle_recovery_request = [&](const RecoveryRequest& request) {
+    if (request.type == RecoveryRequest::Type::kPli) {
+      if (now_us - last_keyframe_encode_us >= 2000000) {
+        force_keyframe_next = true;
+      }
+      return;
+    }
+    if (request.type != RecoveryRequest::Type::kNack) {
+      return;
+    }
+    for (uint16_t sequence : request.missing_rtp_sequence_numbers) {
+      std::optional<RtpPacket> retransmission =
+          cache.Find(sequence, retransmission_transport_seq++);
+      if (retransmission.has_value()) {
+        schedule_downlink(*retransmission, now_us, true);
+      }
+    }
+  };
+
+  auto handle_frame = [&](const EncodedVideoFrame& frame) {
+    if (!rendered_timestamps.insert(frame.rtp_timestamp).second) {
+      ++summary.duplicate_frames;
+      return;
+    }
+    const size_t phase_index = FindPhaseIndex(phases, now_us);
+    ++phase_metrics[phase_index].receiver_frames;
+    ++summary.receiver_frames;
+    if (frame.keyframe) {
+      ++phase_metrics[phase_index].keyframes;
+      ++summary.keyframes;
+    }
+    if (last_frame_out_us >= 0) {
+      const int64_t gap_ms = (now_us - last_frame_out_us) / 1000;
+      if (gap_ms > 1000) {
+        ++summary.freeze_count;
+        summary.max_freeze_ms = std::max(summary.max_freeze_ms, gap_ms);
+      }
+    }
+    last_frame_out_us = now_us;
+  };
+
+  auto receive_packet = [&](const RtpPacket& packet) -> Status {
+    receiver_observer.OnRtpPacketReceived(packet, now_us);
+    Status insert_status = jitter.InsertPacket(packet, now_us);
+    if (!insert_status) {
+      RecoveryRequest request;
+      request.type = RecoveryRequest::Type::kPli;
+      request.sender_ssrc = ids.sender_ssrc;
+      request.reason = insert_status.message;
+      handle_recovery_request(request);
+      return insert_status;
+    }
+    while (jitter.HasFrame()) {
+      EncodedVideoFrame frame;
+      Status pop_status = jitter.PopFrame(&frame);
+      if (!pop_status) {
+        return pop_status;
+      }
+      receiver_observer.OnFrameDecoded(frame.rtp_timestamp);
+      handle_frame(frame);
+    }
+    std::vector<uint16_t> missing =
+        receiver_observer.TakeMissingSequenceNumbers();
+    if (!missing.empty()) {
+      RecoveryRequest request;
+      request.type = RecoveryRequest::Type::kNack;
+      request.sender_ssrc = ids.sender_ssrc;
+      request.missing_rtp_sequence_numbers = std::move(missing);
+      request.reason = "missing RTP sequence numbers";
+      handle_recovery_request(request);
+    }
+    return Status::Ok();
+  };
 
   int64_t next_feedback_us = 0;
   int64_t next_encode_us = 0;
@@ -396,12 +496,14 @@ int main(int argc, char** argv) {
     const Phase& phase = FindPhase(phases, now_us);
     if (now_us >= next_feedback_us) {
       UplinkTransportFeedback feedback =
-          BuildFeedback(ids, &feedback_transport_seq, now_us,
+          BuildFeedback(ids, &pending_uplink_feedback, now_us, feedback_seq++,
                         phase.feedback_bps, phase.feedback_loss);
-      status = qos.OnUplinkTransportFeedback(feedback);
-      if (!status) {
-        std::cerr << "feedback failed: " << status.message << "\n";
-        return 2;
+      if (!feedback.packets.empty()) {
+        status = qos.OnUplinkTransportFeedback(feedback);
+        if (!status) {
+          std::cerr << "feedback failed: " << status.message << "\n";
+          return 2;
+        }
       }
       RtcpReceiverReport rr;
       rr.sender_ssrc = ids.sender_ssrc;
@@ -494,7 +596,7 @@ int main(int argc, char** argv) {
       RtpPacket packet = downlink[i].packet;
       packet.receive_time_us = now_us;
       downlink.erase(downlink.begin() + static_cast<long>(i));
-      status = receiver.OnRtpPacket(packet, now_us);
+      status = receive_packet(packet);
       if (!status && status.code != StatusCode::kMalformedPacket) {
         std::cerr << "receiver failed: " << status.message << "\n";
         return 8;
@@ -517,7 +619,7 @@ int main(int argc, char** argv) {
       RtpPacket packet = downlink[i].packet;
       packet.receive_time_us = now_us;
       downlink.erase(downlink.begin() + static_cast<long>(i));
-      receiver.OnRtpPacket(packet, now_us);
+      receive_packet(packet);
     }
   }
 
@@ -560,7 +662,8 @@ int main(int argc, char** argv) {
 
   WriteSummary(summary_path, summary, phase_metrics);
 
-  std::cout << "long_stream_qoe strategy=" << strategy
+  std::cout << "long_stream_qoe backend=" << backend
+            << " strategy=" << strategy
             << " degrade_ms=" << summary.degrade_time_ms
             << " recovery_ms=" << summary.recovery_time_ms
             << " freeze_count=" << summary.freeze_count

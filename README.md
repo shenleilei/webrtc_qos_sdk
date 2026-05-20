@@ -244,7 +244,14 @@ Long-stream encoder QoE strategy matrix:
 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
 ```
 
-This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across a walking-network transition: good network, sudden outage below 100kbps with high RTT/loss/jitter, poor edge coverage, then recovery to good network. It compares:
+This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across a walking-network transition: good network, sudden outage below 100kbps with high RTT/loss/jitter, poor edge coverage, then recovery to good network.
+
+The matrix now compares two backend families:
+
+- `lightweight`: SDK fallback estimator plus SDK H264 jitter player.
+- `webrtc`: WebRTC GoogCC bridge plus WebRTC H264 video jitter bridge, while keeping SDK pacer/NACK/server recovery.
+
+For each backend, it compares:
 
 - `adaptive`: current QoS decision applies bitrate and FPS reduction.
 - `balanced`: bitrate adapts, FPS is kept at least 10fps.
@@ -260,12 +267,16 @@ Latest local long-stream QoE result:
 
 | Strategy | Smoothness score | Balanced QoE score | Freeze count | Max freeze | Network drops | Duplicate frames | Outage FPS | Poor FPS | Recovered FPS | Interpretation |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| adaptive | 546.167 | 571.167 | 3 | 1745ms | 0 | 5 | 1.75 | 2.67 | 28.2 | Recovers after network improves, but weak-phase continuity is too low. |
-| balanced | 396.000 | 441.000 | 2 | 1710ms | 0 | 9 | 2.75 | 5.00 | 28.8 | Best current candidate under the balanced QoE objective. |
-| bitrate_only | 0.000 | 915.000 | 0 | 0ms | 0 | 183 | 22.50 | 29.00 | 30.8 | Best if optimizing smoothness only, but duplicate output makes it a poor balanced QoE choice. |
-| fixed | 1406.000 | 3154.000 | 1 | 1670ms | 859 | 6 | 4.00 | 0.00 | 0.0 | Fails weak-network recovery; not acceptable for Phase-1a. |
+| lightweight/adaptive | 534.667 | 559.667 | 3 | 1430ms | 0 | 5 | 1.75 | 1.67 | 28.0 | Recovers after network improves, but weak-phase continuity is low. |
+| lightweight/balanced | 445.833 | 495.833 | 3 | 1325ms | 0 | 10 | 7.25 | 3.33 | 27.8 | Best current candidate under the balanced QoE objective. |
+| lightweight/bitrate_only | 0.000 | 830.000 | 0 | 0ms | 0 | 166 | 22.75 | 25.67 | 30.2 | Best if optimizing smoothness only, but duplicate output makes it a poor balanced QoE choice. |
+| lightweight/fixed | 1406.000 | 3154.000 | 1 | 1670ms | 859 | 6 | 4.00 | 0.00 | 0.0 | Fails weak-network recovery. |
+| webrtc/adaptive | 843.333 | 1215.333 | 2 | 2590ms | 186 | 0 | 3.25 | 0.33 | 9.0 | Target backend is wired in, but current feedback/pacing model recovers too slowly. |
+| webrtc/balanced | 804.500 | 1156.500 | 2 | 2945ms | 176 | 0 | 4.75 | 1.00 | 12.6 | Best WebRTC-backend candidate, still worse than lightweight balanced in this test. |
+| webrtc/bitrate_only | 1685.500 | 2965.500 | 1 | 8655ms | 640 | 0 | 4.00 | 0.00 | 63.2 | High recovery output but severe freeze/drop artifacts. |
+| webrtc/fixed | 1117.000 | 2791.000 | 0 | 0ms | 837 | 0 | 4.00 | 0.00 | 0.0 | No recovery. |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario, candidate set, and objective function. It does not prove a global optimum. It also shows why the product objective matters: smoothness-only can prefer `bitrate_only`, while balanced QoE prefers `balanced`. The next improvement should add decoder/render metrics and real content quality metrics before claiming a production optimum.
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario, candidate set, backend set, and objective function. It does not prove a global optimum. It also shows why the product objective matters: smoothness-only can prefer `lightweight/bitrate_only`, while balanced QoE prefers `lightweight/balanced`. The target `webrtc` backend is now in the same matrix, but its current recovery is worse under this synthetic feedback model; P1a+ should tune GoogCC input pacing, feedback timing, and recovery policy before treating the WebRTC backend as production-ready.
 
 UDP weak-network matrix:
 
