@@ -209,6 +209,17 @@ It also writes machine-readable metrics:
 - `${LOG_DIR}/summary.json`: aggregate min/max/avg values for frames, RTT, final bitrate, retransmission success ratio, observed loss, reported loss, and jitter.
 - Threshold failures include missing feedback/RR/rate-cap/PLI/NACK/retransmission, insufficient recovered frames, missing reorder/delay observation, and failed rate-cap application.
 
+The predefined weak-network scenario file is `scripts/udp_netem_scenarios.json`. It currently covers:
+
+- `baseline_single_loss`: one RTP loss.
+- `burst_loss`: two close RTP losses.
+- `reorder_only`: out-of-order RTP arrival.
+- `delay_only`: fixed downlink delay.
+- `jitter_periodic`: periodic extra delay.
+- `mixed_loss_reorder_delay_jitter`: burst loss, reorder, fixed delay, and periodic jitter combined.
+
+Each scenario carries its expected metrics threshold, so the matrix validates behavior against explicit expectations instead of only grepping for log lines.
+
 UDP soak entry:
 
 ```bash

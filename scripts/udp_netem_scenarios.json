@@ -1,0 +1,126 @@
+[
+  {
+    "name": "baseline_single_loss",
+    "description": "Single RTP loss with otherwise clean network. Validates NACK, retransmission, TWCC, RR, rate cap, and frame recovery.",
+    "netem": {
+      "drop_seqs": [2]
+    },
+    "expect": {
+      "min_feedback": 1,
+      "min_rr": 1,
+      "min_rate_caps": 1,
+      "min_pli": 1,
+      "min_nack": 1,
+      "min_retransmitted": 1,
+      "min_frames": 3,
+      "min_retransmit_ratio": 1.0,
+      "rate_cap": true
+    }
+  },
+  {
+    "name": "burst_loss",
+    "description": "Two close RTP losses. Validates repeated NACK generation, multiple retransmissions, and final recovery.",
+    "netem": {
+      "drop_seqs": [2, 3]
+    },
+    "expect": {
+      "min_feedback": 1,
+      "min_rr": 1,
+      "min_rate_caps": 1,
+      "min_pli": 1,
+      "min_nack": 1,
+      "min_retransmitted": 2,
+      "min_frames": 3,
+      "min_retransmit_ratio": 1.0,
+      "rate_cap": true
+    }
+  },
+  {
+    "name": "reorder_only",
+    "description": "One RTP packet is delayed enough to arrive out of order. Validates jitter/reorder tolerance without relying only on retransmission.",
+    "netem": {
+      "drop_seqs": [2],
+      "reorder_seqs": [4],
+      "reorder_delay_ms": 120
+    },
+    "expect": {
+      "min_feedback": 1,
+      "min_rr": 1,
+      "min_rate_caps": 1,
+      "min_pli": 1,
+      "min_nack": 1,
+      "min_retransmitted": 1,
+      "min_frames": 3,
+      "min_retransmit_ratio": 1.0,
+      "rate_cap": true,
+      "reorder": true
+    }
+  },
+  {
+    "name": "delay_only",
+    "description": "Clean single-loss path plus delayed downlink packet. Validates delayed packet handling and frame recovery.",
+    "netem": {
+      "drop_seqs": [2],
+      "delay_ms": 30
+    },
+    "expect": {
+      "min_feedback": 1,
+      "min_rr": 1,
+      "min_rate_caps": 1,
+      "min_pli": 1,
+      "min_nack": 1,
+      "min_retransmitted": 1,
+      "min_frames": 3,
+      "min_retransmit_ratio": 1.0,
+      "rate_cap": true,
+      "delay": true
+    }
+  },
+  {
+    "name": "jitter_periodic",
+    "description": "Every third RTP packet gets extra delay. Validates jitter tolerance and recovery under repeated variable delay.",
+    "netem": {
+      "drop_seqs": [2],
+      "jitter_ms": 45,
+      "jitter_every_n": 3
+    },
+    "expect": {
+      "min_feedback": 1,
+      "min_rr": 1,
+      "min_rate_caps": 1,
+      "min_pli": 1,
+      "min_nack": 1,
+      "min_retransmitted": 1,
+      "min_frames": 3,
+      "min_retransmit_ratio": 1.0,
+      "rate_cap": true,
+      "jitter": true
+    }
+  },
+  {
+    "name": "mixed_loss_reorder_delay_jitter",
+    "description": "Burst loss plus reorder, fixed delay, and periodic jitter. Validates the full QoS/recovery loop under combined impairment.",
+    "netem": {
+      "drop_seqs": [2, 5],
+      "reorder_seqs": [4, 7],
+      "reorder_delay_ms": 120,
+      "delay_ms": 30,
+      "jitter_ms": 45,
+      "jitter_every_n": 3
+    },
+    "expect": {
+      "min_feedback": 1,
+      "min_rr": 1,
+      "min_rate_caps": 1,
+      "min_pli": 1,
+      "min_nack": 1,
+      "min_retransmitted": 2,
+      "min_frames": 3,
+      "min_retransmit_ratio": 1.0,
+      "rate_cap": true,
+      "reorder": true,
+      "delay": true,
+      "jitter": true
+    }
+  }
+]

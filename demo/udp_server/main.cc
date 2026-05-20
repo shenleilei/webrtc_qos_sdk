@@ -1,7 +1,7 @@
 #include <cstdlib>
+#include <deque>
 #include <iostream>
 #include <map>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,7 +16,10 @@ namespace {
 void Usage(const char* argv0) {
   std::cerr << "usage: " << argv0
             << " <listen_port> <receiver_ip> <receiver_port>"
-            << " [--drop-rtp-seq=N] [--reorder-rtp-seq=N] [--delay-ms=N]\n";
+            << " [--drop-rtp-seq=N] [--drop-rtp-seqs=A,B]"
+            << " [--reorder-rtp-seq=N] [--reorder-rtp-seqs=A,B]"
+            << " [--reorder-delay-ms=N] [--delay-ms=N]"
+            << " [--jitter-ms=N] [--jitter-every-n=N]\n";
 }
 
 bool SameEndpoint(const sockaddr_in& a, const sockaddr_in& b) {
@@ -32,22 +35,45 @@ bool FlushDelayedIfReady(int fd,
                          const sockaddr_in& receiver,
                          const webrtc_qos::demo::DemoEnvelopeHeader& header,
                          int64_t now_us,
-                         std::optional<webrtc_qos::demo::DelayedPacket>* delayed,
+                         std::deque<webrtc_qos::demo::DelayedPacket>* delayed,
                          size_t* rtp_forwarded) {
-  if (!delayed || !delayed->has_value() ||
-      (*delayed)->release_time_us > now_us) {
+  if (!delayed || delayed->empty() ||
+      delayed->front().release_time_us > now_us) {
     return false;
   }
   if (!webrtc_qos::demo::SendEnvelope(fd, receiver, header,
-                                      (*delayed)->payload)) {
+                                      delayed->front().payload)) {
     std::cerr << "udp_server: flush delayed RTP failed\n";
     std::exit(1);
   }
-  if (!(*delayed)->counted_forwarded && rtp_forwarded) {
+  if (!delayed->front().counted_forwarded && rtp_forwarded) {
     ++(*rtp_forwarded);
   }
-  delayed->reset();
+  delayed->pop_front();
   return true;
+}
+
+void FlushAllReady(int fd,
+                   const sockaddr_in& receiver,
+                   const webrtc_qos::demo::DemoEnvelopeHeader& header,
+                   int64_t now_us,
+                   std::deque<webrtc_qos::demo::DelayedPacket>* delayed,
+                   size_t* rtp_forwarded) {
+  while (FlushDelayedIfReady(fd, receiver, header, now_us, delayed,
+                             rtp_forwarded)) {
+  }
+}
+
+void EnqueueDelayed(std::deque<webrtc_qos::demo::DelayedPacket>* delayed,
+                    webrtc_qos::demo::DelayedPacket packet) {
+  if (!delayed) {
+    return;
+  }
+  auto it = delayed->begin();
+  while (it != delayed->end() && it->release_time_us <= packet.release_time_us) {
+    ++it;
+  }
+  delayed->insert(it, std::move(packet));
 }
 
 bool SendSenderRateCapOnce(int fd,
@@ -92,12 +118,28 @@ int main(int argc, char** argv) {
   for (int i = 4; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg.rfind("--", 0) != 0) {
-      netem.drop_rtp_seq = static_cast<uint16_t>(std::atoi(arg.c_str()));
+      netem.drop_rtp_seqs = {
+          static_cast<uint16_t>(std::atoi(arg.c_str()))};
       continue;
     }
-    if (ParseUint16Option(arg, "--drop-rtp-seq=", &netem.drop_rtp_seq) ||
-        ParseUint16Option(arg, "--reorder-rtp-seq=", &netem.reorder_rtp_seq) ||
-        ParseUint32Option(arg, "--delay-ms=", &netem.delay_ms)) {
+    uint16_t single_value = 0;
+    if (ParseUint16Option(arg, "--drop-rtp-seq=", &single_value)) {
+      netem.drop_rtp_seqs = {single_value};
+      continue;
+    }
+    if (ParseUint16Option(arg, "--reorder-rtp-seq=", &single_value)) {
+      netem.reorder_rtp_seqs = {single_value};
+      continue;
+    }
+    if (ParseUint16ListOption(arg, "--drop-rtp-seqs=",
+                              &netem.drop_rtp_seqs) ||
+        ParseUint16ListOption(arg, "--reorder-rtp-seqs=",
+                              &netem.reorder_rtp_seqs) ||
+        ParseUint32Option(arg, "--delay-ms=", &netem.delay_ms) ||
+        ParseUint32Option(arg, "--reorder-delay-ms=",
+                          &netem.reorder_delay_ms) ||
+        ParseUint32Option(arg, "--jitter-ms=", &netem.jitter_ms) ||
+        ParseUint16Option(arg, "--jitter-every-n=", &netem.jitter_every_n)) {
       continue;
     }
     Usage(argv[0]);
@@ -112,12 +154,13 @@ int main(int argc, char** argv) {
 
   RetransmissionCache downlink_cache;
   std::map<uint16_t, PacketFeedback> uplink_feedback;
-  std::optional<DelayedPacket> delayed_packet;
+  std::deque<DelayedPacket> delayed_packets;
   size_t rtp_in = 0;
   size_t rtp_forwarded = 0;
   size_t dropped = 0;
   size_t reordered = 0;
   size_t delayed = 0;
+  size_t jittered = 0;
   size_t retransmitted = 0;
   size_t rr_sent = 0;
   size_t rate_caps_sent = 0;
@@ -129,9 +172,8 @@ int main(int argc, char** argv) {
 
   const int64_t deadline_us = NowUs() + 15000000;
   while (NowUs() < deadline_us && !(bye_from_sender && bye_from_receiver)) {
-    FlushDelayedIfReady(fd, receiver,
-                        MakeEnvelopeHeader(EnvelopeType::kRtp, ids), NowUs(),
-                        &delayed_packet, &rtp_forwarded);
+    FlushAllReady(fd, receiver, MakeEnvelopeHeader(EnvelopeType::kRtp, ids),
+                  NowUs(), &delayed_packets, &rtp_forwarded);
 
     DemoEnvelopeHeader header;
     std::vector<uint8_t> payload;
@@ -181,7 +223,7 @@ int main(int argc, char** argv) {
       SendEnvelope(fd, sender, MakeEnvelopeHeader(EnvelopeType::kUplinkTwcc, ids),
                    encoded_feedback);
 
-      if (packet.sequence_number == netem.drop_rtp_seq) {
+      if (ContainsUint16(netem.drop_rtp_seqs, packet.sequence_number)) {
         downlink_cache.Store(packet, NowUs());
         ++dropped;
         continue;
@@ -190,18 +232,37 @@ int main(int argc, char** argv) {
       downlink_cache.Store(packet, NowUs());
       const std::vector<uint8_t> encoded = SerializeRtpPacket(packet);
 
-      if (netem.reorder_rtp_seq != 0 &&
-          packet.sequence_number == netem.reorder_rtp_seq) {
-        delayed_packet = DelayedPacket{encoded, NowUs() + 120000, false};
+      if (ContainsUint16(netem.reorder_rtp_seqs, packet.sequence_number)) {
+        EnqueueDelayed(&delayed_packets,
+                       DelayedPacket{
+                           encoded,
+                           NowUs() +
+                               static_cast<int64_t>(netem.reorder_delay_ms) *
+                                   1000,
+                           false});
         ++reordered;
         continue;
       }
 
-      if (netem.delay_ms > 0 && !delayed_packet.has_value() &&
-          packet.sequence_number > netem.drop_rtp_seq) {
-        delayed_packet = DelayedPacket{
+      if (netem.jitter_ms > 0 && netem.jitter_every_n > 0 &&
+          packet.sequence_number % netem.jitter_every_n == 0) {
+        EnqueueDelayed(&delayed_packets,
+                       DelayedPacket{
+                           encoded,
+                           NowUs() +
+                               static_cast<int64_t>(netem.jitter_ms) * 1000,
+                           false});
+        ++jittered;
+        continue;
+      }
+
+      const uint16_t first_drop =
+          netem.drop_rtp_seqs.empty() ? 0 : netem.drop_rtp_seqs.front();
+      if (netem.delay_ms > 0 && delayed_packets.empty() &&
+          packet.sequence_number > first_drop) {
+        EnqueueDelayed(&delayed_packets, DelayedPacket{
             encoded, NowUs() + static_cast<int64_t>(netem.delay_ms) * 1000,
-            false};
+            false});
         ++delayed;
         continue;
       }
@@ -302,8 +363,8 @@ int main(int argc, char** argv) {
     }
   }
 
-  FlushDelayedIfReady(fd, receiver, MakeEnvelopeHeader(EnvelopeType::kRtp, ids),
-                      NowUs() + 10000000, &delayed_packet, &rtp_forwarded);
+  FlushAllReady(fd, receiver, MakeEnvelopeHeader(EnvelopeType::kRtp, ids),
+                NowUs() + 10000000, &delayed_packets, &rtp_forwarded);
 
   if (sender_known && !uplink_feedback.empty()) {
     UplinkTransportFeedback feedback;
@@ -329,6 +390,7 @@ int main(int argc, char** argv) {
             << " dropped=" << dropped
             << " reordered=" << reordered
             << " delayed=" << delayed
+            << " jittered=" << jittered
             << " retransmitted=" << retransmitted
             << " rr_sent=" << rr_sent
             << " rate_caps=" << rate_caps_sent

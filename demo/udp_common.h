@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <algorithm>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -46,9 +47,12 @@ struct DemoEnvelopeHeader {
 };
 
 struct NetworkSimulationConfig {
-  uint16_t drop_rtp_seq = 2;
-  uint16_t reorder_rtp_seq = 0;
+  std::vector<uint16_t> drop_rtp_seqs = {2};
+  std::vector<uint16_t> reorder_rtp_seqs;
   uint32_t delay_ms = 0;
+  uint32_t reorder_delay_ms = 120;
+  uint32_t jitter_ms = 0;
+  uint16_t jitter_every_n = 0;
 };
 
 struct DelayedPacket {
@@ -245,6 +249,44 @@ inline bool ParseUint16Option(const std::string& arg,
   *value = static_cast<uint16_t>(std::strtoul(arg.c_str() + prefix.size(),
                                              nullptr, 10));
   return true;
+}
+
+inline std::vector<uint16_t> ParseUint16List(const std::string& csv) {
+  std::vector<uint16_t> values;
+  size_t start = 0;
+  while (start <= csv.size()) {
+    const size_t comma = csv.find(',', start);
+    const std::string item =
+        csv.substr(start, comma == std::string::npos ? std::string::npos
+                                                     : comma - start);
+    if (!item.empty()) {
+      const uint16_t value =
+          static_cast<uint16_t>(std::strtoul(item.c_str(), nullptr, 10));
+      if (value != 0) {
+        values.push_back(value);
+      }
+    }
+    if (comma == std::string::npos) {
+      break;
+    }
+    start = comma + 1;
+  }
+  return values;
+}
+
+inline bool ParseUint16ListOption(const std::string& arg,
+                                  const std::string& prefix,
+                                  std::vector<uint16_t>* values) {
+  if (arg.rfind(prefix, 0) != 0 || !values) {
+    return false;
+  }
+  *values = ParseUint16List(arg.substr(prefix.size()));
+  return true;
+}
+
+inline bool ContainsUint16(const std::vector<uint16_t>& values,
+                           uint16_t value) {
+  return std::find(values.begin(), values.end(), value) != values.end();
 }
 
 inline bool ParseUint32Option(const std::string& arg,

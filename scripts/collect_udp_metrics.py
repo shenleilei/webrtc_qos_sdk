@@ -17,7 +17,8 @@ SENDER_RE = re.compile(
 SERVER_RE = re.compile(
     r"udp_server rtp_in=(?P<rtp_in>\d+) forwarded=(?P<forwarded>\d+) "
     r"dropped=(?P<dropped>\d+) reordered=(?P<reordered>\d+) "
-    r"delayed=(?P<delayed>\d+) retransmitted=(?P<retransmitted>\d+) "
+    r"delayed=(?P<delayed>\d+) jittered=(?P<jittered>\d+) "
+    r"retransmitted=(?P<retransmitted>\d+) "
     r"rr_sent=(?P<rr_sent>\d+) rate_caps=(?P<rate_caps>\d+) "
     r"pli_forwarded=(?P<pli_forwarded>\d+)"
 )
@@ -145,6 +146,8 @@ def check_thresholds(summary, args):
         failures.append("reorder_not_observed")
     if args.expect_delay and server.get("delayed", 0) <= 0:
         failures.append("delay_not_observed")
+    if args.expect_jitter and server.get("jittered", 0) <= 0:
+        failures.append("jitter_not_observed")
 
     return failures
 
@@ -170,8 +173,12 @@ def main():
     parser.add_argument("--scenario", default="unknown")
     parser.add_argument("--run", type=int, default=1)
     parser.add_argument("--drop-seq", type=int, default=0)
+    parser.add_argument("--drop-count", type=int, default=0)
     parser.add_argument("--reorder-seq", type=int, default=0)
+    parser.add_argument("--reorder-count", type=int, default=0)
     parser.add_argument("--delay-ms", type=int, default=0)
+    parser.add_argument("--jitter-ms", type=int, default=0)
+    parser.add_argument("--jitter-every-n", type=int, default=0)
     parser.add_argument("--min-feedback", type=int, default=1)
     parser.add_argument("--min-rr", type=int, default=1)
     parser.add_argument("--min-rate-caps", type=int, default=1)
@@ -183,6 +190,7 @@ def main():
     parser.add_argument("--expect-rate-cap", action="store_true")
     parser.add_argument("--expect-reorder", action="store_true")
     parser.add_argument("--expect-delay", action="store_true")
+    parser.add_argument("--expect-jitter", action="store_true")
     args = parser.parse_args()
 
     summary = parse_log(args.log)
@@ -191,8 +199,12 @@ def main():
         "run": args.run,
         "netem": {
             "drop_seq": args.drop_seq,
+            "drop_count": args.drop_count,
             "reorder_seq": args.reorder_seq,
+            "reorder_count": args.reorder_count,
             "delay_ms": args.delay_ms,
+            "jitter_ms": args.jitter_ms,
+            "jitter_every_n": args.jitter_every_n,
         },
         "log": str(args.log),
     })

@@ -7,6 +7,7 @@ RUNS="${RUNS:-3}"
 BASE_PORT_START="${BASE_PORT_START:-42000}"
 LOG_DIR="${LOG_DIR:-/tmp/webrtc_qos_udp_netem_matrix}"
 BUILD_DEMOS="${BUILD_DEMOS:-1}"
+SCENARIO_FILE="${SCENARIO_FILE:-${SDK_ROOT}/scripts/udp_netem_scenarios.json}"
 
 mkdir -p "${LOG_DIR}"
 rm -f "${LOG_DIR}/metrics.jsonl"
@@ -15,12 +16,50 @@ if [[ "${BUILD_DEMOS}" != "0" ]]; then
   "${SDK_ROOT}/scripts/build_udp_demos.sh" >/dev/null
 fi
 
-SCENARIOS=(
-  "baseline_drop:2:0:0"
-  "reorder:2:4:0"
-  "delay:2:0:30"
-  "reorder_delay:2:4:30"
-)
+run_scenarios() {
+  python3 - "$SCENARIO_FILE" "$RUNS" "$BASE_PORT_START" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+scenario_file = Path(sys.argv[1])
+runs = int(sys.argv[2])
+base_port_start = int(sys.argv[3])
+scenarios = json.loads(scenario_file.read_text(encoding="utf-8"))
+index = 0
+for run in range(1, runs + 1):
+    for scenario in scenarios:
+        netem = scenario.get("netem", {})
+        expect = scenario.get("expect", {})
+        drop = ",".join(str(x) for x in netem.get("drop_seqs", []))
+        reorder = ",".join(str(x) for x in netem.get("reorder_seqs", []))
+        fields = [
+            str(run),
+            scenario["name"],
+            str(base_port_start + index * 10),
+            drop,
+            reorder,
+            str(netem.get("reorder_delay_ms", 120)),
+            str(netem.get("delay_ms", 0)),
+            str(netem.get("jitter_ms", 0)),
+            str(netem.get("jitter_every_n", 0)),
+            str(expect.get("min_feedback", 1)),
+            str(expect.get("min_rr", 1)),
+            str(expect.get("min_rate_caps", 1)),
+            str(expect.get("min_pli", 1)),
+            str(expect.get("min_nack", 1)),
+            str(expect.get("min_retransmitted", 1)),
+            str(expect.get("min_frames", 3)),
+            str(expect.get("min_retransmit_ratio", 1.0)),
+            "1" if expect.get("rate_cap", True) else "0",
+            "1" if expect.get("reorder", False) else "0",
+            "1" if expect.get("delay", False) else "0",
+            "1" if expect.get("jitter", False) else "0",
+        ]
+        print("|".join(fields))
+        index += 1
+PY
+}
 
 require_line() {
   local pattern="$1"
@@ -34,65 +73,87 @@ require_line() {
   fi
 }
 
-scenario_index=0
-for run in $(seq 1 "${RUNS}"); do
-  for scenario in "${SCENARIOS[@]}"; do
-    IFS=":" read -r name drop_seq reorder_seq delay_ms <<<"${scenario}"
-    base_port=$((BASE_PORT_START + scenario_index * 10))
-    log_file="${LOG_DIR}/${run}_${name}.log"
+scenario_count="$(python3 - "$SCENARIO_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+print(len(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))))
+PY
+)"
 
-    echo "netem run=${run} scenario=${name} drop=${drop_seq} reorder=${reorder_seq} delay_ms=${delay_ms}"
-    BASE_PORT="${base_port}" \
-    PREFIX="${PREFIX}" \
-    DROP_RTP_SEQ="${drop_seq}" \
-    REORDER_RTP_SEQ="${reorder_seq}" \
-    DELAY_MS="${delay_ms}" \
-      "${SDK_ROOT}/scripts/run_udp_loopback_demo.sh" >"${log_file}" 2>&1
+while IFS="|" read -r run name base_port drop_seqs reorder_seqs reorder_delay_ms delay_ms jitter_ms jitter_every_n min_feedback min_rr min_rate_caps min_pli min_nack min_retransmitted min_frames min_retransmit_ratio expect_rate_cap expect_reorder expect_delay expect_jitter; do
+  log_file="${LOG_DIR}/${run}_${name}.log"
+  summary_file="${LOG_DIR}/${run}_${name}.summary.json"
 
-    metrics_args=(
-      --log "${log_file}"
-      --summary "${LOG_DIR}/${run}_${name}.summary.json"
-      --jsonl "${LOG_DIR}/metrics.jsonl"
-      --scenario "${name}"
-      --run "${run}"
-      --drop-seq "${drop_seq}"
-      --reorder-seq "${reorder_seq}"
-      --delay-ms "${delay_ms}"
-      --expect-rate-cap
-    )
-    if [[ "${reorder_seq}" != "0" ]]; then
-      metrics_args+=(--expect-reorder)
-    fi
-    if [[ "${delay_ms}" != "0" ]]; then
-      metrics_args+=(--expect-delay)
-    fi
-    python3 "${SDK_ROOT}/scripts/collect_udp_metrics.py" "${metrics_args[@]}"
+  echo "netem run=${run} scenario=${name} drop=${drop_seqs:-none} reorder=${reorder_seqs:-none} reorder_delay_ms=${reorder_delay_ms} delay_ms=${delay_ms} jitter_ms=${jitter_ms} jitter_every_n=${jitter_every_n}"
 
-    require_line "udp_sender sent=[0-9]+ feedback=[1-9][0-9]* rr=[1-9][0-9]* rate_caps=[1-9][0-9]* pli_received=[1-9][0-9]* idr_resends=[1-9][0-9]*" \
-      "${log_file}" "sender did not consume TWCC/RR/rate cap/PLI or resend IDR"
-    require_line "final_target_bps=1000000" \
-      "${log_file}" "sender rate cap did not affect final target"
-    require_line "udp_server .*dropped=[1-9][0-9]*" \
-      "${log_file}" "server did not apply configured packet drop"
-    require_line "udp_server .*retransmitted=[1-9][0-9]*" \
-      "${log_file}" "server did not retransmit from cache"
-    require_line "udp_server .*rr_sent=[1-9][0-9]* rate_caps=[1-9][0-9]* pli_forwarded=[1-9][0-9]*" \
-      "${log_file}" "server did not send RR/rate cap or forward PLI"
-    require_line "udp_receiver .*nack_sent=[1-9][0-9]* pli_sent=[1-9][0-9]* frames=3" \
-      "${log_file}" "receiver did not NACK, send PLI, and recover three frames"
+  BASE_PORT="${base_port}" \
+  PREFIX="${PREFIX}" \
+  DROP_RTP_SEQS="${drop_seqs}" \
+  REORDER_RTP_SEQS="${reorder_seqs}" \
+  REORDER_DELAY_MS="${reorder_delay_ms}" \
+  DELAY_MS="${delay_ms}" \
+  JITTER_MS="${jitter_ms}" \
+  JITTER_EVERY_N="${jitter_every_n}" \
+    "${SDK_ROOT}/scripts/run_udp_loopback_demo.sh" >"${log_file}" 2>&1
 
-    if [[ "${reorder_seq}" != "0" ]]; then
-      require_line "udp_server .*reordered=[1-9][0-9]*" \
-        "${log_file}" "server did not apply configured reorder"
-    fi
-    if [[ "${delay_ms}" != "0" ]]; then
-      require_line "udp_server .*delayed=[1-9][0-9]*" \
-        "${log_file}" "server did not apply configured delay"
-    fi
+  metrics_args=(
+    --log "${log_file}"
+    --summary "${summary_file}"
+    --jsonl "${LOG_DIR}/metrics.jsonl"
+    --scenario "${name}"
+    --run "${run}"
+    --drop-count "$(python3 - "${drop_seqs}" <<'PY'
+import sys
+items = [x for x in sys.argv[1].split(",") if x]
+print(len(items))
+PY
+)"
+    --reorder-count "$(python3 - "${reorder_seqs}" <<'PY'
+import sys
+items = [x for x in sys.argv[1].split(",") if x]
+print(len(items))
+PY
+)"
+    --delay-ms "${delay_ms}"
+    --jitter-ms "${jitter_ms}"
+    --jitter-every-n "${jitter_every_n}"
+    --min-feedback "${min_feedback}"
+    --min-rr "${min_rr}"
+    --min-rate-caps "${min_rate_caps}"
+    --min-pli "${min_pli}"
+    --min-nack "${min_nack}"
+    --min-retransmitted "${min_retransmitted}"
+    --min-frames "${min_frames}"
+    --min-retransmit-ratio "${min_retransmit_ratio}"
+  )
+  if [[ "${expect_rate_cap}" == "1" ]]; then
+    metrics_args+=(--expect-rate-cap)
+  fi
+  if [[ "${expect_reorder}" == "1" ]]; then
+    metrics_args+=(--expect-reorder)
+  fi
+  if [[ "${expect_delay}" == "1" ]]; then
+    metrics_args+=(--expect-delay)
+  fi
+  if [[ "${expect_jitter}" == "1" ]]; then
+    metrics_args+=(--expect-jitter)
+  fi
+  python3 "${SDK_ROOT}/scripts/collect_udp_metrics.py" "${metrics_args[@]}"
 
-    scenario_index=$((scenario_index + 1))
-  done
-done
+  require_line "udp_sender sent=[0-9]+ feedback=[1-9][0-9]* rr=[1-9][0-9]* rate_caps=[1-9][0-9]* pli_received=[1-9][0-9]* idr_resends=[1-9][0-9]*" \
+    "${log_file}" "sender did not consume TWCC/RR/rate cap/PLI or resend IDR"
+  require_line "final_target_bps=1000000" \
+    "${log_file}" "sender rate cap did not affect final target"
+  require_line "udp_server .*dropped=[1-9][0-9]*" \
+    "${log_file}" "server did not apply configured packet drop"
+  require_line "udp_server .*retransmitted=[1-9][0-9]*" \
+    "${log_file}" "server did not retransmit from cache"
+  require_line "udp_server .*rr_sent=[1-9][0-9]* rate_caps=[1-9][0-9]* pli_forwarded=[1-9][0-9]*" \
+    "${log_file}" "server did not send RR/rate cap or forward PLI"
+  require_line "udp_receiver .*nack_sent=[1-9][0-9]* pli_sent=[1-9][0-9]* frames=${min_frames}" \
+    "${log_file}" "receiver did not NACK, send PLI, and recover expected frames"
+done < <(run_scenarios)
 
 python3 - "${LOG_DIR}/metrics.jsonl" "${LOG_DIR}/summary.json" <<'PY'
 import json
@@ -169,4 +230,4 @@ print(
 )
 PY
 
-echo "udp netem matrix passed runs=${RUNS} scenarios=${#SCENARIOS[@]} logs=${LOG_DIR} metrics=${LOG_DIR}/metrics.jsonl summary=${LOG_DIR}/summary.json"
+echo "udp netem matrix passed runs=${RUNS} scenarios=${scenario_count} logs=${LOG_DIR} metrics=${LOG_DIR}/metrics.jsonl summary=${LOG_DIR}/summary.json"
