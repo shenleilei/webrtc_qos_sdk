@@ -240,7 +240,7 @@ The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `en
 
 When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
-When FFmpeg's H264 decoder is available, the long-stream QoE matrix also decodes receiver Annex-B AUs before counting rendered receiver frames. The decoder runs in low-latency single-thread mode, receives the RTP timestamp as packet PTS, outputs I420 frames, and the matrix compares decoded PTS/RTP timestamp with the generated source I420 frame to produce PSNR. `decode_errors` only counts real FFmpeg send/receive failures; legal decoder buffering with no immediate output is not misclassified as a bad frame. `decode_errors`, `decoded_frames`, `quality_samples`, `psnr_avg`, and `psnr_min` are therefore hard QoE inputs, not log-only diagnostics.
+When FFmpeg's H264 decoder is available, the long-stream QoE matrix also decodes receiver Annex-B AUs before counting rendered receiver frames. The decoder runs in low-latency single-thread mode, receives the RTP timestamp as packet PTS, outputs I420 frames, and the matrix compares decoded PTS/RTP timestamp with the generated source I420 frame to produce PSNR. The demo also records frame latency from generated source frame to receiver AU output, plus a jitter-buffer residence proxy from first packet arrival to complete AU output. `decode_errors` only counts real FFmpeg send/receive failures; legal decoder buffering with no immediate output is not misclassified as a bad frame. `decode_errors`, `decoded_frames`, `quality_samples`, `psnr_avg`, `psnr_min`, `frame_latency_*`, and `jitter_buffer_*` are therefore hard QoE inputs, not log-only diagnostics.
 
 Long-stream encoder QoE strategy matrix:
 
@@ -272,13 +272,14 @@ For each backend, it compares:
 The script writes `${LOG_DIR}/metrics.jsonl` and `${LOG_DIR}/summary.json`. `MATRIX_RUNS=N` repeats every scenario with deterministic weak-network seeds (`network_seed=run`) so failures are reproducible and the summary can report both aggregate and worst-case behavior. It reports two objective functions rather than a single ambiguous "best":
 
 - `smoothness_score`: freezes, max freeze duration, network drops, weak-phase receiver FPS, and recovery FPS.
-- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, real FFmpeg H264 decode errors, decoded-frame gaps, low decoded-frame PSNR, weak-network non-adaptation, slow adaptation response, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames, outputs undecodable frames, visibly degrades picture quality, reacts too slowly, or refuses to adapt from being marked best just because it does not visibly freeze.
+- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, real FFmpeg H264 decode errors, decoded-frame gaps, low decoded-frame PSNR, high receiver frame latency, high jitter-buffer residence time, weak-network non-adaptation, slow adaptation response, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames, outputs undecodable frames, visibly degrades picture quality, builds seconds of queue, reacts too slowly, or refuses to adapt from being marked best just because it does not visibly freeze.
 
 The matrix now has hard validation rules when the WebRTC backend is available:
 
 - `webrtc/adaptive` must produce `decode_errors=0` in every run/scenario.
 - `webrtc/adaptive` must produce one source-aligned PSNR sample for every receiver frame in every run/scenario.
 - `webrtc/adaptive` must keep `psnr_avg >= 20.0 dB` and `psnr_min >= 14.0 dB` in every run/scenario.
+- `webrtc/adaptive` must produce one frame-latency and jitter-buffer sample for every receiver frame, with `frame_latency_max_ms <= 1800` and `jitter_buffer_max_ms <= 1200`.
 - `webrtc/adaptive` must meet per-run/per-scenario weak-network downshift and good-network recovery thresholds for bitrate and FPS.
 - `webrtc/adaptive` must meet per-phase adaptation response-time thresholds after entering outage, poor, and good-again phases.
 - `webrtc/adaptive` must be the best or tied-best `balanced_qoe_score` candidate in every run/scenario.
@@ -287,26 +288,26 @@ The matrix now has hard validation rules when the WebRTC backend is available:
 
 Latest local seeded long-stream QoE result (`MATRIX_RUNS=2`, 5 scenarios, 10 cases per backend/strategy):
 
-| Scenario | Best balanced QoE | Worst score | Freeze | Max drops | Duplicates | Worst PSNR avg/min | Max response ms outage/poor/recover | Min outage/poor FPS | Min recovered FPS | Weak target bps | Min recovered target bps |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| walking_dead_zone | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 61.77 / 28.69 | 0 / 0 / 100 | 5.00 / 5.00 | 30.0 | 144000 / 132000 | 2079500 |
-| jitter_loss_oscillation | webrtc/adaptive | 33.000 | 0 | 11 | 0 | 59.61 / 23.20 | 100 / 0 / 100 | 10.00 / 10.00 | 30.0 | 300000 / 213626 | 2079500 |
-| bandwidth_staircase | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 61.25 / 29.68 | 0 / 0 / 100 | 10.00 / 5.00 | 30.0 | 390000 / 156000 | 2079500 |
-| rtt_jitter_spike_recover | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 60.49 / 26.13 | 0 / 0 / 0 | 5.00 / 10.00 | 30.0 | 480000 / 390000 | 2095566 |
-| loss_burst_recover | webrtc/adaptive | 36.000 | 0 | 12 | 0 | 61.72 / 23.75 | 0 / 0 / 0 | 10.00 / 5.00 | 30.0 | 194254 / 116307 | 2000000 |
+| Scenario | Best balanced QoE | Worst score | Freeze | Max drops | Duplicates | Worst PSNR avg/min | Max latency/jitter-buffer ms | Max response ms outage/poor/recover | Min outage/poor FPS | Min recovered FPS | Weak target bps | Min recovered target bps |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| walking_dead_zone | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 61.77 / 28.69 | 1310 / 795 | 0 / 0 / 100 | 5.00 / 5.00 | 30.0 | 144000 / 132000 | 2079500 |
+| jitter_loss_oscillation | webrtc/adaptive | 33.000 | 0 | 11 | 0 | 59.61 / 23.20 | 500 / 430 | 100 / 0 / 100 | 10.00 / 10.00 | 30.0 | 300000 / 213626 | 2079500 |
+| bandwidth_staircase | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 61.25 / 29.68 | 960 / 640 | 0 / 0 / 100 | 10.00 / 5.00 | 30.0 | 390000 / 156000 | 2079500 |
+| rtt_jitter_spike_recover | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 60.49 / 26.13 | 720 / 425 | 0 / 0 / 0 | 5.00 / 10.00 | 30.0 | 480000 / 390000 | 2095566 |
+| loss_burst_recover | webrtc/adaptive | 36.000 | 0 | 12 | 0 | 61.72 / 23.75 | 460 / 370 | 0 / 0 / 0 | 10.00 / 5.00 | 30.0 | 194254 / 116307 | 2000000 |
 
 Latest aggregate ranking:
 
-| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Decode errors | Drops | Duplicates | Failed cases |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 132.000 | 61.159 / 23.200 | 0 | 44 | 0 | 0 |
-| webrtc/balanced | 2212.000 | 60.831 / 23.200 | 0 | 44 | 0 | 0 |
-| lightweight/adaptive | 4566.478 | 26.989 / 16.003 | 17 | 38 | 144 | 1 |
-| lightweight/balanced | 4654.080 | 27.047 / 15.821 | 19 | 48 | 233 | 0 |
-| webrtc/bitrate_only | 27339.000 | 57.338 / 20.907 | 0 | 73 | 0 | 0 |
-| lightweight/bitrate_only | 32616.000 | 26.422 / 16.689 | 16 | 77 | 893 | 0 |
-| webrtc/fixed | 74350.000 | 58.891 / 19.767 | 0 | 4079 | 0 | 0 |
-| lightweight/fixed | 86930.276 | 23.638 / 14.364 | 155 | 4264 | 486 | 0 |
+| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Latency avg/max ms | Jitter-buffer avg/max ms | Decode errors | Drops | Duplicates | Failed cases |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| webrtc/adaptive | 132.000 | 61.159 / 23.200 | 91.2 / 1310 | 35.2 / 795 | 0 | 44 | 0 | 0 |
+| webrtc/balanced | 2212.000 | 60.831 / 23.200 | 112.9 / 1150 | 39.3 / 640 | 0 | 44 | 0 | 0 |
+| lightweight/adaptive | 5040.478 | 26.989 / 16.003 | 89.7 / 2900 | 21.6 / 780 | 17 | 38 | 144 | 1 |
+| lightweight/balanced | 5064.080 | 27.047 / 15.821 | 94.1 / 2295 | 24.9 / 2155 | 19 | 48 | 233 | 0 |
+| webrtc/bitrate_only | 27339.000 | 57.338 / 20.907 | 175.8 / 745 | 60.5 / 440 | 0 | 73 | 0 | 0 |
+| lightweight/bitrate_only | 32616.000 | 26.422 / 16.689 | 146.6 / 985 | 29.8 / 680 | 16 | 77 | 893 | 0 |
+| webrtc/fixed | 83046.087 | 58.891 / 19.767 | 1180.4 / 7295 | 141.5 / 6170 | 0 | 4079 | 0 | 6 |
+| lightweight/fixed | 94976.903 | 23.638 / 14.364 | 1146.4 / 7360 | 36.6 / 5965 | 155 | 4264 | 486 | 0 |
 
 The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, candidate set, backend set, seed set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, smoothed loss-driven FPS adaptation, and WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks. Under the current 2-run/5-scenario synthetic dynamic weak-network matrix, `webrtc/adaptive` is the best aggregate balanced-QoE candidate and has the best worst-case score (`36.0`, `loss_burst_recover`, seeds 1/2).
 
@@ -334,7 +335,7 @@ Latest local UDP QoE/QoS result:
 | jitter_periodic | drop=1 reorder=0 delay=0 jitter=3 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.33 | PASS |
 | mixed_loss_reorder_delay_jitter | drop=2 reorder=2 delay=1 jitter=3 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.67 | PASS |
 
-This Phase-1a QoE definition is intentionally minimal and measurable before a real renderer exists: the receiver must recover frames, output keyframes, keep RTP timestamp frame gaps within one 30fps frame interval, and complete retransmission-based recovery. After renderer integration, this should be extended with real freeze duration, render queue depth, and end-to-end glass-to-glass latency.
+This UDP Phase-1a QoE definition is intentionally minimal and measurable before a real renderer exists: the receiver must recover frames, output keyframes, keep RTP timestamp frame gaps within one 30fps frame interval, and complete retransmission-based recovery. The long-stream QoE matrix above already adds real H264 decode, PSNR, frame-latency proxy, and jitter-buffer residence proxy; after renderer integration these proxy metrics should be replaced or supplemented with real freeze duration, render queue depth, and glass-to-glass latency.
 
 The predefined weak-network scenario file is `scripts/udp_netem_scenarios.json`. It currently covers:
 

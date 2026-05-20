@@ -51,6 +51,12 @@ struct PhaseMetrics {
   uint32_t quality_samples = 0;
   double psnr_min = std::numeric_limits<double>::infinity();
   double psnr_sum = 0.0;
+  uint32_t frame_latency_samples = 0;
+  uint64_t frame_latency_sum_ms = 0;
+  int64_t frame_latency_max_ms = 0;
+  uint32_t jitter_buffer_samples = 0;
+  uint64_t jitter_buffer_sum_ms = 0;
+  int64_t jitter_buffer_max_ms = 0;
   uint32_t network_drops = 0;
   uint64_t sent_bytes = 0;
   uint32_t adaptation_samples = 0;
@@ -90,6 +96,12 @@ struct Summary {
   uint32_t quality_samples = 0;
   double psnr_min = std::numeric_limits<double>::infinity();
   double psnr_sum = 0.0;
+  uint32_t frame_latency_samples = 0;
+  uint64_t frame_latency_sum_ms = 0;
+  int64_t frame_latency_max_ms = 0;
+  uint32_t jitter_buffer_samples = 0;
+  uint64_t jitter_buffer_sum_ms = 0;
+  int64_t jitter_buffer_max_ms = 0;
   uint32_t keyframes = 0;
   uint32_t probe_packets = 0;
   uint64_t sent_bytes = 0;
@@ -98,6 +110,7 @@ struct Summary {
 struct I420Frame {
   uint32_t width = 0;
   uint32_t height = 0;
+  int64_t capture_time_us = 0;
   std::vector<uint8_t> y;
   std::vector<uint8_t> u;
   std::vector<uint8_t> v;
@@ -391,6 +404,12 @@ double AveragePsnr(double sum, uint32_t samples) {
   return samples > 0 ? sum / static_cast<double>(samples) : 0.0;
 }
 
+double AverageMs(uint64_t sum_ms, uint32_t samples) {
+  return samples > 0 ? static_cast<double>(sum_ms) /
+                           static_cast<double>(samples)
+                     : 0.0;
+}
+
 void WriteSummary(const std::string& path,
                   const Summary& summary,
                   const std::vector<PhaseMetrics>& phases) {
@@ -419,6 +438,22 @@ void WriteSummary(const std::string& path,
       << (summary.quality_samples > 0 ? summary.psnr_min : 0.0) << ",\n";
   out << "  \"psnr_avg\": "
       << AveragePsnr(summary.psnr_sum, summary.quality_samples) << ",\n";
+  out << "  \"frame_latency_samples\": "
+      << summary.frame_latency_samples << ",\n";
+  out << "  \"frame_latency_avg_ms\": "
+      << AverageMs(summary.frame_latency_sum_ms,
+                   summary.frame_latency_samples)
+      << ",\n";
+  out << "  \"frame_latency_max_ms\": "
+      << summary.frame_latency_max_ms << ",\n";
+  out << "  \"jitter_buffer_samples\": "
+      << summary.jitter_buffer_samples << ",\n";
+  out << "  \"jitter_buffer_avg_ms\": "
+      << AverageMs(summary.jitter_buffer_sum_ms,
+                   summary.jitter_buffer_samples)
+      << ",\n";
+  out << "  \"jitter_buffer_max_ms\": "
+      << summary.jitter_buffer_max_ms << ",\n";
   out << "  \"keyframes\": " << summary.keyframes << ",\n";
   out << "  \"probe_packets\": " << summary.probe_packets << ",\n";
   out << "  \"sent_bytes\": " << summary.sent_bytes << ",\n";
@@ -456,6 +491,22 @@ void WriteSummary(const std::string& path,
         << (phase.quality_samples > 0 ? phase.psnr_min : 0.0) << ", "
         << "\"psnr_avg\": "
         << AveragePsnr(phase.psnr_sum, phase.quality_samples) << ", "
+        << "\"frame_latency_samples\": " << phase.frame_latency_samples
+        << ", "
+        << "\"frame_latency_avg_ms\": "
+        << AverageMs(phase.frame_latency_sum_ms,
+                     phase.frame_latency_samples)
+        << ", "
+        << "\"frame_latency_max_ms\": " << phase.frame_latency_max_ms
+        << ", "
+        << "\"jitter_buffer_samples\": " << phase.jitter_buffer_samples
+        << ", "
+        << "\"jitter_buffer_avg_ms\": "
+        << AverageMs(phase.jitter_buffer_sum_ms,
+                     phase.jitter_buffer_samples)
+        << ", "
+        << "\"jitter_buffer_max_ms\": " << phase.jitter_buffer_max_ms
+        << ", "
         << "\"keyframes\": " << phase.keyframes << ", "
         << "\"network_drops\": " << phase.network_drops << ", "
         << "\"encode_fps\": " << encode_fps << ", "
@@ -602,6 +653,7 @@ int main(int argc, char** argv) {
   int64_t last_keyframe_encode_us = -10000000;
   std::set<uint32_t> rendered_timestamps;
   std::unordered_map<uint32_t, I420Frame> source_frames;
+  std::unordered_map<uint32_t, int64_t> first_packet_receive_time_us;
 
   auto schedule_downlink = [&](const RtpPacket& packet,
                                int64_t send_time_us,
@@ -767,6 +819,38 @@ int main(int argc, char** argv) {
       return;
     }
     const size_t phase_index = FindPhaseIndex(phases, now_us);
+    auto first_packet_it = first_packet_receive_time_us.find(frame.rtp_timestamp);
+    if (first_packet_it != first_packet_receive_time_us.end()) {
+      const int64_t jitter_buffer_ms =
+          std::max<int64_t>(0, (now_us - first_packet_it->second) / 1000);
+      ++phase_metrics[phase_index].jitter_buffer_samples;
+      phase_metrics[phase_index].jitter_buffer_sum_ms +=
+          static_cast<uint64_t>(jitter_buffer_ms);
+      phase_metrics[phase_index].jitter_buffer_max_ms =
+          std::max(phase_metrics[phase_index].jitter_buffer_max_ms,
+                   jitter_buffer_ms);
+      ++summary.jitter_buffer_samples;
+      summary.jitter_buffer_sum_ms += static_cast<uint64_t>(jitter_buffer_ms);
+      summary.jitter_buffer_max_ms =
+          std::max(summary.jitter_buffer_max_ms, jitter_buffer_ms);
+      first_packet_receive_time_us.erase(first_packet_it);
+    }
+    auto frame_source_it = source_frames.find(frame.rtp_timestamp);
+    if (frame_source_it != source_frames.end()) {
+      const int64_t frame_latency_ms =
+          std::max<int64_t>(
+              0, (now_us - frame_source_it->second.capture_time_us) / 1000);
+      ++phase_metrics[phase_index].frame_latency_samples;
+      phase_metrics[phase_index].frame_latency_sum_ms +=
+          static_cast<uint64_t>(frame_latency_ms);
+      phase_metrics[phase_index].frame_latency_max_ms =
+          std::max(phase_metrics[phase_index].frame_latency_max_ms,
+                   frame_latency_ms);
+      ++summary.frame_latency_samples;
+      summary.frame_latency_sum_ms += static_cast<uint64_t>(frame_latency_ms);
+      summary.frame_latency_max_ms =
+          std::max(summary.frame_latency_max_ms, frame_latency_ms);
+    }
     std::vector<DecodedVideoFrame> decoded_frames;
     Status decode_status =
         decoder.DecodeAnnexB(frame.annexb_access_unit.data(),
@@ -826,6 +910,7 @@ int main(int argc, char** argv) {
   };
 
   auto receive_packet = [&](const RtpPacket& packet) -> Status {
+    first_packet_receive_time_us.emplace(packet.timestamp, now_us);
     receiver_observer.OnRtpPacketReceived(packet, now_us);
     Status insert_status = jitter.InsertPacket(packet, now_us);
     if (!insert_status) {
@@ -1036,6 +1121,7 @@ int main(int argc, char** argv) {
       I420Frame source_frame;
       source_frame.width = encoder_config.width;
       source_frame.height = encoder_config.height;
+      source_frame.capture_time_us = now_us;
       source_frame.y = y;
       source_frame.u = u;
       source_frame.v = v;
@@ -1153,6 +1239,14 @@ int main(int argc, char** argv) {
                  "decoded frames >= receiver frames");
     ok &= Expect(summary.quality_samples >= summary.receiver_frames,
                  "quality samples >= receiver frames");
+    ok &= Expect(summary.frame_latency_samples >= summary.receiver_frames,
+                 "frame latency samples >= receiver frames");
+    ok &= Expect(summary.jitter_buffer_samples >= summary.receiver_frames,
+                 "jitter buffer samples >= receiver frames");
+    ok &= Expect(summary.frame_latency_max_ms <= 1800,
+                 "frame latency max <= 1800ms");
+    ok &= Expect(summary.jitter_buffer_max_ms <= 1200,
+                 "jitter buffer max <= 1200ms");
   }
   summary.ok = ok;
 
@@ -1177,6 +1271,14 @@ int main(int argc, char** argv) {
                                            summary.quality_samples)
             << " psnr_min="
             << (summary.quality_samples > 0 ? summary.psnr_min : 0.0)
+            << " frame_latency_avg_ms="
+            << AverageMs(summary.frame_latency_sum_ms,
+                         summary.frame_latency_samples)
+            << " frame_latency_max_ms=" << summary.frame_latency_max_ms
+            << " jitter_buffer_avg_ms="
+            << AverageMs(summary.jitter_buffer_sum_ms,
+                         summary.jitter_buffer_samples)
+            << " jitter_buffer_max_ms=" << summary.jitter_buffer_max_ms
             << " keyframes=" << summary.keyframes
             << " probe_packets=" << summary.probe_packets
             << " sent_bytes=" << summary.sent_bytes << "\n";
@@ -1203,6 +1305,14 @@ int main(int argc, char** argv) {
                                              phase.quality_samples)
               << " psnr_min="
               << (phase.quality_samples > 0 ? phase.psnr_min : 0.0)
+              << " frame_latency_avg_ms="
+              << AverageMs(phase.frame_latency_sum_ms,
+                           phase.frame_latency_samples)
+              << " frame_latency_max_ms=" << phase.frame_latency_max_ms
+              << " jitter_buffer_avg_ms="
+              << AverageMs(phase.jitter_buffer_sum_ms,
+                           phase.jitter_buffer_samples)
+              << " jitter_buffer_max_ms=" << phase.jitter_buffer_max_ms
               << " keyframes=" << phase.keyframes
               << " network_drops=" << phase.network_drops
               << " target_bps_min="

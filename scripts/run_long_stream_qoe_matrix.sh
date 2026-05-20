@@ -97,7 +97,8 @@ print(
     "metrics run={run} seed={seed} scenario={scenario} backend={backend} strategy={strategy} freeze={freeze} "
     "max_freeze_ms={max_freeze} drops={drops} frames={frames} "
     "decoded={decoded} decode_errors={decode_errors} psnr_avg={psnr_avg} "
-    "psnr_min={psnr_min} duplicates={duplicates}".format(
+    "psnr_min={psnr_min} latency_max_ms={latency_max} "
+    "jitter_buffer_max_ms={jitter_max} duplicates={duplicates}".format(
         run=data.get("run"),
         seed=data.get("network_seed"),
         scenario=data.get("scenario"),
@@ -111,6 +112,8 @@ print(
         decode_errors=data.get("decode_errors"),
         psnr_avg=data.get("psnr_avg"),
         psnr_min=data.get("psnr_min"),
+        latency_max=data.get("frame_latency_max_ms"),
+        jitter_max=data.get("jitter_buffer_max_ms"),
         duplicates=data.get("duplicate_frames"),
     )
 )
@@ -280,6 +283,14 @@ def balanced_qoe_score(row):
     psnr_min = row.get("psnr_min", 0.0) if quality_samples else 0.0
     psnr_penalty = max(0.0, 23.0 - psnr_avg) * 40
     psnr_penalty += max(0.0, 16.0 - psnr_min) * 20
+    frame_latency_max = row.get("frame_latency_max_ms", 0.0)
+    frame_latency_avg = row.get("frame_latency_avg_ms", 0.0)
+    jitter_buffer_max = row.get("jitter_buffer_max_ms", 0.0)
+    jitter_buffer_avg = row.get("jitter_buffer_avg_ms", 0.0)
+    latency_penalty = max(0.0, frame_latency_avg - 450.0) / 5.0
+    latency_penalty += max(0.0, frame_latency_max - 1500.0) / 5.0
+    latency_penalty += max(0.0, jitter_buffer_avg - 250.0) / 5.0
+    latency_penalty += max(0.0, jitter_buffer_max - 900.0) / 5.0
     return round(
         smoothness_score(row)
         + duplicate_penalty
@@ -287,6 +298,7 @@ def balanced_qoe_score(row):
         + decode_error_penalty
         + decode_gap_penalty
         + psnr_penalty
+        + latency_penalty
         + adaptation_penalty(row),
         3,
     )
@@ -395,6 +407,12 @@ for row in rows:
             "quality_samples_total": 0,
             "psnr_avg_weighted_sum": 0.0,
             "psnr_min": None,
+            "frame_latency_samples_total": 0,
+            "frame_latency_avg_weighted_sum": 0.0,
+            "frame_latency_max": 0,
+            "jitter_buffer_samples_total": 0,
+            "jitter_buffer_avg_weighted_sum": 0.0,
+            "jitter_buffer_max": 0,
             "network_drops_total": 0,
             "duplicate_frames_total": 0,
             "failed_cases": 0,
@@ -415,6 +433,22 @@ for row in rows:
             if item["psnr_min"] is None
             else min(item["psnr_min"], row_psnr_min)
         )
+    frame_latency_samples = row.get("frame_latency_samples", 0)
+    item["frame_latency_samples_total"] += frame_latency_samples
+    if frame_latency_samples:
+        item["frame_latency_avg_weighted_sum"] += (
+            row.get("frame_latency_avg_ms", 0.0) * frame_latency_samples
+        )
+    item["frame_latency_max"] = max(
+        item["frame_latency_max"], row.get("frame_latency_max_ms", 0))
+    jitter_buffer_samples = row.get("jitter_buffer_samples", 0)
+    item["jitter_buffer_samples_total"] += jitter_buffer_samples
+    if jitter_buffer_samples:
+        item["jitter_buffer_avg_weighted_sum"] += (
+            row.get("jitter_buffer_avg_ms", 0.0) * jitter_buffer_samples
+        )
+    item["jitter_buffer_max"] = max(
+        item["jitter_buffer_max"], row.get("jitter_buffer_max_ms", 0))
     item["network_drops_total"] += row.get("network_drops", 0)
     item["duplicate_frames_total"] += row.get("duplicate_frames", 0)
     if not row.get("ok", False):
@@ -433,7 +467,27 @@ for item in aggregate_by_backend_strategy.values():
     else:
         item["psnr_avg"] = 0.0
     item["psnr_min"] = round(item["psnr_min"] or 0.0, 3)
+    if item["frame_latency_samples_total"]:
+        item["frame_latency_avg_ms"] = round(
+            item["frame_latency_avg_weighted_sum"] /
+            item["frame_latency_samples_total"],
+            3,
+        )
+    else:
+        item["frame_latency_avg_ms"] = 0.0
+    if item["jitter_buffer_samples_total"]:
+        item["jitter_buffer_avg_ms"] = round(
+            item["jitter_buffer_avg_weighted_sum"] /
+            item["jitter_buffer_samples_total"],
+            3,
+        )
+    else:
+        item["jitter_buffer_avg_ms"] = 0.0
+    item["frame_latency_max_ms"] = item.pop("frame_latency_max")
+    item["jitter_buffer_max_ms"] = item.pop("jitter_buffer_max")
     item.pop("psnr_avg_weighted_sum", None)
+    item.pop("frame_latency_avg_weighted_sum", None)
+    item.pop("jitter_buffer_avg_weighted_sum", None)
     item["balanced_qoe_score_total"] = round(item["balanced_qoe_score_total"], 3)
     item["smoothness_score_total"] = round(item["smoothness_score_total"], 3)
 
@@ -451,6 +505,8 @@ for row in rows:
             "max_decode_errors": 0,
             "max_network_drops": 0,
             "max_duplicate_frames": 0,
+            "max_frame_latency_ms": 0,
+            "max_jitter_buffer_ms": 0,
             "worst_case": None,
         },
     )
@@ -481,6 +537,10 @@ for row in rows:
         item["max_network_drops"], row.get("network_drops", 0))
     item["max_duplicate_frames"] = max(
         item["max_duplicate_frames"], row.get("duplicate_frames", 0))
+    item["max_frame_latency_ms"] = max(
+        item["max_frame_latency_ms"], row.get("frame_latency_max_ms", 0))
+    item["max_jitter_buffer_ms"] = max(
+        item["max_jitter_buffer_ms"], row.get("jitter_buffer_max_ms", 0))
 
 for item in worst_case_by_backend_strategy.values():
     item["worst_balanced_qoe_score"] = round(
@@ -541,6 +601,16 @@ if webrtc_rows:
             validation_failures.append(
                 f"{case_label}: quality samples below receiver frames"
             )
+        if adaptive.get("frame_latency_samples", 0) < adaptive.get(
+                "receiver_frames", 0):
+            validation_failures.append(
+                f"{case_label}: frame latency samples below receiver frames"
+            )
+        if adaptive.get("jitter_buffer_samples", 0) < adaptive.get(
+                "receiver_frames", 0):
+            validation_failures.append(
+                f"{case_label}: jitter buffer samples below receiver frames"
+            )
         if adaptive.get("psnr_avg", 0.0) < 20.0:
             validation_failures.append(
                 f"{case_label}: webrtc/adaptive psnr_avg="
@@ -550,6 +620,16 @@ if webrtc_rows:
             validation_failures.append(
                 f"{case_label}: webrtc/adaptive psnr_min="
                 f"{adaptive.get('psnr_min', 0.0):.3f} below 14.0"
+            )
+        if adaptive.get("frame_latency_max_ms", 0) > 1800:
+            validation_failures.append(
+                f"{case_label}: frame_latency_max_ms="
+                f"{adaptive.get('frame_latency_max_ms', 0)} exceeds 1800"
+            )
+        if adaptive.get("jitter_buffer_max_ms", 0) > 1200:
+            validation_failures.append(
+                f"{case_label}: jitter_buffer_max_ms="
+                f"{adaptive.get('jitter_buffer_max_ms', 0)} exceeds 1200"
             )
         if adaptation_penalty(adaptive) != 0:
             validation_failures.append(
@@ -623,6 +703,12 @@ summary = {
             "quality_samples": row.get("quality_samples"),
             "psnr_avg": row.get("psnr_avg"),
             "psnr_min": row.get("psnr_min"),
+            "frame_latency_samples": row.get("frame_latency_samples"),
+            "frame_latency_avg_ms": row.get("frame_latency_avg_ms"),
+            "frame_latency_max_ms": row.get("frame_latency_max_ms"),
+            "jitter_buffer_samples": row.get("jitter_buffer_samples"),
+            "jitter_buffer_avg_ms": row.get("jitter_buffer_avg_ms"),
+            "jitter_buffer_max_ms": row.get("jitter_buffer_max_ms"),
             "receiver_frames": row.get("receiver_frames"),
             "outage_receiver_fps": phase(row, "outage").get("receiver_fps"),
             "poor_receiver_fps": phase(row, "poor").get("receiver_fps"),
@@ -690,7 +776,8 @@ summary = {
     "objective_note": (
         "smoothness_score optimizes continuity only; balanced_qoe_score also "
         "penalizes duplicate output, network drops, weak-network non-adaptation, "
-        "real FFmpeg H264 decode errors/gaps, and failure to recover when the "
+        "real FFmpeg H264 decode errors/gaps, high receiver frame latency, "
+        "high jitter-buffer residence time, and failure to recover when the "
         "route becomes good again. It also penalizes low decoded-frame PSNR "
         "against the generated I420 source. Validation requires "
         "webrtc/adaptive to meet per-run/per-scenario "
