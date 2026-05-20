@@ -73,6 +73,7 @@ int main() {
   qos_config.max_bitrate_bps = 2500000;
   SenderQosController qos =
       CreateGoogCcSenderQosController(qos_config, 1000000);
+  qos.OnProcessInterval(1000000);
 
   std::vector<RtpPacket> server_packets;
   std::vector<PacketFeedback> feedback;
@@ -131,11 +132,13 @@ int main() {
   uplink_feedback.reference_time_us = 1450000;
   uplink_feedback.packets = feedback;
   qos.OnUplinkTransportFeedback(uplink_feedback);
+  qos.OnProcessInterval(1450000);
   RtcpReceiverReport rr;
   rr.sender_ssrc = ids.sender_ssrc;
   rr.rtt_ms = 24;
   rr.receive_time_us = 1500000;
   qos.OnRtcpReceiverReport(rr);
+  qos.OnProcessInterval(1500000);
   const TargetRates rates = qos.GetTargetRates(1500000);
 
   ReceiverQosObserver observer(ReceiverQosObserverConfig{ids, 200});

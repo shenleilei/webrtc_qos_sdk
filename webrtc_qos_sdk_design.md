@@ -1406,29 +1406,29 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 - 候选策略：`adaptive`、`balanced`、`bitrate_only`、`fixed`
 - `smoothness_score`：只优化连续性，包含 freeze count、max freeze、network drops、弱网期 receiver FPS、恢复期 receiver FPS
 - `balanced_qoe_score`：在 `smoothness_score` 基础上强惩罚 duplicate frames 和 network drops，避免“重复帧不卡顿”被误判成高质量
-- 当前本地结果：`smoothness_score` 最优为 `lightweight/bitrate_only=0.0`，但它有 `166` 个 duplicate frames
-- 当前本地结果：`balanced_qoe_score` 最优为 `lightweight/balanced=495.833`
-- 当前本地结果：WebRTC backend 已进入矩阵，SDK pacer 已消费 GoogCC `pacing_bps`，但当前 synthetic feedback/downlink 模型下恢复仍偏弱，`webrtc/adaptive` 的 `balanced_qoe_score=1149.667`
+- 当前本地结果：`smoothness_score` 最优仍可能被高输出策略打平，因此不能单独作为产品结论
+- 当前本地结果：`balanced_qoe_score` 最优为 `webrtc/adaptive=0.0`，`webrtc/balanced=0.0`
+- 当前本地结果：WebRTC backend 已补齐 periodic process、`data_in_flight`、probe cluster、route-change recovery、server `SENDER_RATE_CAP_V1` 后，在当前 synthetic dynamic weak-network 矩阵中成为 balanced-QoE 最优候选
 
 当前长流 QoE 结果表：
 
 | Strategy | Smoothness score | Balanced QoE score | Freeze count | Max freeze | Network drops | Duplicate frames | Outage FPS | Poor FPS | Recovered FPS | 结论 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `lightweight/adaptive` | 534.667 | 559.667 | 3 | 1430ms | 0 | 5 | 1.75 | 1.67 | 28.0 | 能恢复，但弱网期连续性偏低 |
-| `lightweight/balanced` | 445.833 | 495.833 | 3 | 1325ms | 0 | 10 | 7.25 | 3.33 | 27.8 | 当前 balanced QoE 目标下最好 |
-| `lightweight/bitrate_only` | 0.000 | 830.000 | 0 | 0ms | 0 | 166 | 22.75 | 25.67 | 30.2 | smoothness-only 最好，但重复帧过多 |
-| `lightweight/fixed` | 1406.000 | 3154.000 | 1 | 1670ms | 859 | 6 | 4.00 | 0.00 | 0.0 | 不能弱网恢复，不可接受 |
-| `webrtc/adaptive` | 795.667 | 1149.667 | 2 | 2670ms | 177 | 0 | 3.25 | 0.67 | 13.0 | 暴露 GoogCC pacing 后 WebRTC backend 内最好，但仍弱于 lightweight/balanced |
-| `webrtc/balanced` | 936.000 | 1322.000 | 3 | 2970ms | 193 | 0 | 4.75 | 1.00 | 11.4 | 仅消费 pacing 输出仍不能解决恢复问题 |
-| `webrtc/bitrate_only` | 1710.000 | 3030.000 | 1 | 8700ms | 660 | 0 | 4.00 | 0.00 | 65.4 | 恢复期输出高，但 freeze/drop 严重 |
+| `lightweight/adaptive` | 323.833 | 373.833 | 1 | 1805ms | 0 | 10 | 3.50 | 2.33 | 28.4 | 能恢复，但仍有 freeze 和重复帧 |
+| `lightweight/balanced` | 321.000 | 451.000 | 1 | 1910ms | 0 | 26 | 2.50 | 7.67 | 29.0 | 弱网期输出较多，但 duplicate frames 拉低 balanced QoE |
+| `lightweight/bitrate_only` | 0.000 | 725.000 | 0 | 0ms | 0 | 145 | 18.50 | 25.33 | 29.8 | smoothness-only 最好之一，但重复帧过多 |
+| `lightweight/fixed` | 1407.000 | 3157.000 | 1 | 1670ms | 860 | 6 | 4.00 | 0.00 | 0.0 | 不能弱网恢复，不可接受 |
+| `webrtc/adaptive` | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 4.00 | 5.67 | 28.0 | 当前 balanced-QoE 目标下最优候选 |
+| `webrtc/balanced` | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 7.75 | 7.33 | 28.6 | 同样满足当前目标，弱网期输出更高 |
+| `webrtc/bitrate_only` | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 24.25 | 29.67 | 31.4 | 本 synthetic 场景平滑，但不是目标策略，因为不降 FPS |
 | `webrtc/fixed` | 1117.000 | 2791.000 | 0 | 0ms | 837 | 0 | 4.00 | 0.00 | 0.0 | 不能弱网恢复，不可接受 |
 
 当前判断：
 
 - 不能再只说“adaptive 能降码率/FPS，所以 QoS 正确”
-- QoS 最优必须先定义目标函数：如果产品目标只要不卡，`lightweight/bitrate_only` 会胜；如果目标包含有效帧和画质 proxy，`lightweight/balanced` 更合理
-- 当前证据只证明在这个动态弱网场景、backend 集合和候选策略集合中，`lightweight/balanced` 是 balanced-QoE 目标下的最优候选
-- WebRTC backend 当前不是“更差的最终结论”，而是 P1a+ 找到的待优化点：需要继续调 TWCC feedback timing、GoogCC process cadence、keyframe/recovery 策略和 downlink 模型
+- QoS 最优必须先定义目标函数：smoothness-only 会偏向高输出策略；当前 balanced-QoE 同时惩罚 duplicate frames、network drops 和恢复不足，因此选出 `webrtc/adaptive` / `webrtc/balanced`
+- 当前证据只证明在这个动态弱网场景、backend 集合和候选策略集合中，`webrtc/adaptive` / `webrtc/balanced` 是 balanced-QoE 目标下的最优候选
+- WebRTC backend 之所以从弱于 lightweight 变成最优，是因为补齐了缺失闭环：周期性 `OnProcessInterval`、`data_in_flight`、probe cluster 发送和回馈、网络恢复 route-change、server 根据下行质量生成 `SENDER_RATE_CAP_V1`
 - 后续接真实解码/渲染后，需要补 WebRTC stats 同类指标：`freezeCount`、`totalFreezesDuration`、`jitterBufferDelay`、`framesDecoded`、`framesDropped`、QP、端到端延迟和真实画质指标
 - 后续如果要证明“生产最优”，必须扩展到多内容类型、多分辨率、多码率、多时长、多接收端和真实业务传输链路
 

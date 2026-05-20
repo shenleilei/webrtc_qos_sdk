@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include "webrtc_qos/types.h"
 
@@ -22,11 +23,33 @@ class SenderQosBackend {
   virtual Status OnPacketSent(uint16_t transport_sequence_number,
                               size_t packet_size,
                               int64_t send_time_us) = 0;
+  virtual Status OnProbePacketSent(uint16_t transport_sequence_number,
+                                   size_t packet_size,
+                                   int64_t send_time_us,
+                                   const ProbeCluster& probe_cluster) {
+    (void)probe_cluster;
+    return OnPacketSent(transport_sequence_number, packet_size, send_time_us);
+  }
   virtual Status OnUplinkTransportFeedback(
       const UplinkTransportFeedback& feedback) = 0;
   virtual Status OnRtcpReceiverReport(const RtcpReceiverReport& report) = 0;
+  virtual Status OnProcessInterval(int64_t at_time_us) {
+    (void)at_time_us;
+    return Status::Ok();
+  }
+  virtual Status OnNetworkRouteChange(uint32_t start_bitrate_bps,
+                                      uint32_t min_bitrate_bps,
+                                      uint32_t max_bitrate_bps,
+                                      int64_t at_time_us) {
+    (void)start_bitrate_bps;
+    (void)min_bitrate_bps;
+    (void)max_bitrate_bps;
+    (void)at_time_us;
+    return Status::Ok();
+  }
   virtual uint32_t target_bitrate_bps() const = 0;
   virtual uint32_t pacing_bitrate_bps() const { return target_bitrate_bps(); }
+  virtual std::vector<ProbeCluster> TakeProbeClusters() { return {}; }
 };
 
 class SenderQosController {
@@ -43,9 +66,17 @@ class SenderQosController {
   Status OnPacketSent(uint16_t transport_sequence_number,
                       size_t packet_size,
                       int64_t send_time_us);
+  Status OnProbePacketSent(uint16_t transport_sequence_number,
+                           size_t packet_size,
+                           int64_t send_time_us,
+                           const ProbeCluster& probe_cluster);
   Status OnUplinkTransportFeedback(const UplinkTransportFeedback& feedback);
   Status OnRtcpReceiverReport(const RtcpReceiverReport& report);
+  Status OnProcessInterval(int64_t at_time_us);
+  Status OnNetworkRouteChange(uint32_t start_bitrate_bps,
+                              int64_t at_time_us);
   Status OnSenderRateCap(const SenderRateCap& cap);
+  std::vector<ProbeCluster> TakeProbeClusters();
 
   TargetRates GetTargetRates(int64_t now_us) const;
   EncoderAdaptation GetEncoderAdaptation(int64_t now_us) const;

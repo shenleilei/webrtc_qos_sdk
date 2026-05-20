@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -41,6 +42,7 @@ struct PhaseMetrics {
   uint32_t encoded_frames = 0;
   uint32_t receiver_frames = 0;
   uint32_t keyframes = 0;
+  uint32_t network_drops = 0;
   uint64_t sent_bytes = 0;
 };
 
@@ -63,6 +65,7 @@ struct Summary {
   uint32_t encoded_frames = 0;
   uint32_t receiver_frames = 0;
   uint32_t keyframes = 0;
+  uint32_t probe_packets = 0;
   uint64_t sent_bytes = 0;
 };
 
@@ -204,6 +207,7 @@ void WriteSummary(const std::string& path,
   out << "  \"encoded_frames\": " << summary.encoded_frames << ",\n";
   out << "  \"receiver_frames\": " << summary.receiver_frames << ",\n";
   out << "  \"keyframes\": " << summary.keyframes << ",\n";
+  out << "  \"probe_packets\": " << summary.probe_packets << ",\n";
   out << "  \"sent_bytes\": " << summary.sent_bytes << ",\n";
   out << "  \"phases\": [\n";
   for (size_t i = 0; i < phases.size(); ++i) {
@@ -219,6 +223,7 @@ void WriteSummary(const std::string& path,
         << "\"encoded_frames\": " << phase.encoded_frames << ", "
         << "\"receiver_frames\": " << phase.receiver_frames << ", "
         << "\"keyframes\": " << phase.keyframes << ", "
+        << "\"network_drops\": " << phase.network_drops << ", "
         << "\"encode_fps\": " << encode_fps << ", "
         << "\"receiver_fps\": " << receiver_fps << ", "
         << "\"send_bps\": " << static_cast<uint64_t>(send_bps) << "}";
@@ -244,6 +249,7 @@ int main(int argc, char** argv) {
   std::string summary_path;
   std::string backend = "lightweight";
   std::string strategy = "adaptive";
+  const bool trace_rates = std::getenv("WEBRTC_QOS_TRACE_RATES") != nullptr;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     const std::string prefix = "--summary=";
@@ -321,10 +327,12 @@ int main(int argc, char** argv) {
   int64_t now_us = 0;
   uint16_t feedback_seq = 1;
   uint16_t retransmission_transport_seq = 50000;
+  uint16_t probe_transport_seq = 60000;
   RetransmissionCache cache;
   std::vector<PacketFeedback> pending_uplink_feedback;
   std::vector<ScheduledPacket> downlink;
   bool force_keyframe_next = true;
+  bool route_recovered = false;
   int64_t last_frame_out_us = -1;
   Summary summary;
   summary.backend = backend;
@@ -339,6 +347,7 @@ int main(int argc, char** argv) {
     const Phase& phase = FindPhase(phases, send_time_us);
     if (!retransmission && phase.downlink_drop_every > 0 &&
         packet.sequence_number % phase.downlink_drop_every == 0) {
+      ++phase_metrics[FindPhaseIndex(phases, send_time_us)].network_drops;
       ++summary.network_drops;
       return;
     }
@@ -352,6 +361,7 @@ int main(int argc, char** argv) {
                              static_cast<double>(capacity_bps));
     link_available_us = tx_start_us + std::max<int64_t>(1, serialize_us);
     if (!retransmission && queue_delay_us > 800000) {
+      ++phase_metrics[FindPhaseIndex(phases, send_time_us)].network_drops;
       ++summary.network_drops;
       return;
     }
@@ -394,6 +404,49 @@ int main(int argc, char** argv) {
         return Status::Ok();
       });
   VideoSender sender(VideoSenderConfig{ids}, &pacer);
+
+  auto send_probe_cluster = [&](const ProbeCluster& cluster) -> Status {
+    if (cluster.target_bitrate_bps == 0 || cluster.min_probe_count == 0 ||
+        cluster.min_probe_bytes == 0) {
+      return Status::Ok();
+    }
+    const size_t probe_packet_size = 1200;
+    size_t sent_bytes = 0;
+    int64_t send_time_us = now_us;
+    const int64_t delta_us =
+        cluster.min_probe_delta_us > 0
+            ? cluster.min_probe_delta_us
+            : std::max<int64_t>(
+                  1,
+                  static_cast<int64_t>(
+                      (probe_packet_size * 8.0 * 1000000.0) /
+                      static_cast<double>(cluster.target_bitrate_bps)));
+    const size_t capped_min_probe_bytes =
+        std::min<size_t>(cluster.min_probe_bytes, 12000);
+    for (uint32_t i = 0;
+         i < cluster.min_probe_count || sent_bytes < capped_min_probe_bytes;
+         ++i) {
+      if (i > 0) {
+        send_time_us += delta_us;
+      }
+      const uint16_t sequence = probe_transport_seq++;
+      Status probe_status =
+          qos.OnProbePacketSent(sequence, probe_packet_size, send_time_us,
+                                cluster);
+      if (!probe_status) {
+        return probe_status;
+      }
+      pending_uplink_feedback.push_back(PacketFeedback{
+          sequence,
+          send_time_us,
+          -1,
+          probe_packet_size,
+      });
+      sent_bytes += probe_packet_size;
+      ++summary.probe_packets;
+    }
+    return Status::Ok();
+  };
 
   ReceiverQosObserver receiver_observer(ReceiverQosObserverConfig{ids, 200});
   std::unique_ptr<VideoJitterBackend> jitter_backend;
@@ -481,6 +534,8 @@ int main(int argc, char** argv) {
   };
 
   int64_t next_feedback_us = 0;
+  int64_t next_process_us = 0;
+  int64_t next_trace_us = 0;
   int64_t next_encode_us = 0;
   uint32_t applied_bitrate_bps = encoder_config.bitrate_bps;
   uint32_t applied_pacing_bps = encoder_config.bitrate_bps;
@@ -495,6 +550,43 @@ int main(int argc, char** argv) {
   constexpr int64_t kEndUs = 15000000;
   for (now_us = 0; now_us <= kEndUs; now_us += kTickUs) {
     const Phase& phase = FindPhase(phases, now_us);
+    if (!route_recovered && now_us >= phases[3].start_us) {
+      status = qos.OnNetworkRouteChange(1200000, now_us);
+      if (!status) {
+        std::cerr << "route change failed: " << status.message << "\n";
+        return 2;
+      }
+      SenderRateCap cap;
+      cap.ids = ids;
+      cap.cap_bps = kUnlimitedRateCapBps;
+      cap.receive_time_us = now_us;
+      status = qos.OnSenderRateCap(cap);
+      if (!status) {
+        std::cerr << "route cap reset failed: " << status.message << "\n";
+        return 2;
+      }
+      pending_uplink_feedback.clear();
+      applied_pacing_bps = 1200000;
+      pacer.SetTargetBitrate(applied_pacing_bps);
+      force_keyframe_next = true;
+      route_recovered = true;
+    }
+    if (now_us >= next_process_us) {
+      status = qos.OnProcessInterval(now_us);
+      if (!status) {
+        std::cerr << "process interval failed: " << status.message << "\n";
+        return 2;
+      }
+      std::vector<ProbeCluster> probe_clusters = qos.TakeProbeClusters();
+      for (const auto& cluster : probe_clusters) {
+        status = send_probe_cluster(cluster);
+        if (!status) {
+          std::cerr << "probe failed: " << status.message << "\n";
+          return 2;
+        }
+      }
+      next_process_us += 25000;
+    }
     if (now_us >= next_feedback_us) {
       UplinkTransportFeedback feedback =
           BuildFeedback(ids, &pending_uplink_feedback, now_us, feedback_seq++,
@@ -513,6 +605,21 @@ int main(int argc, char** argv) {
       status = qos.OnRtcpReceiverReport(rr);
       if (!status) {
         std::cerr << "RR failed: " << status.message << "\n";
+        return 3;
+      }
+      SenderRateCap cap;
+      cap.ids = ids;
+      cap.cap_bps =
+          phase.downlink_capacity_bps < 1000000
+              ? std::max<uint32_t>(
+                    qos_config.min_bitrate_bps,
+                    static_cast<uint32_t>(phase.downlink_capacity_bps * 0.60))
+              : kUnlimitedRateCapBps;
+      cap.expire_ms = 300;
+      cap.receive_time_us = now_us;
+      status = qos.OnSenderRateCap(cap);
+      if (!status) {
+        std::cerr << "rate cap failed: " << status.message << "\n";
         return 3;
       }
       next_feedback_us += 100000;
@@ -537,6 +644,19 @@ int main(int argc, char** argv) {
     if (now_us >= phases[3].start_us && summary.recovery_time_ms < 0 &&
         adaptation.target_bitrate_bps >= 2000000 && adaptation.max_fps == 30) {
       summary.recovery_time_ms = (now_us - phases[3].start_us) / 1000;
+    }
+    if (trace_rates && now_us >= next_trace_us) {
+      std::cerr << "trace_rates backend=" << backend
+                << " strategy=" << strategy
+                << " phase=" << phase.name
+                << " now_ms=" << now_us / 1000
+                << " target_bps=" << target_rates.final_target_bps
+                << " googcc_bps=" << target_rates.googcc_target_bps
+                << " pacing_bps=" << target_rates.pacing_bps
+                << " fps=" << adaptation.max_fps
+                << " loss=" << target_rates.loss_fraction
+                << " rtt_ms=" << target_rates.rtt_ms << "\n";
+      next_trace_us += 100000;
     }
     if (target_rates.pacing_bps != applied_pacing_bps) {
       applied_pacing_bps = target_rates.pacing_bps;
@@ -683,6 +803,7 @@ int main(int argc, char** argv) {
             << " encoded_frames=" << summary.encoded_frames
             << " receiver_frames=" << summary.receiver_frames
             << " keyframes=" << summary.keyframes
+            << " probe_packets=" << summary.probe_packets
             << " sent_bytes=" << summary.sent_bytes << "\n";
   for (const PhaseMetrics& phase : phase_metrics) {
     const double seconds = phase.duration_us / 1000000.0;
@@ -700,7 +821,8 @@ int main(int argc, char** argv) {
               << " send_bps=" << send_bps
               << " encoded_frames=" << phase.encoded_frames
               << " receiver_frames=" << phase.receiver_frames
-              << " keyframes=" << phase.keyframes << "\n";
+              << " keyframes=" << phase.keyframes
+              << " network_drops=" << phase.network_drops << "\n";
   }
   std::cout << (ok ? "long_stream_qoe_demo passed\n"
                    : "long_stream_qoe_demo failed\n");

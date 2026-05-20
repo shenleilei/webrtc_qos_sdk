@@ -13,6 +13,7 @@ int main() {
 
   SenderQosController controller =
       CreateGoogCcSenderQosController(config, 1000000);
+  controller.OnProcessInterval(1000000);
 
   Status status = controller.OnPacketSent(1, 1200, 1000000);
   if (!status) {
@@ -30,6 +31,7 @@ int main() {
     std::cerr << status.message << "\n";
     return 2;
   }
+  controller.OnProcessInterval(1015000);
 
   RtcpReceiverReport rr;
   rr.sender_ssrc = config.ids.sender_ssrc;
@@ -40,6 +42,7 @@ int main() {
     std::cerr << status.message << "\n";
     return 3;
   }
+  controller.OnProcessInterval(1025000);
 
   SenderRateCap cap;
   cap.ids = config.ids;

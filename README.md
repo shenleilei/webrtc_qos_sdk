@@ -267,16 +267,16 @@ Latest local long-stream QoE result:
 
 | Strategy | Smoothness score | Balanced QoE score | Freeze count | Max freeze | Network drops | Duplicate frames | Outage FPS | Poor FPS | Recovered FPS | Interpretation |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| lightweight/adaptive | 534.667 | 559.667 | 3 | 1430ms | 0 | 5 | 1.75 | 1.67 | 28.0 | Recovers after network improves, but weak-phase continuity is low. |
-| lightweight/balanced | 445.833 | 495.833 | 3 | 1325ms | 0 | 10 | 7.25 | 3.33 | 27.8 | Best current candidate under the balanced QoE objective. |
-| lightweight/bitrate_only | 0.000 | 830.000 | 0 | 0ms | 0 | 166 | 22.75 | 25.67 | 30.2 | Best if optimizing smoothness only, but duplicate output makes it a poor balanced QoE choice. |
-| lightweight/fixed | 1406.000 | 3154.000 | 1 | 1670ms | 859 | 6 | 4.00 | 0.00 | 0.0 | Fails weak-network recovery. |
-| webrtc/adaptive | 795.667 | 1149.667 | 2 | 2670ms | 177 | 0 | 3.25 | 0.67 | 13.0 | Best WebRTC-backend candidate after exposing GoogCC pacing, still worse than lightweight balanced. |
-| webrtc/balanced | 936.000 | 1322.000 | 3 | 2970ms | 193 | 0 | 4.75 | 1.00 | 11.4 | Pacing output alone does not solve WebRTC recovery. |
-| webrtc/bitrate_only | 1710.000 | 3030.000 | 1 | 8700ms | 660 | 0 | 4.00 | 0.00 | 65.4 | High recovery output but severe freeze/drop artifacts. |
+| lightweight/adaptive | 323.833 | 373.833 | 1 | 1805ms | 0 | 10 | 3.50 | 2.33 | 28.4 | Rate cap reduces drops, but duplicate output and one freeze remain. |
+| lightweight/balanced | 321.000 | 451.000 | 1 | 1910ms | 0 | 26 | 2.50 | 7.67 | 29.0 | More weak-phase output, but duplicate frames hurt balanced QoE. |
+| lightweight/bitrate_only | 0.000 | 725.000 | 0 | 0ms | 0 | 145 | 18.50 | 25.33 | 29.8 | Best if optimizing smoothness only, but duplicate output makes it a poor balanced QoE choice. |
+| lightweight/fixed | 1407.000 | 3157.000 | 1 | 1670ms | 860 | 6 | 4.00 | 0.00 | 0.0 | Fails weak-network recovery. |
+| webrtc/adaptive | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 4.00 | 5.67 | 28.0 | Best balanced-QoE candidate after probe, route-change, and server rate-cap closure. |
+| webrtc/balanced | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 7.75 | 7.33 | 28.6 | Also meets the current balanced QoE objective with stronger weak-phase output. |
+| webrtc/bitrate_only | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 24.25 | 29.67 | 31.4 | Smooth in this synthetic run, but still not the target policy because it does not adapt encoder FPS downward. |
 | webrtc/fixed | 1117.000 | 2791.000 | 0 | 0ms | 837 | 0 | 4.00 | 0.00 | 0.0 | No recovery. |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario, candidate set, backend set, and objective function. It does not prove a global optimum. It also shows why the product objective matters: smoothness-only can prefer `lightweight/bitrate_only`, while balanced QoE prefers `lightweight/balanced`. The target `webrtc` backend is now in the same matrix and the SDK pacer consumes GoogCC `pacing_bps`, but its current recovery is still worse under this synthetic feedback model; P1a+ should next tune feedback timing, process cadence, keyframe/recovery policy, and downlink simulation before treating the WebRTC backend as production-ready.
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario, candidate set, backend set, and objective function. It does not prove a global optimum. It also shows why the product objective matters: smoothness-only can prefer high-output strategies, while balanced QoE penalizes duplicate output and network drops. The target `webrtc` backend now closes the missing WebRTC control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery, and server `SENDER_RATE_CAP_V1`. Under the current synthetic dynamic weak-network matrix, `webrtc/adaptive` and `webrtc/balanced` are the best balanced-QoE candidates.
 
 UDP weak-network matrix:
 

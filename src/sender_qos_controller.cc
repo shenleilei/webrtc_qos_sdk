@@ -30,6 +30,20 @@ Status SenderQosController::OnPacketSent(uint16_t transport_sequence_number,
   return Status::Ok();
 }
 
+Status SenderQosController::OnProbePacketSent(
+    uint16_t transport_sequence_number,
+    size_t packet_size,
+    int64_t send_time_us,
+    const ProbeCluster& probe_cluster) {
+  sent_packets_[transport_sequence_number] =
+      PacketFeedback{transport_sequence_number, send_time_us, -1, packet_size};
+  if (backend_) {
+    return backend_->OnProbePacketSent(transport_sequence_number, packet_size,
+                                       send_time_us, probe_cluster);
+  }
+  return Status::Ok();
+}
+
 Status SenderQosController::OnUplinkTransportFeedback(
     const UplinkTransportFeedback& feedback) {
   if (feedback.ids.transport_id != config_.ids.transport_id) {
@@ -132,6 +146,48 @@ Status SenderQosController::OnRtcpReceiverReport(
   return Status::Ok();
 }
 
+Status SenderQosController::OnProcessInterval(int64_t at_time_us) {
+  if (!backend_) {
+    return Status::Ok();
+  }
+  Status status = backend_->OnProcessInterval(at_time_us);
+  if (!status) {
+    return status;
+  }
+  estimate_bps_ = std::max(config_.min_bitrate_bps,
+                           std::min(config_.max_bitrate_bps,
+                                    backend_->target_bitrate_bps()));
+  pacing_bps_ = std::max(config_.min_bitrate_bps,
+                         std::min(config_.max_bitrate_bps * 2,
+                                  backend_->pacing_bitrate_bps()));
+  return Status::Ok();
+}
+
+Status SenderQosController::OnNetworkRouteChange(uint32_t start_bitrate_bps,
+                                                 int64_t at_time_us) {
+  estimate_bps_ = std::max(config_.min_bitrate_bps,
+                           std::min(config_.max_bitrate_bps,
+                                    start_bitrate_bps));
+  pacing_bps_ = estimate_bps_;
+  sent_packets_.clear();
+  if (!backend_) {
+    return Status::Ok();
+  }
+  Status status = backend_->OnNetworkRouteChange(
+      estimate_bps_, config_.min_bitrate_bps, config_.max_bitrate_bps,
+      at_time_us);
+  if (!status) {
+    return status;
+  }
+  estimate_bps_ = std::max(config_.min_bitrate_bps,
+                           std::min(config_.max_bitrate_bps,
+                                    backend_->target_bitrate_bps()));
+  pacing_bps_ = std::max(config_.min_bitrate_bps,
+                         std::min(config_.max_bitrate_bps * 2,
+                                  backend_->pacing_bitrate_bps()));
+  return Status::Ok();
+}
+
 Status SenderQosController::OnSenderRateCap(const SenderRateCap& cap) {
   if (cap.cap_bps == 0) {
     return Status::Error(StatusCode::kInvalidArgument,
@@ -145,6 +201,13 @@ Status SenderQosController::OnSenderRateCap(const SenderRateCap& cap) {
         cap.receive_time_us + static_cast<int64_t>(cap.expire_ms) * 1000;
   }
   return Status::Ok();
+}
+
+std::vector<ProbeCluster> SenderQosController::TakeProbeClusters() {
+  if (!backend_) {
+    return {};
+  }
+  return backend_->TakeProbeClusters();
 }
 
 TargetRates SenderQosController::GetTargetRates(int64_t now_us) const {

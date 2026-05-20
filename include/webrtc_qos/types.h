@@ -140,6 +140,15 @@ struct TargetRates {
   double loss_fraction = 0.0;
 };
 
+struct ProbeCluster {
+  int32_t id = -1;
+  uint32_t target_bitrate_bps = 0;
+  uint32_t min_probe_count = 0;
+  uint32_t min_probe_bytes = 0;
+  uint32_t target_duration_us = 0;
+  uint32_t min_probe_delta_us = 0;
+};
+
 struct EncoderAdaptation {
   uint32_t target_bitrate_bps = 1200000;
   uint32_t max_fps = 30;

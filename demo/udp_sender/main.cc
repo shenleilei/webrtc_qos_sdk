@@ -48,6 +48,7 @@ int main(int argc, char** argv) {
   qos_config.max_bitrate_bps = 2500000;
   SenderQosController qos =
       CreateGoogCcSenderQosController(qos_config, 1000000);
+  qos.OnProcessInterval(1000000);
 
   std::vector<PacketFeedback> pending_feedback_seed;
   int64_t current_send_time_us = 1000000;
@@ -90,6 +91,9 @@ int main(int argc, char** argv) {
 
   for (int i = 0; i < 80; ++i) {
     current_send_time_us = 1000000 + static_cast<int64_t>(i) * 5000;
+    if (i % 5 == 0) {
+      qos.OnProcessInterval(current_send_time_us);
+    }
     status = pacer.Tick(current_send_time_us);
     if (!status) {
       std::cerr << "udp_sender: pacer failed: " << status.message << "\n";
@@ -144,6 +148,7 @@ int main(int argc, char** argv) {
         }
       }
       qos.OnUplinkTransportFeedback(feedback);
+      qos.OnProcessInterval(NowUs());
       ++feedback_packets;
     } else if (header.type == EnvelopeType::kRtcpRr) {
       RtcpReceiverReport rr;
@@ -158,6 +163,7 @@ int main(int argc, char** argv) {
       }
       rr.receive_time_us = NowUs();
       qos.OnRtcpReceiverReport(rr);
+      qos.OnProcessInterval(rr.receive_time_us);
       ++rr_packets;
     } else if (header.type == EnvelopeType::kSenderRateCap) {
       SenderRateCap cap;
