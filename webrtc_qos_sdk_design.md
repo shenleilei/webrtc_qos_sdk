@@ -1407,6 +1407,7 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 
 - 脚本：`/root/webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh`
 - demo：`/root/webrtc_qos_sdk/build/long_stream_qoe_demo`
+- 多 run：`MATRIX_RUNS=N` 会对每个场景使用确定性 `network_seed=run` 重复执行，所有失败可按 run/seed 复现
 - 链路：真实 FFmpeg/libx264 I420 -> H264 Annex-B -> RTP/FU-A -> SDK pacer -> server-like cache/NACK -> receiver jitter/player
 - 场景集合：
   - `walking_dead_zone`：`good -> outage(<100kbps/high RTT/high loss/high jitter) -> poor edge -> good_again`
@@ -1425,38 +1426,39 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 - `quality_samples`：receiver frame 与源 I420 帧按 RTP timestamp 对齐后的 PSNR 样本数
 - `psnr_avg / psnr_min`：源 I420 与解码 I420 的 PSNR，当前低于 `23dB` 均值或 `16dB` 最低值会进入 balanced-QoE 惩罚；WebRTC/adaptive 硬阈值为每场景 `psnr_avg >= 20dB`、`psnr_min >= 14dB`
 - `adaptation_response_time_ms`：进入每个 phase 后，编码 target bitrate/FPS 第一次达到该 phase 目标阈值的耗时；WebRTC/adaptive 硬阈值当前覆盖 outage、poor、good_again 三类 phase
+- hard validation 现在按 run/scenario 执行：`webrtc/adaptive` 必须 `decode_errors=0`、每个 receiver frame 有 source-aligned PSNR、满足 PSNR/降档/恢复/响应时间阈值，并且在每个 run/scenario 中取得 best 或 tied-best balanced-QoE；aggregate best 也必须是 `webrtc/adaptive`
 - 当前本地结果：`smoothness_score` 最优仍可能被高输出策略打平，因此不能单独作为产品结论
-- 当前本地结果：aggregate `balanced_qoe_score` 最优为 `webrtc/adaptive=63.0`，5 个场景 `decode_errors=0`，aggregate `psnr_avg=58.372dB`、`psnr_min=21.271dB`
-- 当前本地结果：WebRTC backend 已补齐 periodic process、`data_in_flight`、probe cluster、route-change recovery、server `SENDER_RATE_CAP_V1` 后，在当前 synthetic multi-scenario dynamic weak-network 矩阵中成为 balanced-QoE 最优候选
+- 当前本地结果：`MATRIX_RUNS=2` 下 aggregate `balanced_qoe_score` 最优为 `webrtc/adaptive=132.0`，10 个 seeded case `decode_errors=0`，aggregate `psnr_avg=61.159dB`、`psnr_min=23.200dB`
+- 当前本地结果：WebRTC backend 已补齐 periodic process、`data_in_flight`、probe cluster、route-change recovery、server `SENDER_RATE_CAP_V1` 和 smoothed loss-driven FPS adaptation 后，在当前 synthetic multi-scenario dynamic weak-network 矩阵中成为 balanced-QoE 最优候选
 
-当前长流 QoE 结果表：
+当前长流 QoE seeded 结果表（`MATRIX_RUNS=2`，5 场景，10 cases/backend-strategy）：
 
-| Scenario | Best balanced QoE | Score | Freeze | Drops | Duplicate | PSNR avg/min | 响应 ms outage/poor/recover | 降档/恢复 ms | Outage/Poor FPS | Recovered FPS | 弱网 target bps | 恢复 target bps | 结论 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |
-| `walking_dead_zone` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 62.18 / 55.16 | 0 / 0 / 100 | 0 / 100 | 4.00 / 5.67 | 28.0 | 144000 / 132000 | 2032038 | 深度掉网恢复无 freeze/drop/duplicate，响应时间和画质样本达标 |
-| `jitter_loss_oscillation` | `webrtc/adaptive` | 27.000 | 0 | 9 | 0 | 60.57 / 27.36 | 300 / 0 / 0 | 2200 / 0 | 9.00 / 9.33 | 28.8 | 182930 / 186768 | 2063557 | 振荡网络下少量 network drops，但无 freeze/duplicate/decode error，响应时间达标 |
-| `bandwidth_staircase` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 46.32 / 21.27 | 0 / 0 / 100 | 4100 / 100 | 12.75 / 5.00 | 29.2 | 390000 / 156000 | 2095566 | 阶梯降带宽和恢复均符合场景化阈值，响应时间达标 |
-| `rtt_jitter_spike_recover` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 61.54 / 25.66 | 0 / 0 / 0 | -1 / 0 | 4.50 / 13.00 | 29.2 | 480000 / 390000 | 2063557 | 高 RTT/jitter 无显式丢包，decode/PSNR/恢复均达标 |
-| `loss_burst_recover` | `webrtc/adaptive` | 36.000 | 0 | 12 | 0 | 62.25 / 54.14 | 0 / 0 / 0 | 3900 / 0 | 5.50 / 6.33 | 28.6 | 183980 / 130348 | 2063557 | 突发丢包下无 freeze/duplicate/decode error，少量 network drops 进入 QoE 惩罚 |
+| Scenario | Best balanced QoE | Worst score | Freeze | Max drops | Duplicate | Worst PSNR avg/min | 最大响应 ms outage/poor/recover | Min Outage/Poor FPS | Min Recovered FPS | 弱网 target bps | Min 恢复 target bps | 结论 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |
+| `walking_dead_zone` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 61.77 / 28.69 | 0 / 0 / 100 | 5.00 / 5.00 | 30.0 | 144000 / 132000 | 2079500 | 深度掉网恢复无 freeze/drop/duplicate，响应时间和画质样本达标 |
+| `jitter_loss_oscillation` | `webrtc/adaptive` | 33.000 | 0 | 11 | 0 | 59.61 / 23.20 | 100 / 0 / 100 | 10.00 / 10.00 | 30.0 | 300000 / 213626 | 2079500 | 振荡网络下少量 network drops，但无 freeze/duplicate/decode error，响应时间达标 |
+| `bandwidth_staircase` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 61.25 / 29.68 | 0 / 0 / 100 | 10.00 / 5.00 | 30.0 | 390000 / 156000 | 2079500 | 阶梯降带宽和恢复均符合场景化阈值，响应时间达标 |
+| `rtt_jitter_spike_recover` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 60.49 / 26.13 | 0 / 0 / 0 | 5.00 / 10.00 | 30.0 | 480000 / 390000 | 2095566 | 高 RTT/jitter 无显式丢包，decode/PSNR/恢复均达标 |
+| `loss_burst_recover` | `webrtc/adaptive` | 36.000 | 0 | 12 | 0 | 61.72 / 23.75 | 0 / 0 / 0 | 10.00 / 5.00 | 30.0 | 194254 / 116307 | 2000000 | 突发丢包下无 freeze/duplicate/decode error，少量 network drops 进入 QoE 惩罚 |
 
 当前 aggregate 长流 QoE 排名：
 
 | Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Decode errors | Drops | Duplicates | Failed cases |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `webrtc/adaptive` | 63.000 | 58.372 / 21.271 | 0 | 21 | 0 | 0 |
-| `webrtc/balanced` | 1119.000 | 60.738 / 24.306 | 0 | 23 | 0 | 0 |
-| `lightweight/adaptive` | 2262.395 | 22.309 / 15.594 | 5 | 17 | 66 | 0 |
-| `lightweight/balanced` | 2613.168 | 22.512 / 16.327 | 2 | 19 | 131 | 0 |
-| `webrtc/bitrate_only` | 13671.000 | 57.674 / 20.572 | 0 | 37 | 0 | 0 |
-| `lightweight/bitrate_only` | 16353.760 | 22.337 / 16.354 | 0 | 38 | 509 | 0 |
-| `webrtc/fixed` | 37363.000 | 60.081 / 21.706 | 0 | 2033 | 0 | 0 |
-| `lightweight/fixed` | 40654.050 | 20.399 / 12.909 | 0 | 2258 | 161 | 0 |
+| `webrtc/adaptive` | 132.000 | 61.159 / 23.200 | 0 | 44 | 0 | 0 |
+| `webrtc/balanced` | 2212.000 | 60.831 / 23.200 | 0 | 44 | 0 | 0 |
+| `lightweight/adaptive` | 4566.478 | 26.989 / 16.003 | 17 | 38 | 144 | 1 |
+| `lightweight/balanced` | 4654.080 | 27.047 / 15.821 | 19 | 48 | 233 | 0 |
+| `webrtc/bitrate_only` | 27339.000 | 57.338 / 20.907 | 0 | 73 | 0 | 0 |
+| `lightweight/bitrate_only` | 32616.000 | 26.422 / 16.689 | 16 | 77 | 893 | 0 |
+| `webrtc/fixed` | 74350.000 | 58.891 / 19.767 | 0 | 4079 | 0 | 0 |
+| `lightweight/fixed` | 86930.276 | 23.638 / 14.364 | 155 | 4264 | 486 | 0 |
 
 当前判断：
 
 - 不能再只说“adaptive 能降码率/FPS，所以 QoS 正确”
 - QoS 最优必须先定义目标函数：smoothness-only 会偏向高输出策略；当前 balanced-QoE 同时惩罚 duplicate frames、network drops、decode errors、低 PSNR、弱网不自适应和好网不恢复，因此选出 `webrtc/adaptive`
-- 当前证据只证明在这个 5 场景动态弱网集合、backend 集合和候选策略集合中，`webrtc/adaptive` 是 balanced-QoE 目标下的最优候选
+- 当前证据只证明在这个 5 场景动态弱网集合、2 个 deterministic seed、backend 集合和候选策略集合中，`webrtc/adaptive` 是 balanced-QoE 目标下的最优候选
 - WebRTC backend 之所以从弱于 lightweight 变成最优，是因为补齐了缺失闭环：周期性 `OnProcessInterval`、`data_in_flight`、probe cluster 发送和回馈、网络恢复 route-change、server 根据下行质量生成 `SENDER_RATE_CAP_V1`
 - C/S 架构下，server 确认链路进入 `good_again` 后应给 sender 触发 route-change，并使用健康链路 start bitrate（当前 demo 为 `2Mbps`）帮助 GoogCC 从深度弱网后的保守状态快速恢复
 - 后续接真实渲染后，需要补 WebRTC stats 同类指标：`freezeCount`、`totalFreezesDuration`、`jitterBufferDelay`、`framesDecoded`、`framesDropped`、QP、端到端延迟和真实 render queue 指标

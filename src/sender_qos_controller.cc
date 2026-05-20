@@ -92,6 +92,19 @@ Status SenderQosController::OnUplinkTransportFeedback(
 
   if (reported > 0) {
     loss_fraction_ = static_cast<double>(lost) / static_cast<double>(reported);
+    if (!has_loss_sample_) {
+      smoothed_loss_fraction_ = loss_fraction_;
+      has_loss_sample_ = true;
+    } else {
+      constexpr double kLossRiseEwmaWeight = 0.35;
+      constexpr double kLossFallEwmaWeight = 0.55;
+      const double loss_weight =
+          loss_fraction_ > smoothed_loss_fraction_ ? kLossRiseEwmaWeight
+                                                   : kLossFallEwmaWeight;
+      smoothed_loss_fraction_ =
+          smoothed_loss_fraction_ * (1.0 - loss_weight) +
+          loss_fraction_ * loss_weight;
+    }
   }
 
   if (backend_) {
@@ -170,6 +183,8 @@ Status SenderQosController::OnNetworkRouteChange(uint32_t start_bitrate_bps,
                                     start_bitrate_bps));
   pacing_bps_ = estimate_bps_;
   sent_packets_.clear();
+  smoothed_loss_fraction_ = 0.0;
+  has_loss_sample_ = false;
   if (!backend_) {
     return Status::Ok();
   }
@@ -232,20 +247,32 @@ EncoderAdaptation SenderQosController::GetEncoderAdaptation(
   const TargetRates rates = GetTargetRates(now_us);
   EncoderAdaptation adaptation;
   adaptation.target_bitrate_bps = rates.final_target_bps;
-  if (rates.final_target_bps < 150000 || rates.rtt_ms >= 800 ||
-      rates.loss_fraction >= 0.30) {
+  const double effective_loss =
+      has_loss_sample_ ? smoothed_loss_fraction_ : rates.loss_fraction;
+  const bool severe_capacity = rates.final_target_bps < 150000;
+  const bool severe_rtt = rates.rtt_ms >= 800;
+  const bool very_constrained_capacity = rates.final_target_bps < 180000;
+  const bool catastrophic_loss = effective_loss >= 0.45;
+  const bool constrained_capacity = rates.final_target_bps < 300000;
+  const bool high_rtt = rates.rtt_ms >= 400;
+  const bool high_loss = effective_loss >= 0.08;
+  const bool moderate_capacity = rates.final_target_bps < 800000;
+  const bool moderate_rtt = rates.rtt_ms >= 250;
+  const bool moderate_loss = effective_loss >= 0.03;
+
+  if (severe_capacity || severe_rtt ||
+      (very_constrained_capacity && (rates.rtt_ms >= 500 ||
+                                     catastrophic_loss))) {
     adaptation.max_fps = 5;
-  } else if (rates.final_target_bps < 300000 || rates.rtt_ms >= 500 ||
-             rates.loss_fraction >= 0.15) {
+  } else if (constrained_capacity || high_rtt || high_loss) {
     adaptation.max_fps = 10;
-  } else if (rates.final_target_bps < 800000 || rates.rtt_ms >= 250 ||
-             rates.loss_fraction >= 0.05) {
+  } else if (moderate_capacity || moderate_rtt || moderate_loss) {
     adaptation.max_fps = 15;
   } else {
     adaptation.max_fps = 30;
   }
   adaptation.request_keyframe =
-      rates.rtt_ms >= 500 || rates.loss_fraction >= 0.15;
+      rates.rtt_ms >= 500 || effective_loss >= 0.15;
   return adaptation;
 }
 

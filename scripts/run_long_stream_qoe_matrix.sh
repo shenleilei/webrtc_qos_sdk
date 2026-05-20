@@ -5,6 +5,7 @@ SDK_ROOT="${SDK_ROOT:-/root/webrtc_qos_sdk}"
 BUILD_DIR="${BUILD_DIR:-${SDK_ROOT}/build}"
 PREFIX="${PREFIX:-/root/output}"
 LOG_DIR="${LOG_DIR:-/tmp/webrtc_qos_long_stream_qoe_matrix}"
+MATRIX_RUNS="${MATRIX_RUNS:-1}"
 CXX="${CXX:-g++}"
 LIBATOMIC_DIR="${LIBATOMIC_DIR:-/usr/lib/gcc/x86_64-redhat-linux/10}"
 
@@ -55,41 +56,50 @@ if [[ "${webrtc_backend_available}" == "1" ]]; then
   backends+=(webrtc)
 fi
 
-for backend in "${backends[@]}"; do
-  if [[ "${backend}" == "webrtc" ]]; then
-    demo="${WEBRTC_DEMO}"
-  else
-    demo="${BUILD_DIR}/long_stream_qoe_demo"
-  fi
-  for scenario in "${scenarios[@]}"; do
-    for strategy in "${strategies[@]}"; do
-      log_file="${LOG_DIR}/${scenario}_${backend}_${strategy}.log"
-      summary_file="${LOG_DIR}/${scenario}_${backend}_${strategy}.summary.json"
-      echo "long_stream_qoe scenario=${scenario} backend=${backend} strategy=${strategy}"
-      demo_exit=0
-      "${demo}" \
-        --scenario="${scenario}" \
-        --backend="${backend}" \
-        --strategy="${strategy}" \
-        --summary="${summary_file}" >"${log_file}" 2>&1 || demo_exit=$?
-      if [[ "${demo_exit}" != "0" ]]; then
-        echo "long_stream_qoe case failed scenario=${scenario} backend=${backend} strategy=${strategy} exit=${demo_exit}"
-      fi
-      python3 - "${summary_file}" "${LOG_DIR}/metrics.jsonl" <<'PY'
+for run in $(seq 1 "${MATRIX_RUNS}"); do
+  network_seed="${run}"
+  for backend in "${backends[@]}"; do
+    if [[ "${backend}" == "webrtc" ]]; then
+      demo="${WEBRTC_DEMO}"
+    else
+      demo="${BUILD_DIR}/long_stream_qoe_demo"
+    fi
+    for scenario in "${scenarios[@]}"; do
+      for strategy in "${strategies[@]}"; do
+        log_file="${LOG_DIR}/run${run}_${scenario}_${backend}_${strategy}.log"
+        summary_file="${LOG_DIR}/run${run}_${scenario}_${backend}_${strategy}.summary.json"
+        echo "long_stream_qoe run=${run} seed=${network_seed} scenario=${scenario} backend=${backend} strategy=${strategy}"
+        demo_exit=0
+        "${demo}" \
+          --scenario="${scenario}" \
+          --backend="${backend}" \
+          --strategy="${strategy}" \
+          --network-seed="${network_seed}" \
+          --summary="${summary_file}" >"${log_file}" 2>&1 || demo_exit=$?
+        if [[ "${demo_exit}" != "0" ]]; then
+          echo "long_stream_qoe case failed run=${run} seed=${network_seed} scenario=${scenario} backend=${backend} strategy=${strategy} exit=${demo_exit}"
+        fi
+        python3 - "${summary_file}" "${LOG_DIR}/metrics.jsonl" "${run}" "${network_seed}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 summary_path = Path(sys.argv[1])
 jsonl_path = Path(sys.argv[2])
+run = int(sys.argv[3])
+network_seed = int(sys.argv[4])
 data = json.loads(summary_path.read_text(encoding="utf-8"))
+data.setdefault("run", run)
+data.setdefault("network_seed", network_seed)
 with jsonl_path.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps(data, sort_keys=True) + "\n")
 print(
-    "metrics scenario={scenario} backend={backend} strategy={strategy} freeze={freeze} "
+    "metrics run={run} seed={seed} scenario={scenario} backend={backend} strategy={strategy} freeze={freeze} "
     "max_freeze_ms={max_freeze} drops={drops} frames={frames} "
     "decoded={decoded} decode_errors={decode_errors} psnr_avg={psnr_avg} "
     "psnr_min={psnr_min} duplicates={duplicates}".format(
+        run=data.get("run"),
+        seed=data.get("network_seed"),
         scenario=data.get("scenario"),
         backend=data.get("backend"),
         strategy=data.get("strategy"),
@@ -105,6 +115,7 @@ print(
     )
 )
 PY
+      done
     done
   done
 done
@@ -300,6 +311,8 @@ for backend in sorted({row.get("backend", "unknown") for row in rows}):
     }
 
 scenarios = sorted({row.get("scenario", "unknown") for row in rows})
+runs = sorted({row.get("run", 1) for row in rows})
+expected_case_count = len(scenarios) * len(runs)
 scenario_results = {}
 for scenario in scenarios:
     scenario_rows = [row for row in rows if row.get("scenario", "unknown") == scenario]
@@ -315,6 +328,39 @@ for scenario in scenarios:
         "best_balanced_qoe_strategy": scenario_best_balanced.get("strategy"),
         "best_balanced_qoe_score": scenario_best_balanced["balanced_qoe_score"],
     }
+
+case_results = {}
+for run in runs:
+    case_results[str(run)] = {}
+    for scenario in scenarios:
+        case_rows = [
+            row
+            for row in rows
+            if row.get("run", 1) == run
+            and row.get("scenario", "unknown") == scenario
+        ]
+        if not case_rows:
+            continue
+        case_best_smoothness = min(
+            case_rows, key=lambda row: row["smoothness_score"]
+        )
+        case_best_balanced = min(
+            case_rows, key=lambda row: row["balanced_qoe_score"]
+        )
+        case_results[str(run)][scenario] = {
+            "best_smoothness_backend": case_best_smoothness.get(
+                "backend", "unknown"
+            ),
+            "best_smoothness_strategy": case_best_smoothness.get("strategy"),
+            "best_smoothness_score": case_best_smoothness["smoothness_score"],
+            "best_balanced_qoe_backend": case_best_balanced.get(
+                "backend", "unknown"
+            ),
+            "best_balanced_qoe_strategy": case_best_balanced.get("strategy"),
+            "best_balanced_qoe_score": case_best_balanced[
+                "balanced_qoe_score"
+            ],
+        }
 
 best_by_scenario_backend = {}
 for scenario in scenarios:
@@ -342,6 +388,7 @@ for row in rows:
             "backend": key[0],
             "strategy": key[1],
             "scenario_count": 0,
+            "case_count": 0,
             "balanced_qoe_score_total": 0.0,
             "smoothness_score_total": 0.0,
             "decode_errors_total": 0,
@@ -354,6 +401,7 @@ for row in rows:
         },
     )
     item["scenario_count"] += 1
+    item["case_count"] += 1
     item["balanced_qoe_score_total"] += row["balanced_qoe_score"]
     item["smoothness_score_total"] += row["smoothness_score"]
     item["decode_errors_total"] += row.get("decode_errors", 0)
@@ -373,7 +421,7 @@ for row in rows:
         item["failed_cases"] += 1
 
 for item in aggregate_by_backend_strategy.values():
-    count = max(1, item["scenario_count"])
+    count = max(1, item["case_count"])
     item["balanced_qoe_score_avg"] = round(
         item["balanced_qoe_score_total"] / count, 3
     )
@@ -389,10 +437,62 @@ for item in aggregate_by_backend_strategy.values():
     item["balanced_qoe_score_total"] = round(item["balanced_qoe_score_total"], 3)
     item["smoothness_score_total"] = round(item["smoothness_score_total"], 3)
 
+worst_case_by_backend_strategy = {}
+for row in rows:
+    key = (row.get("backend", "unknown"), row.get("strategy", "unknown"))
+    item = worst_case_by_backend_strategy.setdefault(
+        key,
+        {
+            "backend": key[0],
+            "strategy": key[1],
+            "worst_balanced_qoe_score": None,
+            "worst_smoothness_score": None,
+            "worst_psnr_min": None,
+            "max_decode_errors": 0,
+            "max_network_drops": 0,
+            "max_duplicate_frames": 0,
+            "worst_case": None,
+        },
+    )
+    balanced_score = row["balanced_qoe_score"]
+    if (item["worst_balanced_qoe_score"] is None or
+            balanced_score > item["worst_balanced_qoe_score"]):
+        item["worst_balanced_qoe_score"] = balanced_score
+        item["worst_case"] = {
+            "run": row.get("run", 1),
+            "network_seed": row.get("network_seed", 1),
+            "scenario": row.get("scenario", "unknown"),
+        }
+    item["worst_smoothness_score"] = (
+        row["smoothness_score"]
+        if item["worst_smoothness_score"] is None
+        else max(item["worst_smoothness_score"], row["smoothness_score"])
+    )
+    row_psnr_min = row.get("psnr_min", 0.0)
+    if row.get("quality_samples", 0):
+        item["worst_psnr_min"] = (
+            row_psnr_min
+            if item["worst_psnr_min"] is None
+            else min(item["worst_psnr_min"], row_psnr_min)
+        )
+    item["max_decode_errors"] = max(
+        item["max_decode_errors"], row.get("decode_errors", 0))
+    item["max_network_drops"] = max(
+        item["max_network_drops"], row.get("network_drops", 0))
+    item["max_duplicate_frames"] = max(
+        item["max_duplicate_frames"], row.get("duplicate_frames", 0))
+
+for item in worst_case_by_backend_strategy.values():
+    item["worst_balanced_qoe_score"] = round(
+        item["worst_balanced_qoe_score"] or 0.0, 3)
+    item["worst_smoothness_score"] = round(
+        item["worst_smoothness_score"] or 0.0, 3)
+    item["worst_psnr_min"] = round(item["worst_psnr_min"] or 0.0, 3)
+
 complete_aggregate_rows = [
     item
     for item in aggregate_by_backend_strategy.values()
-    if item["scenario_count"] == len(scenarios)
+    if item["case_count"] == expected_case_count
 ]
 best_aggregate = min(
     complete_aggregate_rows or aggregate_by_backend_strategy.values(),
@@ -402,53 +502,58 @@ best_aggregate = min(
 validation_failures = []
 webrtc_rows = [row for row in rows if row.get("backend", "unknown") == "webrtc"]
 if webrtc_rows:
-    for scenario in scenarios:
+    for run in runs:
+      for scenario in scenarios:
         candidates = [
             row
             for row in rows
-            if row.get("scenario", "unknown") == scenario
+            if row.get("run", 1) == run
+            and row.get("scenario", "unknown") == scenario
             and row.get("backend", "unknown") == "webrtc"
             and row.get("strategy") == "adaptive"
         ]
+        case_label = f"run={run} scenario={scenario}"
         if not candidates:
             validation_failures.append(
-                f"{scenario}: missing webrtc/adaptive result"
+                f"{case_label}: missing webrtc/adaptive result"
             )
             continue
         adaptive = candidates[0]
         expected = SCENARIO_EXPECTATIONS[scenario]
         if not adaptive.get("ok", False):
-            validation_failures.append(f"{scenario}: webrtc/adaptive case failed")
+            validation_failures.append(
+                f"{case_label}: webrtc/adaptive case failed"
+            )
         if adaptive.get("decode_errors", 0) != 0:
             validation_failures.append(
-                f"{scenario}: webrtc/adaptive decode_errors="
+                f"{case_label}: webrtc/adaptive decode_errors="
                 f"{adaptive.get('decode_errors', 0)}"
             )
         if adaptive.get("receiver_frames", 0) <= 0:
             validation_failures.append(
-                f"{scenario}: webrtc/adaptive produced no receiver frames"
+                f"{case_label}: webrtc/adaptive produced no receiver frames"
             )
         if adaptive.get("decoded_frames", 0) < adaptive.get("receiver_frames", 0):
             validation_failures.append(
-                f"{scenario}: decoded frames below receiver frames"
+                f"{case_label}: decoded frames below receiver frames"
             )
         if adaptive.get("quality_samples", 0) < adaptive.get("receiver_frames", 0):
             validation_failures.append(
-                f"{scenario}: quality samples below receiver frames"
+                f"{case_label}: quality samples below receiver frames"
             )
         if adaptive.get("psnr_avg", 0.0) < 20.0:
             validation_failures.append(
-                f"{scenario}: webrtc/adaptive psnr_avg="
+                f"{case_label}: webrtc/adaptive psnr_avg="
                 f"{adaptive.get('psnr_avg', 0.0):.3f} below 20.0"
             )
         if adaptive.get("psnr_min", 0.0) < 14.0:
             validation_failures.append(
-                f"{scenario}: webrtc/adaptive psnr_min="
+                f"{case_label}: webrtc/adaptive psnr_min="
                 f"{adaptive.get('psnr_min', 0.0):.3f} below 14.0"
             )
         if adaptation_penalty(adaptive) != 0:
             validation_failures.append(
-                f"{scenario}: adaptation thresholds not met "
+                f"{case_label}: adaptation thresholds not met "
                 f"(outage_bps<={expected['outage_bps_max']}, "
                 f"poor_bps<={expected['poor_bps_max']}, "
                 f"recovered_bps>={expected['recovered_bps_min']}, "
@@ -465,23 +570,26 @@ if webrtc_rows:
                 adaptive, phase_name, "adaptation_response_time_ms", -1)
             if response_ms < 0:
                 validation_failures.append(
-                    f"{scenario}: {phase_name} adaptation response missing"
+                    f"{case_label}: {phase_name} adaptation response missing"
                 )
             elif response_ms > expected[expectation_key]:
                 validation_failures.append(
-                    f"{scenario}: {phase_name} adaptation response "
+                    f"{case_label}: {phase_name} adaptation response "
                     f"{response_ms}ms exceeds {expected[expectation_key]}ms"
                 )
-        scenario_best = scenario_results[scenario]
-        if (
-            scenario_best["best_balanced_qoe_backend"] != "webrtc"
-            or scenario_best["best_balanced_qoe_strategy"] != "adaptive"
-        ):
+        case_best = case_results.get(str(run), {}).get(scenario, {})
+        best_score = case_best.get("best_balanced_qoe_score")
+        adaptive_score = adaptive.get("balanced_qoe_score", float("inf"))
+        if best_score is None or adaptive_score > best_score + 1e-6:
+            best_score_text = (
+                "missing" if best_score is None else f"{best_score:.3f}"
+            )
             validation_failures.append(
-                f"{scenario}: best balanced QoE is "
-                f"{scenario_best['best_balanced_qoe_backend']}/"
-                f"{scenario_best['best_balanced_qoe_strategy']}, "
-                "expected webrtc/adaptive"
+                f"{case_label}: webrtc/adaptive balanced QoE "
+                f"{adaptive_score:.3f} is worse than best "
+                f"{case_best.get('best_balanced_qoe_backend')}/"
+                f"{case_best.get('best_balanced_qoe_strategy')} "
+                f"{best_score_text}; expected best or tied-best"
             )
 
     if (
@@ -497,6 +605,8 @@ if webrtc_rows:
 summary = {
     "strategies": [
         {
+            "run": row.get("run", 1),
+            "network_seed": row.get("network_seed", 1),
             "scenario": row.get("scenario", "unknown"),
             "backend": row.get("backend", "unknown"),
             "strategy": row.get("strategy"),
@@ -549,11 +659,23 @@ summary = {
     "best_balanced_qoe_score": best_balanced["balanced_qoe_score"],
     "best_by_backend": best_by_backend,
     "scenario_results": scenario_results,
+    "case_results": case_results,
     "best_by_scenario_backend": best_by_scenario_backend,
+    "runs": runs,
+    "run_count": len(runs),
+    "expected_case_count_per_backend_strategy": expected_case_count,
     "aggregate_by_backend_strategy": sorted(
         aggregate_by_backend_strategy.values(),
         key=lambda item: (
             item["balanced_qoe_score_total"],
+            item["backend"],
+            item["strategy"],
+        ),
+    ),
+    "worst_case_by_backend_strategy": sorted(
+        worst_case_by_backend_strategy.values(),
+        key=lambda item: (
+            item["worst_balanced_qoe_score"],
             item["backend"],
             item["strategy"],
         ),
@@ -571,9 +693,11 @@ summary = {
         "real FFmpeg H264 decode errors/gaps, and failure to recover when the "
         "route becomes good again. It also penalizes low decoded-frame PSNR "
         "against the generated I420 source. Validation requires "
-        "webrtc/adaptive to meet per-scenario decode/quality/adaptation "
-        "thresholds and win the aggregate balanced QoE score inside this "
-        "scenario set; it is not a global mathematical optimum."
+        "webrtc/adaptive to meet per-run/per-scenario "
+        "decode/quality/adaptation thresholds, win each per-run/per-scenario "
+        "balanced QoE comparison, and win the aggregate balanced QoE score "
+        "inside this seeded scenario set; it is not a global mathematical "
+        "optimum."
     ),
 }
 summary_path.write_text(
@@ -581,13 +705,16 @@ summary_path.write_text(
     encoding="utf-8",
 )
 print(
-    "long stream qoe matrix passed scenarios={scenario_count} "
+    "long stream qoe matrix passed scenarios={scenario_count} runs={run_count} "
+    "cases_per_backend_strategy={case_count} "
     "best_smoothness={smooth_backend}/{smooth} smoothness_score={smooth_score} "
     "best_balanced={balanced_backend}/{balanced} "
     "balanced_qoe_score={balanced_score} "
     "best_aggregate={aggregate_backend}/{aggregate_strategy} "
     "aggregate_balanced_qoe_score={aggregate_score}".format(
         scenario_count=len(scenarios),
+        run_count=len(runs),
+        case_count=expected_case_count,
         smooth_backend=summary["best_smoothness_backend"],
         smooth=summary["best_smoothness_strategy"],
         smooth_score=summary["best_smoothness_score"],

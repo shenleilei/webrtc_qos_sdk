@@ -89,6 +89,8 @@ class SenderQosController {
   int64_t rate_cap_expire_time_us_ = 0;
   uint32_t rtt_ms_ = 0;
   double loss_fraction_ = 0.0;
+  double smoothed_loss_fraction_ = 0.0;
+  bool has_loss_sample_ = false;
   std::unordered_map<uint16_t, PacketFeedback> sent_packets_;
   std::unique_ptr<SenderQosBackend> backend_;
 };

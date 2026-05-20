@@ -75,6 +75,7 @@ struct Summary {
   std::string scenario;
   std::string backend;
   std::string strategy;
+  uint32_t network_seed = 0;
   bool ok = true;
   int64_t degrade_time_ms = -1;
   int64_t recovery_time_ms = -1;
@@ -232,13 +233,24 @@ size_t FindPhaseIndex(const std::vector<Phase>& phases, int64_t now_us) {
   return phases.size() - 1;
 }
 
+uint32_t MixSeed(uint32_t seed, uint32_t a, uint32_t b) {
+  uint32_t x = seed ^ (a * 0x9e3779b9u) ^ (b * 0x85ebca6bu);
+  x ^= x >> 16;
+  x *= 0x7feb352du;
+  x ^= x >> 15;
+  x *= 0x846ca68bu;
+  x ^= x >> 16;
+  return x;
+}
+
 webrtc_qos::UplinkTransportFeedback BuildFeedback(
     const webrtc_qos::TransportIds& ids,
     std::vector<webrtc_qos::PacketFeedback>* pending_packets,
     int64_t now_us,
     uint16_t feedback_seq,
     uint32_t ack_bps,
-    double loss_fraction) {
+    double loss_fraction,
+    uint32_t network_seed) {
   webrtc_qos::UplinkTransportFeedback feedback;
   feedback.ids = ids;
   feedback.reference_time_us = now_us;
@@ -270,7 +282,11 @@ webrtc_qos::UplinkTransportFeedback BuildFeedback(
   size_t acked_bytes = 0;
   for (size_t i = 0; i < due.size(); ++i) {
     const uint32_t hash =
-        static_cast<uint32_t>((i + 1) * 1103515245u + feedback_seq * 2654435761u);
+        network_seed == 0
+            ? static_cast<uint32_t>((i + 1) * 1103515245u +
+                                    feedback_seq * 2654435761u)
+            : MixSeed(network_seed, static_cast<uint32_t>(i + 1),
+                      feedback_seq);
     lost_flags[i] = loss_threshold > 0 && (hash % 1000u) < loss_threshold;
     if (!lost_flags[i]) {
       ++acked_packets;
@@ -386,6 +402,7 @@ void WriteSummary(const std::string& path,
   out << "  \"scenario\": \"" << summary.scenario << "\",\n";
   out << "  \"backend\": \"" << summary.backend << "\",\n";
   out << "  \"strategy\": \"" << summary.strategy << "\",\n";
+  out << "  \"network_seed\": " << summary.network_seed << ",\n";
   out << "  \"ok\": " << (summary.ok ? "true" : "false") << ",\n";
   out << "  \"degrade_time_ms\": " << summary.degrade_time_ms << ",\n";
   out << "  \"recovery_time_ms\": " << summary.recovery_time_ms << ",\n";
@@ -478,6 +495,7 @@ int main(int argc, char** argv) {
   std::string backend = "lightweight";
   std::string strategy = "adaptive";
   std::string scenario = "walking_dead_zone";
+  uint32_t network_seed = 0;
   const bool trace_rates = std::getenv("WEBRTC_QOS_TRACE_RATES") != nullptr;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -499,6 +517,12 @@ int main(int argc, char** argv) {
     const std::string scenario_prefix = "--scenario=";
     if (arg.rfind(scenario_prefix, 0) == 0) {
       scenario = arg.substr(scenario_prefix.size());
+      continue;
+    }
+    const std::string seed_prefix = "--network-seed=";
+    if (arg.rfind(seed_prefix, 0) == 0) {
+      network_seed =
+          static_cast<uint32_t>(std::stoul(arg.substr(seed_prefix.size())));
     }
   }
   if (strategy != "adaptive" && strategy != "balanced" &&
@@ -573,6 +597,7 @@ int main(int argc, char** argv) {
   summary.scenario = scenario;
   summary.backend = backend;
   summary.strategy = strategy;
+  summary.network_seed = network_seed;
   int64_t link_available_us = 0;
   int64_t last_keyframe_encode_us = -10000000;
   std::set<uint32_t> rendered_timestamps;
@@ -582,11 +607,19 @@ int main(int argc, char** argv) {
                                int64_t send_time_us,
                                bool retransmission) {
     const Phase& phase = FindPhase(phases, send_time_us);
-    if (!retransmission && phase.downlink_drop_every > 0 &&
-        packet.sequence_number % phase.downlink_drop_every == 0) {
-      ++phase_metrics[FindPhaseIndex(phases, send_time_us)].network_drops;
-      ++summary.network_drops;
-      return;
+    if (!retransmission && phase.downlink_drop_every > 0) {
+      const bool should_drop =
+          network_seed == 0
+              ? packet.sequence_number % phase.downlink_drop_every == 0
+              : (static_cast<uint32_t>(packet.sequence_number) +
+                 network_seed) %
+                        phase.downlink_drop_every ==
+                    0;
+      if (should_drop) {
+        ++phase_metrics[FindPhaseIndex(phases, send_time_us)].network_drops;
+        ++summary.network_drops;
+        return;
+      }
     }
     const size_t bytes = packet.payload.size() + 20;
     const uint32_t capacity_bps =
@@ -604,7 +637,14 @@ int main(int argc, char** argv) {
     }
     int64_t jitter_us = 0;
     if (phase.downlink_jitter_ms > 0) {
-      const int sign = packet.sequence_number % 2 == 0 ? 1 : -1;
+      const int sign =
+          network_seed == 0
+              ? (packet.sequence_number % 2 == 0 ? 1 : -1)
+              : ((MixSeed(network_seed, packet.sequence_number,
+                          packet.timestamp) &
+                  1u) == 0
+                     ? 1
+                     : -1);
       jitter_us = sign * static_cast<int64_t>(phase.downlink_jitter_ms) * 500;
     }
     const int64_t base_delay_us =
@@ -879,7 +919,8 @@ int main(int argc, char** argv) {
     if (now_us >= next_feedback_us) {
       UplinkTransportFeedback feedback =
           BuildFeedback(ids, &pending_uplink_feedback, now_us, feedback_seq++,
-                        phase.feedback_bps, phase.feedback_loss);
+                        phase.feedback_bps, phase.feedback_loss,
+                        network_seed);
       if (!feedback.packets.empty()) {
         status = qos.OnUplinkTransportFeedback(feedback);
         if (!status) {
@@ -1120,6 +1161,7 @@ int main(int argc, char** argv) {
   std::cout << "long_stream_qoe backend=" << backend
             << " scenario=" << scenario
             << " strategy=" << strategy
+            << " network_seed=" << network_seed
             << " degrade_ms=" << summary.degrade_time_ms
             << " recovery_ms=" << summary.recovery_time_ms
             << " freeze_count=" << summary.freeze_count
