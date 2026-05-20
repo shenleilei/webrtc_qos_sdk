@@ -55,9 +55,11 @@ Status VideoSender::ValidateAccessUnit(
       const uint8_t profile_idc = nalu[1];
       const uint8_t profile_iop = nalu[2];
       const uint8_t level_idc = nalu[3];
-      if (profile_idc != 0x42 || profile_iop != 0xe0 || level_idc != 0x1f) {
+      const bool constrained_baseline =
+          profile_idc == 0x42 && (profile_iop & 0xc0) == 0xc0;
+      if (!constrained_baseline || level_idc != 0x1f) {
         return Status::Error(StatusCode::kUnsupported,
-                             "H264 SPS does not match profile-level-id=42e01f");
+                             "H264 SPS is not constrained-baseline level 3.1");
       }
     }
     if (IsBFrameSlice(nalu)) {

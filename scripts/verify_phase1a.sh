@@ -18,12 +18,16 @@ cmake --install "${BUILD_DIR}" --prefix "${PREFIX}"
 "${BUILD_DIR}/transport_port_demo"
 "${BUILD_DIR}/production_transport_demo"
 "${BUILD_DIR}/dynamic_qos_demo"
+if [[ -x "${BUILD_DIR}/ffmpeg_encoder_demo" ]]; then
+  "${BUILD_DIR}/ffmpeg_encoder_demo"
+fi
 
 "${PREFIX}/demo/webrtc_qos_googcc_smoke"
 "${PREFIX}/demo/webrtc_qos_video_jitter_smoke"
 
 "${SDK_ROOT}/scripts/build_output_integration_demo.sh"
 "${SDK_ROOT}/scripts/build_udp_demos.sh"
+BUILD_DIR="${BUILD_DIR}" "${SDK_ROOT}/scripts/run_dynamic_qos_matrix.sh"
 BUILD_DEMOS=0 RUNS=1 "${SDK_ROOT}/scripts/run_udp_netem_matrix.sh"
 BUILD_DEMOS=0 DURATION_SEC="${SOAK_DURATION_SEC}" MATRIX_RUNS="${SOAK_MATRIX_RUNS}" \
   "${SDK_ROOT}/scripts/run_udp_soak.sh"
@@ -60,6 +64,14 @@ required_files=(
   "${PREFIX}/demo/udp_server_demo"
   "${PREFIX}/demo/udp_receiver_demo"
 )
+
+if [[ -x "${BUILD_DIR}/ffmpeg_encoder_demo" ]]; then
+  required_files+=(
+    "${PREFIX}/include/webrtc_qos/ffmpeg_h264_encoder.h"
+    "${PREFIX}/lib/libwebrtc_qos_ffmpeg_encoder.a"
+    "${PREFIX}/demo/ffmpeg_encoder_demo"
+  )
+fi
 
 for path in "${required_files[@]}"; do
   if [[ ! -f "${path}" ]]; then

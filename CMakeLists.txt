@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(WEBRTC_QOS_PUBLIC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
+option(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER
+  "Build optional FFmpeg/libx264 H264 encoder adapter" ON)
 
 function(webrtc_qos_object_library target)
   add_library(${target} OBJECT ${ARGN})
@@ -72,6 +74,38 @@ webrtc_qos_static_library(webrtc_qos_video webrtc_qos_video_obj)
 
 target_link_libraries(webrtc_qos_video INTERFACE webrtc_qos_core)
 
+set(WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS)
+set(WEBRTC_QOS_OPTIONAL_DEMO_TARGETS)
+if(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER)
+  find_path(FFMPEG_INCLUDE_DIR
+    NAMES libavcodec/avcodec.h
+    PATHS /usr/include/ffmpeg /usr/local/include/ffmpeg /usr/include
+    NO_DEFAULT_PATH)
+  find_path(FFMPEG_INCLUDE_DIR
+    NAMES libavcodec/avcodec.h)
+  find_library(AVCODEC_LIBRARY avcodec)
+  find_library(AVUTIL_LIBRARY avutil)
+  if(FFMPEG_INCLUDE_DIR AND AVCODEC_LIBRARY AND AVUTIL_LIBRARY)
+    add_library(webrtc_qos_ffmpeg_encoder STATIC
+      src/ffmpeg_h264_encoder.cc)
+    target_include_directories(webrtc_qos_ffmpeg_encoder
+      PUBLIC
+        $<BUILD_INTERFACE:${WEBRTC_QOS_PUBLIC_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:include>
+      PRIVATE
+        ${FFMPEG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(webrtc_qos_ffmpeg_encoder
+      PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_libraries(webrtc_qos_ffmpeg_encoder
+      INTERFACE ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY})
+    list(APPEND WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS
+      webrtc_qos_ffmpeg_encoder)
+  else()
+    message(STATUS "FFmpeg H264 encoder adapter disabled: headers/libs not found")
+  endif()
+endif()
+
 add_library(webrtc_qos STATIC
   $<TARGET_OBJECTS:webrtc_qos_core_obj>
   $<TARGET_OBJECTS:webrtc_qos_rtp_obj>
@@ -104,6 +138,17 @@ target_link_libraries(production_transport_demo PRIVATE webrtc_qos)
 add_executable(dynamic_qos_demo demo/dynamic_qos/main.cc)
 target_link_libraries(dynamic_qos_demo PRIVATE webrtc_qos)
 
+if(TARGET webrtc_qos_ffmpeg_encoder)
+  add_executable(ffmpeg_encoder_demo demo/ffmpeg_encoder/main.cc)
+  target_link_libraries(ffmpeg_encoder_demo PRIVATE
+    webrtc_qos_ffmpeg_encoder
+    webrtc_qos_video
+    webrtc_qos_pacer
+    ${AVCODEC_LIBRARY}
+    ${AVUTIL_LIBRARY})
+  list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS ffmpeg_encoder_demo)
+endif()
+
 add_executable(webrtc_qos_selftest tests/selftest.cc)
 target_link_libraries(webrtc_qos_selftest PRIVATE webrtc_qos)
 
@@ -117,6 +162,7 @@ install(TARGETS
   webrtc_qos_nack
   webrtc_qos_pacer
   webrtc_qos_video
+  ${WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS}
   EXPORT WebRtcQosSdkTargets
   ARCHIVE DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
@@ -127,6 +173,7 @@ install(TARGETS
   transport_port_demo
   production_transport_demo
   dynamic_qos_demo
+  ${WEBRTC_QOS_OPTIONAL_DEMO_TARGETS}
   RUNTIME DESTINATION demo)
 
 install(EXPORT WebRtcQosSdkTargets

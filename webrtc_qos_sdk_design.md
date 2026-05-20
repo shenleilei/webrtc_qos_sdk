@@ -492,7 +492,15 @@ sender 最终发送目标码率计算固定为：
 - 低码率、高 RTT、高丢包时下调 FPS
 - 网络恢复后随 QoS 估算恢复 FPS
 - `request_keyframe` 用于高 RTT/高丢包恢复后的关键帧刷新建议
-- `Phase-1a` 不直接控制真实编码器；业务 encoder 需要消费该决策并应用到实际码率/FPS
+- `Phase-1a` core 不强制绑定真实编码器；真实编码器作为可选小库独立交付
+- 当前可选实现为 `libwebrtc_qos_ffmpeg_encoder.a`，用于验证真实 H264 Annex-B AU 能进入 `VideoSender + SenderPacer` 链路
+
+动态弱网自适应验收必须同时覆盖两类方向：
+
+- 进入弱网：`target_bitrate_bps` 和 `max_fps` 必须随带宽下降、RTT 上升、丢包上升而下降
+- 网络恢复：`target_bitrate_bps` 和 `max_fps` 必须随 feedback 恢复而上升，不能长期卡在低档
+- 严重损伤：必须输出 `request_keyframe=true`，供编码器或 sender 触发 IDR 刷新
+- 验收不能只跑单个 good/bad 场景，必须覆盖 bandwidth cliff、RTT/jitter spike、burst loss、oscillation、walk outage recovery
 
 ### 8.13 sender_rate_cap 防抖
 
@@ -818,7 +826,7 @@ WebRTC 源码入口：
 
 | 角色 | 必选库 | 可选库 |
 | --- | --- | --- |
-| `capture_push` | `core`、`rtp`、`rtcp`、`feedback`、`pacer`、`video`、`googcc_bridge`、`googcc_adapter` | 后续真实采集 adapter |
+| `capture_push` | `core`、`rtp`、`rtcp`、`feedback`、`pacer`、`video`、`googcc_bridge`、`googcc_adapter` | `ffmpeg_encoder` 基础真实编码器验证；后续真实采集 adapter |
 | `server relay` | `rtp`、`rtcp`、`feedback`、`nack` | 后续 mixer / recorder |
 | `receive_play` | `core`、`rtp`、`rtcp`、`feedback`、`nack`、`video`、`video_jitter_bridge`、`video_jitter_adapter` | 后续 renderer adapter |
 | prototype | `libwebrtc_qos.a` | `libwebrtc_qos_googcc_bridge.a`、`libwebrtc_qos_googcc_adapter.a`、`libwebrtc_qos_video_jitter_bridge.a`、`libwebrtc_qos_video_jitter_adapter.a` |
@@ -847,6 +855,7 @@ CMake package 同时暴露模块级 target 和角色级 target：
 | `libwebrtc_qos_nack.a` | 已实现 | 自研 SDK | RTP gap 检测、NACK 候选、重传缓存 |
 | `libwebrtc_qos_pacer.a` | 已实现 | 自研 SDK | Phase-1a 轻量 pacer |
 | `libwebrtc_qos_video.a` | 已实现 | 自研 SDK | H264 packetize/depacketize、当前最小 video jitter |
+| `libwebrtc_qos_ffmpeg_encoder.a` | 已实现/可选 | FFmpeg/libx264 adapter | I420 -> H264 Annex-B 基础编码器，用于真实编码链路验证，不进入 core 闭包 |
 | `libwebrtc_qos_googcc_bridge.a` | 已实现 | SDK/WebRTC bridge | `SenderQosController` 可选接入 `GoogCcAdapter` |
 | `libwebrtc_qos_googcc_adapter.a` | 已实现 | WebRTC adapter | `network_control/goog_cc` |
 | `libwebrtc_qos_video_jitter_bridge.a` | 已实现 | SDK/WebRTC bridge | `VideoJitterPlayer` 可选接入 `VideoJitterAdapter` |
@@ -864,6 +873,7 @@ CMake package 同时暴露模块级 target 和角色级 target：
 - `libwebrtc_qos_nack.a`
 - `libwebrtc_qos_pacer.a`
 - `libwebrtc_qos_video.a`
+- `libwebrtc_qos_ffmpeg_encoder.a`，当本机存在 FFmpeg/libx264 headers/libs 时启用
 - `libwebrtc_qos.a`
 
 WebRTC QoS adapter 由 `GN` 输出：
@@ -1204,7 +1214,11 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `run_udp_soak.sh` 能按时长重复执行弱网矩阵，并统计 pass/fail，作为接入业务传输前的长稳入口
 - `verify_role_linking.sh` 能证明 push/server/play/transport 四种角色可按需链接小库，不依赖一个巨大 `libwebrtc.a`
 - `verify_cmake_package.sh` 能证明外部工程通过 `find_package(WebRtcQosSdk CONFIG REQUIRED)` 链接 `role_transport / role_server / role_push / role_play / role_prototype`
-- `dynamic_qos_demo` 能验证时变网络下的码率/FPS 自适应决策
+- `dynamic_qos_demo` 能验证时变网络下的码率/FPS 自适应决策，不只覆盖单个 good/bad 场景
+- `run_dynamic_qos_matrix.sh` 能读取 `scripts/dynamic_qos_scenarios.json`，按预定义动态弱网场景和预期 QoS/QoE 指标执行验收
+- 动态弱网场景包括：`walk_outage_recover`、`bandwidth_cliff_recover`、`rtt_jitter_spike_recover`、`oscillating_edge`、`loss_burst_recover`
+- 动态矩阵必须验证：弱网进入时 `encoder_bps/max_fps` 降档，严重弱网请求关键帧，网络恢复时 `encoder_bps/max_fps` 升档
+- `ffmpeg_encoder_demo` 在存在 FFmpeg/libx264 时必须跑通真实 I420 -> H264 Annex-B -> `VideoSender` -> `SenderPacer` 链路
 
 ## 21. 外部参考
 
@@ -1213,6 +1227,9 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - libmediasoupclient：
   - https://mediasoup.org/documentation/v3/libmediasoupclient/design/
   - https://mediasoup.org/documentation/v3/libmediasoupclient/installation/
+- mediasoup-cpp PlainTransport QoS case 设计参考：
+  - https://github.com/shenleilei/mediasoup-cpp/blob/main/docs/plain-client-qos-case-results.md
+  - 该参考覆盖 baseline、bandwidth sweep、loss sweep、RTT sweep、jitter sweep、transition、burst、traffic model、oscillation 等 case 分类；本 SDK Phase-1a 采用相同思路，把静态弱网矩阵和动态转场矩阵拆开验收。
 
 ## 22. Phase-1a 结论
 
@@ -1285,7 +1302,9 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - UDP demo 已覆盖 `PLI -> server forward -> sender IDR resend -> receiver keyframe output`
 - UDP 弱网矩阵已支持配置驱动的预定义弱网场景：单点丢包、突发丢包、乱序、固定延迟、周期性 jitter、混合损伤
 - UDP 弱网矩阵已支持 JSONL/summary 指标输出和阈值验收
-- `dynamic_qos_demo` 已支持时变网络 good/outage/poor/recovering/good_again 的码率/FPS 决策验证
+- `dynamic_qos_demo` 已支持多类动态弱网转场：行走掉网恢复、带宽 cliff、RTT/jitter spike、振荡网络、突发丢包恢复
+- `run_dynamic_qos_matrix.sh` 已支持 JSONL/summary 指标输出和阈值验收，覆盖弱网降档、恢复升档、关键帧请求
+- `ffmpeg_encoder_demo` 已支持真实 FFmpeg/libx264 I420 -> H264 Annex-B 编码，并将输出接入 `VideoSender + SenderPacer`
 - UDP soak 脚本已支持按时长重复执行弱网矩阵并汇总 pass/fail
 - WebRTC-backed video jitter bridge 已处理重传包先到、原包后到导致的重复帧去重
 - synthetic/file 风格 loopback demo
@@ -1301,6 +1320,7 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - WebRTC full `rtp_video_frame_assembler / frame_buffer` 没有进入主闭包，当前使用更小的 `PacketBuffer` 路线
 - WebRTC `nack_requester` 不属于 Phase-1a 主目标；如后续确认需要，再作为独立重型 adapter 接入
 - 当前 UDP demo 使用本机 loopback UDP 和 demo envelope，尚不是生产传输协议
+- `ffmpeg_encoder_demo` 是基础编码器验证，不等价于真实 camera capture pipeline
 - 音频、`NetEq`、`Opus`、真实采集、真实渲染仍属于后续阶段
 
 已验证命令：
@@ -1326,6 +1346,7 @@ bash webrtc_qos_sdk/scripts/build_output_integration_demo.sh
 bash webrtc_qos_sdk/scripts/build_udp_demos.sh
 bash webrtc_qos_sdk/scripts/run_udp_loopback_demo.sh
 REORDER_RTP_SEQ=4 DELAY_MS=30 bash webrtc_qos_sdk/scripts/run_udp_loopback_demo.sh
+bash webrtc_qos_sdk/scripts/run_dynamic_qos_matrix.sh
 bash webrtc_qos_sdk/scripts/run_udp_netem_matrix.sh
 DURATION_SEC=60 MATRIX_RUNS=1 bash webrtc_qos_sdk/scripts/run_udp_soak.sh
 bash webrtc_qos_sdk/scripts/verify_role_linking.sh
@@ -1341,6 +1362,15 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 - `${LOG_DIR}/summary.json`：矩阵级聚合指标
 - 当前覆盖指标：恢复帧数、sender RTT、最终目标码率、NACK 次数、重传次数、重传成功率、观测丢包率、上报 loss_q8、jitter frames、rate cap 是否生效
 - 当前阈值失败会导致矩阵脚本直接失败，不再只依赖人工读日志
+
+动态 QoS/QoE 指标输出：
+
+- `${LOG_DIR}/metrics.jsonl`：每个动态 scenario/phase 一行 JSON 指标
+- `${LOG_DIR}/summary.json`：动态矩阵级聚合指标
+- 当前覆盖指标：估算码率、最终码率、RTT、loss、编码器目标码率、max FPS、是否请求关键帧
+- 当前阈值：弱网阶段必须降码率/降 FPS，严重弱网必须请求关键帧，恢复阶段必须恢复 FPS 和码率
+- 场景文件：`/root/webrtc_qos_sdk/scripts/dynamic_qos_scenarios.json`
+- 场景包括行走掉网恢复、带宽 cliff、RTT/jitter spike、振荡网络、突发丢包恢复
 
 弱网场景定义：
 

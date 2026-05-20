@@ -1,0 +1,99 @@
+[
+  {
+    "name": "walk_outage_recover",
+    "category": "transition",
+    "description": "Good network, walking into a coverage hole, then recovering to good network.",
+    "phases": [
+      {"name": "good", "bandwidth_kbps": 10000, "rtt_ms": 20, "loss": 0.0},
+      {"name": "outage", "bandwidth_kbps": 80, "rtt_ms": 1000, "loss": 0.45},
+      {"name": "poor", "bandwidth_kbps": 120, "rtt_ms": 650, "loss": 0.25},
+      {"name": "recovering", "bandwidth_kbps": 1200, "rtt_ms": 180, "loss": 0.03},
+      {"name": "good_again", "bandwidth_kbps": 10000, "rtt_ms": 40, "loss": 0.0}
+    ],
+    "expect": {
+      "degraded_phases": ["outage", "poor"],
+      "recovered_phase": "good_again",
+      "max_degraded_fps": 10,
+      "min_recovered_fps": 30,
+      "require_keyframe_phases": ["outage", "poor"],
+      "require_bitrate_drop": true,
+      "require_bitrate_recovery": true
+    }
+  },
+  {
+    "name": "bandwidth_cliff_recover",
+    "category": "bw_sweep",
+    "description": "Bandwidth drops below 100kbps with low loss, then recovers.",
+    "phases": [
+      {"name": "good", "bandwidth_kbps": 8000, "rtt_ms": 25, "loss": 0.0},
+      {"name": "bandwidth_cliff", "bandwidth_kbps": 90, "rtt_ms": 80, "loss": 0.02},
+      {"name": "recovered", "bandwidth_kbps": 8000, "rtt_ms": 30, "loss": 0.0}
+    ],
+    "expect": {
+      "degraded_phases": ["bandwidth_cliff"],
+      "recovered_phase": "recovered",
+      "max_degraded_fps": 10,
+      "min_recovered_fps": 30,
+      "require_bitrate_drop": true,
+      "require_bitrate_recovery": true
+    }
+  },
+  {
+    "name": "rtt_jitter_spike_recover",
+    "category": "rtt_jitter",
+    "description": "RTT and arrival spread spike without total loss, then recover.",
+    "phases": [
+      {"name": "good", "bandwidth_kbps": 5000, "rtt_ms": 35, "loss": 0.0},
+      {"name": "rtt_spike", "bandwidth_kbps": 700, "rtt_ms": 900, "loss": 0.08},
+      {"name": "recovered", "bandwidth_kbps": 5000, "rtt_ms": 45, "loss": 0.0}
+    ],
+    "expect": {
+      "degraded_phases": ["rtt_spike"],
+      "recovered_phase": "recovered",
+      "max_degraded_fps": 10,
+      "min_recovered_fps": 30,
+      "require_keyframe_phases": ["rtt_spike"],
+      "require_bitrate_recovery": true
+    }
+  },
+  {
+    "name": "oscillating_edge",
+    "category": "oscillation",
+    "description": "Network alternates between good and poor edge coverage.",
+    "phases": [
+      {"name": "good_1", "bandwidth_kbps": 5000, "rtt_ms": 30, "loss": 0.0},
+      {"name": "poor_1", "bandwidth_kbps": 180, "rtt_ms": 550, "loss": 0.18},
+      {"name": "good_2", "bandwidth_kbps": 5000, "rtt_ms": 40, "loss": 0.0},
+      {"name": "poor_2", "bandwidth_kbps": 130, "rtt_ms": 700, "loss": 0.22},
+      {"name": "good_3", "bandwidth_kbps": 5000, "rtt_ms": 35, "loss": 0.0}
+    ],
+    "expect": {
+      "degraded_phases": ["poor_1", "poor_2"],
+      "recovered_phase": "good_3",
+      "max_degraded_fps": 10,
+      "min_recovered_fps": 30,
+      "require_keyframe_phases": ["poor_1", "poor_2"],
+      "require_bitrate_drop": true,
+      "require_bitrate_recovery": true
+    }
+  },
+  {
+    "name": "loss_burst_recover",
+    "category": "burst",
+    "description": "Short burst loss reaches outage-level packet loss and then clears.",
+    "phases": [
+      {"name": "good", "bandwidth_kbps": 6000, "rtt_ms": 25, "loss": 0.0},
+      {"name": "loss_burst", "bandwidth_kbps": 500, "rtt_ms": 220, "loss": 0.60},
+      {"name": "recovered", "bandwidth_kbps": 6000, "rtt_ms": 35, "loss": 0.0}
+    ],
+    "expect": {
+      "degraded_phases": ["loss_burst"],
+      "recovered_phase": "recovered",
+      "max_degraded_fps": 5,
+      "min_recovered_fps": 30,
+      "require_keyframe_phases": ["loss_burst"],
+      "require_bitrate_drop": true,
+      "require_bitrate_recovery": true
+    }
+  }
+]

@@ -32,6 +32,12 @@ target_link_libraries(play_role PRIVATE WebRtcQosSdk::role_play)
 
 add_executable(prototype_role prototype_role.cc)
 target_link_libraries(prototype_role PRIVATE WebRtcQosSdk::role_prototype)
+
+if(TARGET WebRtcQosSdk::webrtc_qos_ffmpeg_encoder)
+  add_executable(ffmpeg_encoder_link ffmpeg_encoder_link.cc)
+  target_link_libraries(ffmpeg_encoder_link PRIVATE
+    WebRtcQosSdk::webrtc_qos_ffmpeg_encoder)
+endif()
 EOF
 
 cat > "${WORK_DIR}/main.cc" <<'EOF'
@@ -168,6 +174,20 @@ int main() {
 }
 EOF
 
+cat > "${WORK_DIR}/ffmpeg_encoder_link.cc" <<'EOF'
+#include "webrtc_qos/ffmpeg_h264_encoder.h"
+
+int main() {
+  webrtc_qos::FfmpegH264Encoder encoder;
+  webrtc_qos::FfmpegH264EncoderConfig config;
+  config.width = 320;
+  config.height = 180;
+  config.fps = 30;
+  config.bitrate_bps = 800000;
+  return static_cast<int>(config.width + config.height) > 0 ? 0 : 1;
+}
+EOF
+
 cmake -S "${WORK_DIR}" -B "${WORK_DIR}/build" \
   -DCMAKE_PREFIX_PATH="${PREFIX}" >/dev/null
 cmake --build "${WORK_DIR}/build" -j2 >/dev/null
@@ -176,5 +196,8 @@ cmake --build "${WORK_DIR}/build" -j2 >/dev/null
 "${WORK_DIR}/build/push_role"
 "${WORK_DIR}/build/play_role"
 "${WORK_DIR}/build/prototype_role"
+if [[ -x "${WORK_DIR}/build/ffmpeg_encoder_link" ]]; then
+  "${WORK_DIR}/build/ffmpeg_encoder_link"
+fi
 
 echo "cmake package verification passed"

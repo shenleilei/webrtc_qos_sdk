@@ -52,6 +52,7 @@ output/
     libwebrtc_qos_video_jitter_bridge.a
     libwebrtc_qos_pacer.a
     libwebrtc_qos_video.a
+    libwebrtc_qos_ffmpeg_encoder.a  # optional, when FFmpeg/libx264 is present
   demo/
 ```
 
@@ -70,6 +71,7 @@ Library boundaries:
 - `libwebrtc_qos_video_jitter_bridge.a`: optional facade bridge from `VideoJitterPlayer` to `VideoJitterAdapter`.
 - `libwebrtc_qos_pacer.a`: SDK lightweight sender pacer.
 - `libwebrtc_qos_video.a`: H264 video sender, receiver, and jitter player.
+- `libwebrtc_qos_ffmpeg_encoder.a`: optional basic FFmpeg/libx264 H264 encoder adapter. It is deliberately outside the core SDK closure.
 - `libwebrtc_qos.a`: facade archive containing all Phase-1a SDK objects for simple single-library linking.
 
 Optional integration sets:
@@ -187,6 +189,7 @@ Transport integration boundary:
 ./output/demo/transport_port_demo
 ./output/demo/production_transport_demo
 ./output/demo/dynamic_qos_demo
+./output/demo/ffmpeg_encoder_demo
 ```
 
 Production transport code should implement the `TransportPort` send/deliver callbacks and map SDK message types to the business wire protocol. `TransportMessage::payload` is a borrowed view valid only during the callback, so async socket/reliable-channel code must copy it before returning. `DEMO_TRANSPORT_V1` is only the UDP demo envelope; it is not required by the SDK.
@@ -197,7 +200,21 @@ Production transport code should implement the `TransportPort` send/deliver call
 - RTCP SR/RR/TWCC/NACK/PLI: unreliable control.
 - `DOWNLINK_QUALITY_V1` / `SENDER_RATE_CAP_V1` / `BYE`: reliable control.
 
-`dynamic_qos_demo` simulates `good -> outage -> poor -> recovering -> good_again` feedback. It verifies that SDK encoder adaptation decisions reduce bitrate/FPS under high RTT/loss and restore FPS when feedback improves. Phase-1a exposes the decision surface through `EncoderAdaptation`; applying those values to a real encoder remains a business encoder integration step.
+`dynamic_qos_demo` runs multiple dynamic weak-network transitions, not a single happy-path case. It covers walking into an outage and recovering, bandwidth cliff below 100kbps, RTT/jitter spike, oscillating edge coverage, and burst loss recovery. It verifies that SDK encoder adaptation decisions reduce bitrate/FPS under impairment, request keyframes for severe recovery, and restore bitrate/FPS after the network becomes good again.
+
+Dynamic QoS/QoE adaptation matrix:
+
+```bash
+bash webrtc_qos_sdk/scripts/run_dynamic_qos_matrix.sh
+```
+
+The matrix is driven by `scripts/dynamic_qos_scenarios.json` and writes:
+
+- `${LOG_DIR}/metrics.jsonl`: one row per scenario phase with estimate bitrate, final bitrate, RTT, loss, encoder target bitrate, max FPS, and keyframe request.
+- `${LOG_DIR}/summary.json`: aggregate FPS/bitrate range, keyframe count, and threshold failures.
+- Threshold checks cover degraded FPS caps, recovered FPS, bitrate drop, bitrate recovery, and keyframe requests.
+
+When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
 UDP weak-network matrix:
 
@@ -205,7 +222,7 @@ UDP weak-network matrix:
 RUNS=3 bash webrtc_qos_sdk/scripts/run_udp_netem_matrix.sh
 ```
 
-This runs baseline/drop, reorder, delay, and reorder+delay scenarios repeatedly and checks TWCC, RTCP RR, NACK, retransmission, PLI forwarding, IDR resend, sender rate cap, and recovered frame count from the logs.
+This runs baseline/drop, burst loss, reorder, delay, jitter, and mixed damage scenarios repeatedly and checks TWCC, RTCP RR, NACK, retransmission, PLI forwarding, IDR resend, sender rate cap, and recovered frame count from the logs.
 It also writes machine-readable metrics:
 
 - `${LOG_DIR}/metrics.jsonl`: one JSON object per scenario run.
@@ -232,6 +249,7 @@ DURATION_SEC=60 MATRIX_RUNS=1 bash webrtc_qos_sdk/scripts/run_udp_soak.sh
 This repeatedly runs the weak-network matrix for the requested duration, stores per-iteration logs, and reports pass/fail counts.
 
 `verify_phase1a.sh` runs the build/install path, standalone demos, WebRTC adapter smokes, output integration demo, UDP weak-network matrix, short soak, role-linking check, GN dependency checks, and required artifact checks.
+It also runs the dynamic QoS adaptation matrix and, when present, the FFmpeg/libx264 encoder demo.
 
 `verify_cmake_package.sh` verifies external projects can consume `/root/output` via `find_package(WebRtcQosSdk CONFIG REQUIRED)` and link module targets such as `WebRtcQosSdk::webrtc_qos_transport`.
 It also verifies optional WebRTC adapter targets such as `WebRtcQosSdk::webrtc_qos_googcc_adapter` and `WebRtcQosSdk::webrtc_qos_video_jitter_adapter` when those archives are present.
@@ -254,5 +272,7 @@ Implementation boundary in this slice:
 - `udp_*_demo` proves the same small libraries work across a real local UDP C/S chain.
 - `udp_*_demo` also verifies `PLI -> server forward -> sender IDR resend -> receiver keyframe output`.
 - `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.
+- `run_dynamic_qos_matrix.sh` proves the sender adaptation surface reacts in both directions: it degrades under bandwidth/RTT/loss impairment and climbs back when the network recovers.
+- `ffmpeg_encoder_demo` proves real H264 encoder output can enter the same Annex-B -> RTP -> pacer path used by synthetic/file demos.
 - `run_udp_soak.sh` repeats the weak-network matrix by duration and provides the local soak/stress entry point before replacing `DEMO_TRANSPORT_V1`.
 - `verify_role_linking.sh` proves role-based integration can avoid a monolithic `libwebrtc.a`.

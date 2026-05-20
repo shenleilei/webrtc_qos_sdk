@@ -78,17 +78,33 @@ Status SenderQosController::OnUplinkTransportFeedback(
     return Status::Ok();
   }
 
-  if (loss_fraction_ > 0.10) {
-    estimate_bps_ = static_cast<uint32_t>(estimate_bps_ * 0.85);
-  } else if (loss_fraction_ < 0.02 && first_recv_us >= 0 &&
-             last_recv_us > first_recv_us) {
-    estimate_bps_ = static_cast<uint32_t>(estimate_bps_ * 1.05);
-  } else if (acked_bytes > 0 && first_recv_us >= 0 &&
-             last_recv_us > first_recv_us) {
+  uint32_t recv_bps = 0;
+  const bool has_recv_rate =
+      acked_bytes > 0 && first_recv_us >= 0 && last_recv_us > first_recv_us;
+  if (has_recv_rate) {
     const double seconds = (last_recv_us - first_recv_us) / 1000000.0;
-    const uint32_t recv_bps =
+    recv_bps =
         static_cast<uint32_t>((acked_bytes * 8) / std::max(seconds, 0.001));
-    estimate_bps_ = static_cast<uint32_t>(estimate_bps_ * 0.8 + recv_bps * 0.2);
+  }
+
+  if (loss_fraction_ >= 0.30) {
+    estimate_bps_ = static_cast<uint32_t>(estimate_bps_ * 0.50);
+  } else if (loss_fraction_ >= 0.15) {
+    estimate_bps_ = static_cast<uint32_t>(estimate_bps_ * 0.70);
+  } else if (loss_fraction_ >= 0.05) {
+    estimate_bps_ = static_cast<uint32_t>(estimate_bps_ * 0.85);
+  } else if (has_recv_rate) {
+    double recv_weight = recv_bps >= estimate_bps_ ? 0.30 : 0.35;
+    if (recv_bps < estimate_bps_ / 4) {
+      recv_weight = 0.70;
+    } else if (recv_bps < estimate_bps_ / 2) {
+      recv_weight = 0.55;
+    }
+    const double keep_weight = 1.0 - recv_weight;
+    estimate_bps_ = static_cast<uint32_t>(
+        estimate_bps_ * keep_weight + recv_bps * recv_weight);
+  } else if (loss_fraction_ < 0.02) {
+    estimate_bps_ = static_cast<uint32_t>(estimate_bps_ * 1.05);
   }
   estimate_bps_ =
       std::max(config_.min_bitrate_bps,
