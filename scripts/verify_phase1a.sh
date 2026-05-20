@@ -76,7 +76,9 @@ required_files=(
 if [[ -x "${BUILD_DIR}/ffmpeg_encoder_demo" ]]; then
   required_files+=(
     "${PREFIX}/include/webrtc_qos/ffmpeg_h264_encoder.h"
+    "${PREFIX}/include/webrtc_qos/ffmpeg_h264_decoder.h"
     "${PREFIX}/lib/libwebrtc_qos_ffmpeg_encoder.a"
+    "${PREFIX}/lib/libwebrtc_qos_ffmpeg_decoder.a"
     "${PREFIX}/demo/ffmpeg_encoder_demo"
     "${PREFIX}/demo/long_stream_qoe_demo"
   )

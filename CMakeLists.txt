@@ -12,7 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(WEBRTC_QOS_PUBLIC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 option(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER
-  "Build optional FFmpeg/libx264 H264 encoder adapter" ON)
+  "Build optional FFmpeg/libavcodec H264 encoder/decoder adapters" ON)
 
 function(webrtc_qos_object_library target)
   add_library(${target} OBJECT ${ARGN})
@@ -99,10 +99,24 @@ if(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER)
       PRIVATE -Wall -Wextra -Wpedantic)
     target_link_libraries(webrtc_qos_ffmpeg_encoder
       INTERFACE ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY})
+    add_library(webrtc_qos_ffmpeg_decoder STATIC
+      src/ffmpeg_h264_decoder.cc)
+    target_include_directories(webrtc_qos_ffmpeg_decoder
+      PUBLIC
+        $<BUILD_INTERFACE:${WEBRTC_QOS_PUBLIC_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:include>
+      PRIVATE
+        ${FFMPEG_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(webrtc_qos_ffmpeg_decoder
+      PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_libraries(webrtc_qos_ffmpeg_decoder
+      INTERFACE ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY})
     list(APPEND WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS
-      webrtc_qos_ffmpeg_encoder)
+      webrtc_qos_ffmpeg_encoder
+      webrtc_qos_ffmpeg_decoder)
   else()
-    message(STATUS "FFmpeg H264 encoder adapter disabled: headers/libs not found")
+    message(STATUS "FFmpeg H264 encoder/decoder adapters disabled: headers/libs not found")
   endif()
 endif()
 
@@ -149,6 +163,7 @@ if(TARGET webrtc_qos_ffmpeg_encoder)
   add_executable(long_stream_qoe_demo demo/long_stream_qoe/main.cc)
   target_link_libraries(long_stream_qoe_demo PRIVATE
     webrtc_qos_ffmpeg_encoder
+    webrtc_qos_ffmpeg_decoder
     webrtc_qos
     ${AVCODEC_LIBRARY}
     ${AVUTIL_LIBRARY})

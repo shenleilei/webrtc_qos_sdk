@@ -53,6 +53,7 @@ output/
     libwebrtc_qos_pacer.a
     libwebrtc_qos_video.a
     libwebrtc_qos_ffmpeg_encoder.a  # optional, when FFmpeg/libx264 is present
+    libwebrtc_qos_ffmpeg_decoder.a  # optional, when FFmpeg/libavcodec is present
   demo/
 ```
 
@@ -72,6 +73,7 @@ Library boundaries:
 - `libwebrtc_qos_pacer.a`: SDK lightweight sender pacer.
 - `libwebrtc_qos_video.a`: H264 video sender, receiver, and jitter player.
 - `libwebrtc_qos_ffmpeg_encoder.a`: optional basic FFmpeg/libx264 H264 encoder adapter. It is deliberately outside the core SDK closure.
+- `libwebrtc_qos_ffmpeg_decoder.a`: optional FFmpeg H264 decoder adapter used by QoE validation to prove receiver Annex-B AU output is actually decodable.
 - `libwebrtc_qos.a`: facade archive containing all Phase-1a SDK objects for simple single-library linking.
 
 Optional integration sets:
@@ -238,6 +240,8 @@ The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `en
 
 When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
+When FFmpeg's H264 decoder is available, the long-stream QoE matrix also decodes every receiver Annex-B AU before counting it as a rendered receiver frame. `decode_errors` and `decoded_frames` are therefore hard QoE inputs, not log-only diagnostics.
+
 Long-stream encoder QoE strategy matrix:
 
 ```bash
@@ -265,7 +269,15 @@ For each backend, it compares:
 The script writes `${LOG_DIR}/metrics.jsonl` and `${LOG_DIR}/summary.json`. It reports two objective functions rather than a single ambiguous "best":
 
 - `smoothness_score`: freezes, max freeze duration, network drops, weak-phase receiver FPS, and recovery FPS.
-- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, weak-network non-adaptation, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames or refuses to adapt from being marked best just because it does not visibly freeze.
+- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, real FFmpeg H264 decode errors, decoded-frame gaps, weak-network non-adaptation, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames, outputs undecodable frames, or refuses to adapt from being marked best just because it does not visibly freeze.
+
+The matrix now has hard validation rules when the WebRTC backend is available:
+
+- `webrtc/adaptive` must produce `decode_errors=0` in every scenario.
+- `webrtc/adaptive` must meet per-scenario weak-network downshift and good-network recovery thresholds for bitrate and FPS.
+- `webrtc/adaptive` must be the best `balanced_qoe_score` candidate in every scenario.
+- The aggregate best `balanced_qoe_score` across all scenarios must also be `webrtc/adaptive`.
+- Negative controls such as `bitrate_only` and `fixed` are allowed to fail their individual demo thresholds, but their summaries are still collected and scored.
 
 Latest local long-stream QoE result:
 
@@ -275,7 +287,20 @@ Latest local long-stream QoE result:
 | jitter_loss_oscillation | webrtc/adaptive | 27.000 | 0 | 9 | 0 | 9.00 | 9.33 | 28.8 | 182930 / 186768 | 2063557 |
 | bandwidth_staircase | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 12.75 | 5.00 | 29.2 | 390000 / 156000 | 2095566 |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, candidate set, backend set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, and server `SENDER_RATE_CAP_V1`. Under the current synthetic multi-scenario dynamic weak-network matrix, `webrtc/adaptive` is the best balanced-QoE candidate.
+Latest aggregate ranking:
+
+| Backend/strategy | Aggregate balanced QoE | Decode errors | Drops | Duplicates | Failed cases |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| webrtc/adaptive | 27.000 | 0 | 9 | 0 | 0 |
+| webrtc/balanced | 73.000 | 0 | 11 | 0 | 0 |
+| lightweight/adaptive | 1113.833 | 9 | 10 | 40 | 0 |
+| lightweight/balanced | 2299.000 | 30 | 11 | 80 | 0 |
+| webrtc/bitrate_only | 3922.000 | 34 | 14 | 0 | 3 |
+| lightweight/bitrate_only | 5986.000 | 41 | 17 | 341 | 0 |
+| webrtc/fixed | 17001.500 | 27 | 1756 | 0 | 2 |
+| lightweight/fixed | 29028.000 | 234 | 1927 | 66 | 0 |
+
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, candidate set, backend set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, and WebRTC H264 jitter output that survives real FFmpeg decoding. Under the current synthetic multi-scenario dynamic weak-network matrix, `webrtc/adaptive` is the best balanced-QoE candidate.
 
 UDP weak-network matrix:
 
@@ -326,7 +351,7 @@ This repeatedly runs the weak-network matrix for the requested duration, stores 
 It also runs the dynamic QoS adaptation matrix and, when present, the FFmpeg/libx264 encoder demo plus the long-stream QoE strategy matrix.
 
 `verify_cmake_package.sh` verifies external projects can consume `/root/output` via `find_package(WebRtcQosSdk CONFIG REQUIRED)` and link module targets such as `WebRtcQosSdk::webrtc_qos_transport`.
-It also verifies optional WebRTC adapter targets such as `WebRtcQosSdk::webrtc_qos_googcc_adapter` and `WebRtcQosSdk::webrtc_qos_video_jitter_adapter` when those archives are present.
+It also verifies optional WebRTC adapter targets such as `WebRtcQosSdk::webrtc_qos_googcc_adapter` and `WebRtcQosSdk::webrtc_qos_video_jitter_adapter` when those archives are present, plus optional FFmpeg encoder/decoder targets when FFmpeg is installed.
 
 The loopback demo intentionally drops one RTP packet, triggers a NACK-style recovery event, retransmits from the server-side cache with the original RTP sequence number and a new transport sequence number, and still outputs two Annex-B access units.
 
@@ -348,7 +373,8 @@ Implementation boundary in this slice:
 - `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.
 - `run_dynamic_qos_matrix.sh` proves the sender adaptation surface reacts in both directions: it degrades under bandwidth/RTT/loss impairment and climbs back when the network recovers.
 - `ffmpeg_encoder_demo` proves real H264 encoder output can enter the same Annex-B -> RTP -> pacer path used by synthetic/file demos.
-- `run_long_stream_qoe_matrix.sh` compares adaptive, balanced, bitrate-only, and fixed strategies with real H264 output over a dynamic weak-network transition and separates smoothness-only scoring from balanced QoE scoring.
+- `libwebrtc_qos_ffmpeg_decoder.a` and `run_long_stream_qoe_matrix.sh` prove receiver Annex-B AU output can be decoded by a real H264 decoder before it is counted as a QoE receiver frame.
+- `run_long_stream_qoe_matrix.sh` compares adaptive, balanced, bitrate-only, and fixed strategies with real H264 output over dynamic weak-network transitions and separates smoothness-only scoring from balanced QoE scoring with decode-error penalties.
 - `run_udp_soak.sh` repeats the weak-network matrix by duration and provides the local soak/stress entry point before replacing `DEMO_TRANSPORT_V1`.
 - `verify_role_linking.sh` proves role-based integration can avoid a monolithic `libwebrtc.a`.
 

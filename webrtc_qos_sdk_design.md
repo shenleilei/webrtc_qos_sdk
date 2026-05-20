@@ -73,6 +73,8 @@ output/
       video_jitter_bridge.h
       video_sender.h
       video_receiver.h
+      ffmpeg_h264_encoder.h
+      ffmpeg_h264_decoder.h
       transport_feedback.h
   lib/
     libwebrtc_qos.a
@@ -87,6 +89,8 @@ output/
     libwebrtc_qos_googcc_bridge.a
     libwebrtc_qos_video_jitter_adapter.a
     libwebrtc_qos_video_jitter_bridge.a
+    libwebrtc_qos_ffmpeg_encoder.a
+    libwebrtc_qos_ffmpeg_decoder.a
   demo/
     qos_loopback_demo
     capture_push_demo
@@ -494,6 +498,7 @@ sender 最终发送目标码率计算固定为：
 - `request_keyframe` 用于高 RTT/高丢包恢复后的关键帧刷新建议
 - `Phase-1a` core 不强制绑定真实编码器；真实编码器作为可选小库独立交付
 - 当前可选实现为 `libwebrtc_qos_ffmpeg_encoder.a`，用于验证真实 H264 Annex-B AU 能进入 `VideoSender + SenderPacer` 链路
+- 当前可选解码实现为 `libwebrtc_qos_ffmpeg_decoder.a`，用于验证 receive_play 输出的完整 Annex-B AU 可被真实 H264 decoder 消费
 
 动态弱网自适应验收必须同时覆盖两类方向：
 
@@ -501,6 +506,7 @@ sender 最终发送目标码率计算固定为：
 - 网络恢复：`target_bitrate_bps` 和 `max_fps` 必须随 feedback 恢复而上升，不能长期卡在低档
 - 严重损伤：必须输出 `request_keyframe=true`，供编码器或 sender 触发 IDR 刷新
 - 验收不能只跑单个 good/bad 场景，必须覆盖 bandwidth cliff、RTT/jitter spike、burst loss、oscillation、walk outage recovery
+- 长流 QoE 验收不能只看“组帧成功”，必须用真实 H264 decoder 解码 receiver 输出；只有解码成功的 AU 才能计入 receiver frame
 
 ### 8.13 sender_rate_cap 防抖
 
@@ -856,6 +862,7 @@ CMake package 同时暴露模块级 target 和角色级 target：
 | `libwebrtc_qos_pacer.a` | 已实现 | 自研 SDK | Phase-1a 轻量 pacer |
 | `libwebrtc_qos_video.a` | 已实现 | 自研 SDK | H264 packetize/depacketize、当前最小 video jitter |
 | `libwebrtc_qos_ffmpeg_encoder.a` | 已实现/可选 | FFmpeg/libx264 adapter | I420 -> H264 Annex-B 基础编码器，用于真实编码链路验证，不进入 core 闭包 |
+| `libwebrtc_qos_ffmpeg_decoder.a` | 已实现/可选 | FFmpeg/libavcodec adapter | H264 Annex-B -> decoded frame 基础解码器，用于 QoE 验证，不进入 core 闭包 |
 | `libwebrtc_qos_googcc_bridge.a` | 已实现 | SDK/WebRTC bridge | `SenderQosController` 可选接入 `GoogCcAdapter` |
 | `libwebrtc_qos_googcc_adapter.a` | 已实现 | WebRTC adapter | `network_control/goog_cc` |
 | `libwebrtc_qos_video_jitter_bridge.a` | 已实现 | SDK/WebRTC bridge | `VideoJitterPlayer` 可选接入 `VideoJitterAdapter` |
@@ -874,6 +881,7 @@ CMake package 同时暴露模块级 target 和角色级 target：
 - `libwebrtc_qos_pacer.a`
 - `libwebrtc_qos_video.a`
 - `libwebrtc_qos_ffmpeg_encoder.a`，当本机存在 FFmpeg/libx264 headers/libs 时启用
+- `libwebrtc_qos_ffmpeg_decoder.a`，当本机存在 FFmpeg/libavcodec headers/libs 时启用
 - `libwebrtc_qos.a`
 
 WebRTC QoS adapter 由 `GN` 输出：
@@ -1221,6 +1229,9 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `ffmpeg_encoder_demo` 在存在 FFmpeg/libx264 时必须跑通真实 I420 -> H264 Annex-B -> `VideoSender` -> `SenderPacer` 链路
 - `long_stream_qoe_demo` 在存在 FFmpeg/libx264 时必须跑通真实 H264 长流：`VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer`
 - `run_long_stream_qoe_matrix.sh` 必须比较 `adaptive / balanced / bitrate_only / fixed` 四类策略，并输出 smoothness-only 与 balanced-QoE 两套目标函数结果
+- `run_long_stream_qoe_matrix.sh` 在存在 FFmpeg/libavcodec 时必须真实解码每个 receiver Annex-B AU，`decode_errors` 和 `decoded_frames` 必须进入 QoE 分数
+- WebRTC backend 可用时，长流矩阵必须硬性验证：`webrtc/adaptive` 每个场景 `decode_errors=0`，满足弱网降档和好网恢复阈值，每个场景都是 best balanced-QoE，且 aggregate best balanced-QoE 也是 `webrtc/adaptive`
+- `bitrate_only / fixed` 等负面对照策略允许单 case 阈值失败，但脚本必须继续采集 summary 并纳入统一评分，不能因为第一个失败对照中断矩阵
 - 长流 QoE 结论必须限定在预定义场景、候选策略集合和目标函数内，不能宣称全局最优
 
 ## 21. 外部参考
@@ -1315,7 +1326,8 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `run_dynamic_qos_matrix.sh` 已支持 JSONL/summary 指标输出和阈值验收，覆盖弱网降档、恢复升档、关键帧请求
 - `ffmpeg_encoder_demo` 已支持真实 FFmpeg/libx264 I420 -> H264 Annex-B 编码，并将输出接入 `VideoSender + SenderPacer`
 - `long_stream_qoe_demo` 已支持真实 FFmpeg/libx264 H264 长流穿过 `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer`
-- `run_long_stream_qoe_matrix.sh` 已支持 `adaptive / balanced / bitrate_only / fixed` 策略对比，并输出 smoothness-only 与 balanced-QoE 两套分数
+- `libwebrtc_qos_ffmpeg_decoder.a` 已支持真实 FFmpeg/libavcodec H264 decode，长流 QoE 矩阵只有解码成功的 receiver Annex-B AU 才计入 receiver frame
+- `run_long_stream_qoe_matrix.sh` 已支持 `adaptive / balanced / bitrate_only / fixed` 策略对比，并输出 smoothness-only 与包含 decode-error 惩罚的 balanced-QoE 两套分数
 - UDP soak 脚本已支持按时长重复执行弱网矩阵并汇总 pass/fail
 - WebRTC-backed video jitter bridge 已处理重传包先到、原包后到导致的重复帧去重
 - synthetic/file 风格 loopback demo
@@ -1405,8 +1417,10 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 - 候选策略：`adaptive`、`balanced`、`bitrate_only`、`fixed`
 - `smoothness_score`：只优化连续性，包含 freeze count、max freeze、network drops、弱网期 receiver FPS、恢复期 receiver FPS
 - `balanced_qoe_score`：在 `smoothness_score` 基础上强惩罚 duplicate frames、network drops、弱网不降码率/FPS、好网不恢复码率/FPS，避免“重复帧不卡顿”或“不自适应但看起来平滑”被误判成高质量
+- `decode_errors`：真实 FFmpeg H264 decoder 解码失败次数，权重为 `50/次`
+- `decoded_frames`：真实 decoder 输出帧数；若 receiver AU 未能产生 decoded frame，则按 decoded-frame gap 追加惩罚
 - 当前本地结果：`smoothness_score` 最优仍可能被高输出策略打平，因此不能单独作为产品结论
-- 当前本地结果：整体 `balanced_qoe_score` 最优为 `webrtc/adaptive=0.0`
+- 当前本地结果：aggregate `balanced_qoe_score` 最优为 `webrtc/adaptive=27.0`，三个场景 `decode_errors=0`
 - 当前本地结果：WebRTC backend 已补齐 periodic process、`data_in_flight`、probe cluster、route-change recovery、server `SENDER_RATE_CAP_V1` 后，在当前 synthetic multi-scenario dynamic weak-network 矩阵中成为 balanced-QoE 最优候选
 
 当前长流 QoE 结果表：
@@ -1417,10 +1431,23 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 | `jitter_loss_oscillation` | `webrtc/adaptive` | 27.000 | 0 | 9 | 0 | 9.00 | 9.33 | 28.8 | 182930 / 186768 | 2063557 | 振荡网络下少量 network drops，但无 freeze/duplicate |
 | `bandwidth_staircase` | `webrtc/adaptive` | 0.000 | 0 | 0 | 0 | 12.75 | 5.00 | 29.2 | 390000 / 156000 | 2095566 | 阶梯降带宽和恢复均符合场景化阈值 |
 
+当前 aggregate 长流 QoE 排名：
+
+| Backend/strategy | Aggregate balanced QoE | Decode errors | Drops | Duplicates | Failed cases |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `webrtc/adaptive` | 27.000 | 0 | 9 | 0 | 0 |
+| `webrtc/balanced` | 73.000 | 0 | 11 | 0 | 0 |
+| `lightweight/adaptive` | 1113.833 | 9 | 10 | 40 | 0 |
+| `lightweight/balanced` | 2299.000 | 30 | 11 | 80 | 0 |
+| `webrtc/bitrate_only` | 3922.000 | 34 | 14 | 0 | 3 |
+| `lightweight/bitrate_only` | 5986.000 | 41 | 17 | 341 | 0 |
+| `webrtc/fixed` | 17001.500 | 27 | 1756 | 0 | 2 |
+| `lightweight/fixed` | 29028.000 | 234 | 1927 | 66 | 0 |
+
 当前判断：
 
 - 不能再只说“adaptive 能降码率/FPS，所以 QoS 正确”
-- QoS 最优必须先定义目标函数：smoothness-only 会偏向高输出策略；当前 balanced-QoE 同时惩罚 duplicate frames、network drops、弱网不自适应和好网不恢复，因此选出 `webrtc/adaptive`
+- QoS 最优必须先定义目标函数：smoothness-only 会偏向高输出策略；当前 balanced-QoE 同时惩罚 duplicate frames、network drops、decode errors、弱网不自适应和好网不恢复，因此选出 `webrtc/adaptive`
 - 当前证据只证明在这个动态弱网场景集合、backend 集合和候选策略集合中，`webrtc/adaptive` 是 balanced-QoE 目标下的最优候选
 - WebRTC backend 之所以从弱于 lightweight 变成最优，是因为补齐了缺失闭环：周期性 `OnProcessInterval`、`data_in_flight`、probe cluster 发送和回馈、网络恢复 route-change、server 根据下行质量生成 `SENDER_RATE_CAP_V1`
 - C/S 架构下，server 确认链路进入 `good_again` 后应给 sender 触发 route-change，并使用健康链路 start bitrate（当前 demo 为 `2Mbps`）帮助 GoogCC 从深度弱网后的保守状态快速恢复

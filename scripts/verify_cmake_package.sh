@@ -38,6 +38,12 @@ if(TARGET WebRtcQosSdk::webrtc_qos_ffmpeg_encoder)
   target_link_libraries(ffmpeg_encoder_link PRIVATE
     WebRtcQosSdk::webrtc_qos_ffmpeg_encoder)
 endif()
+
+if(TARGET WebRtcQosSdk::webrtc_qos_ffmpeg_decoder)
+  add_executable(ffmpeg_decoder_link ffmpeg_decoder_link.cc)
+  target_link_libraries(ffmpeg_decoder_link PRIVATE
+    WebRtcQosSdk::webrtc_qos_ffmpeg_decoder)
+endif()
 EOF
 
 cat > "${WORK_DIR}/main.cc" <<'EOF'
@@ -188,6 +194,16 @@ int main() {
 }
 EOF
 
+cat > "${WORK_DIR}/ffmpeg_decoder_link.cc" <<'EOF'
+#include "webrtc_qos/ffmpeg_h264_decoder.h"
+
+int main() {
+  webrtc_qos::FfmpegH264Decoder decoder;
+  auto stats = decoder.GetStats();
+  return stats.decoded_frames == 0 && stats.decode_errors == 0 ? 0 : 1;
+}
+EOF
+
 cmake -S "${WORK_DIR}" -B "${WORK_DIR}/build" \
   -DCMAKE_PREFIX_PATH="${PREFIX}" >/dev/null
 cmake --build "${WORK_DIR}/build" -j2 >/dev/null
@@ -198,6 +214,9 @@ cmake --build "${WORK_DIR}/build" -j2 >/dev/null
 "${WORK_DIR}/build/prototype_role"
 if [[ -x "${WORK_DIR}/build/ffmpeg_encoder_link" ]]; then
   "${WORK_DIR}/build/ffmpeg_encoder_link"
+fi
+if [[ -x "${WORK_DIR}/build/ffmpeg_decoder_link" ]]; then
+  "${WORK_DIR}/build/ffmpeg_decoder_link"
 fi
 
 echo "cmake package verification passed"

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "webrtc_qos/ffmpeg_h264_decoder.h"
 #include "webrtc_qos/ffmpeg_h264_encoder.h"
 #include "webrtc_qos/receiver_qos_observer.h"
 #include "webrtc_qos/retransmission_cache.h"
@@ -43,6 +44,8 @@ struct PhaseMetrics {
   uint32_t encoded_frames = 0;
   uint32_t receiver_frames = 0;
   uint32_t keyframes = 0;
+  uint32_t decoded_frames = 0;
+  uint32_t decode_errors = 0;
   uint32_t network_drops = 0;
   uint64_t sent_bytes = 0;
   uint32_t adaptation_samples = 0;
@@ -75,6 +78,8 @@ struct Summary {
   uint32_t duplicate_frames = 0;
   uint32_t encoded_frames = 0;
   uint32_t receiver_frames = 0;
+  uint32_t decoded_frames = 0;
+  uint32_t decode_errors = 0;
   uint32_t keyframes = 0;
   uint32_t probe_packets = 0;
   uint64_t sent_bytes = 0;
@@ -249,6 +254,8 @@ void WriteSummary(const std::string& path,
   out << "  \"duplicate_frames\": " << summary.duplicate_frames << ",\n";
   out << "  \"encoded_frames\": " << summary.encoded_frames << ",\n";
   out << "  \"receiver_frames\": " << summary.receiver_frames << ",\n";
+  out << "  \"decoded_frames\": " << summary.decoded_frames << ",\n";
+  out << "  \"decode_errors\": " << summary.decode_errors << ",\n";
   out << "  \"keyframes\": " << summary.keyframes << ",\n";
   out << "  \"probe_packets\": " << summary.probe_packets << ",\n";
   out << "  \"sent_bytes\": " << summary.sent_bytes << ",\n";
@@ -279,6 +286,8 @@ void WriteSummary(const std::string& path,
     out << "    {\"name\": \"" << phase.name << "\", "
         << "\"encoded_frames\": " << phase.encoded_frames << ", "
         << "\"receiver_frames\": " << phase.receiver_frames << ", "
+        << "\"decoded_frames\": " << phase.decoded_frames << ", "
+        << "\"decode_errors\": " << phase.decode_errors << ", "
         << "\"keyframes\": " << phase.keyframes << ", "
         << "\"network_drops\": " << phase.network_drops << ", "
         << "\"encode_fps\": " << encode_fps << ", "
@@ -361,6 +370,7 @@ int main(int argc, char** argv) {
   const bool enforce_thresholds =
       scenario == "walking_dead_zone" && backend == "lightweight" &&
       strategy == "adaptive";
+  const bool enforce_decode_thresholds = backend == "webrtc";
 
   const std::vector<Phase> phases = BuildScenario(scenario);
   std::vector<PhaseMetrics> phase_metrics;
@@ -531,6 +541,12 @@ int main(int argc, char** argv) {
 #endif
   VideoJitterPlayer jitter(VideoJitterPlayerConfig{ids.sender_ssrc},
                            std::move(jitter_backend));
+  FfmpegH264Decoder decoder;
+  status = decoder.Open();
+  if (!status) {
+    std::cerr << "decoder open failed: " << status.message << "\n";
+    return 1;
+  }
 
   auto handle_recovery_request = [&](const RecoveryRequest& request) {
     if (request.type == RecoveryRequest::Type::kPli) {
@@ -557,6 +573,18 @@ int main(int argc, char** argv) {
       return;
     }
     const size_t phase_index = FindPhaseIndex(phases, now_us);
+    std::vector<DecodedVideoFrame> decoded_frames;
+    Status decode_status =
+        decoder.DecodeAnnexB(frame.annexb_access_unit.data(),
+                             frame.annexb_access_unit.size(), &decoded_frames);
+    if (!decode_status || decoded_frames.empty()) {
+      ++phase_metrics[phase_index].decode_errors;
+      ++summary.decode_errors;
+      return;
+    }
+    phase_metrics[phase_index].decoded_frames +=
+        static_cast<uint32_t>(decoded_frames.size());
+    summary.decoded_frames += static_cast<uint32_t>(decoded_frames.size());
     ++phase_metrics[phase_index].receiver_frames;
     ++summary.receiver_frames;
     if (frame.keyframe) {
@@ -879,6 +907,11 @@ int main(int argc, char** argv) {
     ok &= Expect(summary.max_freeze_ms <= 2000, "max freeze <= 2000ms");
     ok &= Expect(summary.receiver_frames > 0, "receiver frames > 0");
   }
+  if (enforce_decode_thresholds) {
+    ok &= Expect(summary.decode_errors == 0, "decode errors == 0");
+    ok &= Expect(summary.decoded_frames >= summary.receiver_frames,
+                 "decoded frames >= receiver frames");
+  }
   summary.ok = ok;
 
   WriteSummary(summary_path, summary, phase_metrics);
@@ -894,6 +927,8 @@ int main(int argc, char** argv) {
             << " duplicate_frames=" << summary.duplicate_frames
             << " encoded_frames=" << summary.encoded_frames
             << " receiver_frames=" << summary.receiver_frames
+            << " decoded_frames=" << summary.decoded_frames
+            << " decode_errors=" << summary.decode_errors
             << " keyframes=" << summary.keyframes
             << " probe_packets=" << summary.probe_packets
             << " sent_bytes=" << summary.sent_bytes << "\n";
@@ -913,6 +948,8 @@ int main(int argc, char** argv) {
               << " send_bps=" << send_bps
               << " encoded_frames=" << phase.encoded_frames
               << " receiver_frames=" << phase.receiver_frames
+              << " decoded_frames=" << phase.decoded_frames
+              << " decode_errors=" << phase.decode_errors
               << " keyframes=" << phase.keyframes
               << " network_drops=" << phase.network_drops
               << " target_bps_min="
