@@ -203,7 +203,7 @@ Production transport code should implement the `TransportPort` send/deliver call
 - RTCP SR/RR/TWCC/NACK/PLI: unreliable control.
 - `DOWNLINK_QUALITY_V1` / `SENDER_RATE_CAP_V1` / `BYE`: reliable control.
 
-`dynamic_qos_demo` runs multiple dynamic weak-network transitions, not a single happy-path case. It covers walking into an outage and recovering, bandwidth cliff below 100kbps, RTT/jitter spike, oscillating edge coverage, and burst loss recovery. It verifies that SDK encoder adaptation decisions reduce bitrate/FPS under impairment, request keyframes for severe recovery, and restore bitrate/FPS after the network becomes good again.
+`dynamic_qos_demo` runs multiple dynamic weak-network transitions, not a single happy-path case. It covers walking into an outage and recovering, bandwidth cliff below 100kbps, RTT/jitter spike, oscillating edge coverage, and burst loss recovery. It verifies that SDK encoder adaptation decisions reduce bitrate/FPS under impairment, request keyframes for severe loss recovery, avoid RTT-only keyframe storms, and restore bitrate/FPS after the network becomes good again.
 
 Dynamic QoS/QoE adaptation matrix:
 
@@ -222,21 +222,21 @@ Latest local dynamic QoS result:
 | Scenario | Phase | Network | Expected encoder bps | Actual encoder bps | Expected FPS | Actual FPS | Expected keyframe | Actual keyframe | Result |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
 | walk_outage_recover | good | 10000kbps / 20ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| walk_outage_recover | outage | 80kbps / 1000ms / loss 0.45 | 80000-200000 | 156250 | 5-5 | 5 | true | true | PASS |
-| walk_outage_recover | poor | 120kbps / 650ms / loss 0.25 | 80000-150000 | 80000 | 5-10 | 5 | true | true | PASS |
-| walk_outage_recover | recovering | 1200kbps / 180ms / loss 0.03 | 800000-1200000 | 931187 | 15-30 | 30 | false | false | PASS |
+| walk_outage_recover | outage | 80kbps / 1000ms / loss 0.45 | 80000-200000 | 156250 | 8-8 | 8 | true | true | PASS |
+| walk_outage_recover | poor | 120kbps / 650ms / loss 0.25 | 80000-150000 | 80000 | 8-8 | 8 | true | true | PASS |
+| walk_outage_recover | recovering | 1200kbps / 180ms / loss 0.03 | 800000-1200000 | 931187 | 15-30 | 15 | false | false | PASS |
 | walk_outage_recover | good_again | 10000kbps / 40ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| bandwidth_cliff_recover | bandwidth_cliff | 90kbps / 80ms / loss 0.02 | 80000-150000 | 118549 | 5-5 | 5 | false | false | PASS |
+| bandwidth_cliff_recover | bandwidth_cliff | 90kbps / 80ms / loss 0.02 | 80000-150000 | 118549 | 10-10 | 10 | false | false | PASS |
 | bandwidth_cliff_recover | recovered | 8000kbps / 30ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| rtt_jitter_spike_recover | rtt_spike | 700kbps / 900ms / loss 0.08 | 1000000-1500000 | 1305015 | 10-10 | 10 | true | true | PASS |
+| rtt_jitter_spike_recover | rtt_spike | 700kbps / 900ms / loss 0.08 | 1000000-1500000 | 1305015 | 10-10 | 10 | false | false | PASS |
 | rtt_jitter_spike_recover | recovered | 5000kbps / 45ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| oscillating_edge | poor_1 | 180kbps / 550ms / loss 0.18 | 700000-950000 | 857500 | 10-10 | 10 | true | true | PASS |
+| oscillating_edge | poor_1 | 180kbps / 550ms / loss 0.18 | 700000-950000 | 857500 | 10-10 | 10 | false | false | PASS |
 | oscillating_edge | poor_2 | 130kbps / 700ms / loss 0.22 | 700000-950000 | 857500 | 10-10 | 10 | true | true | PASS |
 | oscillating_edge | good_3 | 5000kbps / 35ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| loss_burst_recover | loss_burst | 500kbps / 220ms / loss 0.60 | 120000-200000 | 156250 | 5-5 | 5 | true | true | PASS |
+| loss_burst_recover | loss_burst | 500kbps / 220ms / loss 0.60 | 120000-200000 | 156250 | 10-10 | 10 | true | true | PASS |
 | loss_burst_recover | recovered | 6000kbps / 35ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
 
-The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `encoder_bps` range `80000..2500000`, FPS range `5..30`, keyframe requests `6`, threshold failures `0`.
+The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `encoder_bps` range `80000..2500000`, FPS range `8..30`, keyframe requests `4`, threshold failures `0`.
 
 When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
@@ -247,6 +247,7 @@ Long-stream encoder QoE strategy matrix:
 ```bash
 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
 MATRIX_RUNS=2 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_profile.sh
 ```
 
 This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across multiple mobile weak-network transitions:
@@ -292,40 +293,60 @@ The matrix now has hard validation rules when the WebRTC backend is available:
 - The aggregate best `balanced_qoe_score` across all seeded cases must also be `webrtc/adaptive`.
 - Negative controls such as `bitrate_only` and `fixed` are allowed to fail their individual demo thresholds, but their summaries are still collected and scored.
 
-Latest local seeded long-stream QoE result (`MATRIX_RUNS=2`, 3 content profiles, 5 scenarios, 30 cases per backend/strategy):
+Latest local seeded long-stream QoE result (`MATRIX_RUNS=1`, 320x180, 3 content profiles, 5 scenarios, 15 cases per backend/strategy):
 
 | Content | Scenario | WebRTC/adaptive score | Freeze / max ms | Drops | PSNR avg/min | Max latency/jitter ms | Decode errors |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| detail_motion | bandwidth_staircase | 47.369 | 0 / 0 | 0 | 36.40 / 15.15 | 1055 / 600 | 0 |
-| detail_motion | jitter_loss_oscillation | 294.254 | 1 / 1095 | 17 | 32.91 / 15.15 | 930 / 560 | 0 |
-| detail_motion | loss_burst_recover | 321.740 | 1 / 1005 | 29 | 29.71 / 15.14 | 655 / 345 | 0 |
-| detail_motion | rtt_jitter_spike_recover | 236.608 | 1 / 1005 | 0 | 29.19 / 15.14 | 985 / 480 | 0 |
-| detail_motion | walking_dead_zone | 260.578 | 1 / 1035 | 0 | 42.83 / 15.15 | 1240 / 540 | 0 |
-| low_motion | bandwidth_staircase | 0.000 | 0 / 0 | 0 | 63.71 / 26.10 | 845 / 520 | 0 |
-| low_motion | jitter_loss_oscillation | 63.000 | 0 / 0 | 21 | 62.35 / 30.37 | 520 / 515 | 0 |
-| low_motion | loss_burst_recover | 72.000 | 0 / 0 | 24 | 63.33 / 27.91 | 445 / 315 | 0 |
-| low_motion | rtt_jitter_spike_recover | 0.000 | 0 / 0 | 0 | 63.85 / 25.86 | 695 / 400 | 0 |
-| low_motion | walking_dead_zone | 0.000 | 0 / 0 | 0 | 64.55 / 34.17 | 970 / 555 | 0 |
-| motion | bandwidth_staircase | 0.000 | 0 / 0 | 0 | 61.27 / 29.68 | 960 / 640 | 0 |
-| motion | jitter_loss_oscillation | 60.000 | 0 / 0 | 20 | 59.94 / 23.20 | 500 / 430 | 0 |
-| motion | loss_burst_recover | 72.000 | 0 / 0 | 24 | 61.77 / 23.75 | 460 / 370 | 0 |
-| motion | rtt_jitter_spike_recover | 0.000 | 0 / 0 | 0 | 61.14 / 24.49 | 720 / 425 | 0 |
-| motion | walking_dead_zone | 0.000 | 0 / 0 | 0 | 61.89 / 28.69 | 1310 / 795 | 0 |
+| motion | walking_dead_zone | 0.000 | 0 / 0 | 0 | 58.57 / 23.66 | 1280 / 730 | 0 |
+| motion | jitter_loss_oscillation | 30.000 | 0 / 0 | 10 | 58.06 / 29.31 | 445 / 420 | 0 |
+| motion | bandwidth_staircase | 0.000 | 0 / 0 | 0 | 62.03 / 54.11 | 885 / 330 | 0 |
+| motion | rtt_jitter_spike_recover | 0.000 | 0 / 0 | 0 | 59.44 / 24.49 | 710 / 415 | 0 |
+| motion | loss_burst_recover | 33.000 | 0 / 0 | 11 | 61.02 / 25.95 | 455 / 320 | 0 |
+| low_motion | walking_dead_zone | 241.000 | 1 / 1410 | 0 | 60.54 / 24.78 | 930 / 495 | 0 |
+| low_motion | jitter_loss_oscillation | 30.000 | 0 / 0 | 10 | 59.96 / 26.69 | 430 / 410 | 0 |
+| low_motion | bandwidth_staircase | 0.000 | 0 / 0 | 0 | 61.34 / 26.02 | 765 / 410 | 0 |
+| low_motion | rtt_jitter_spike_recover | 0.000 | 0 / 0 | 0 | 61.24 / 25.84 | 680 / 350 | 0 |
+| low_motion | loss_burst_recover | 36.000 | 0 / 0 | 12 | 62.33 / 28.20 | 445 / 250 | 0 |
+| detail_motion | walking_dead_zone | 0.000 | 0 / 0 | 0 | 49.59 / 42.48 | 1445 / 485 | 0 |
+| detail_motion | jitter_loss_oscillation | 43.336 | 0 / 0 | 10 | 46.36 / 15.33 | 950 / 435 | 0 |
+| detail_motion | bandwidth_staircase | 0.000 | 0 / 0 | 0 | 49.58 / 41.90 | 1480 / 345 | 0 |
+| detail_motion | rtt_jitter_spike_recover | 0.000 | 0 / 0 | 0 | 49.75 / 22.62 | 1305 / 535 | 0 |
+| detail_motion | loss_burst_recover | 42.000 | 0 / 0 | 14 | 50.70 / 43.13 | 1060 / 410 | 0 |
 
 Latest aggregate ranking:
 
 | Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Latency avg/max ms | Jitter-buffer avg/max ms | Decode errors | Drops | Duplicates | Failed cases |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 1427.549 | 54.18 / 15.14 | 117.9 / 1310 | 44.7 / 795 | 0 | 135 | 0 | 0 |
-| webrtc/balanced | 7905.494 | 54.06 / 15.14 | 135.1 / 1315 | 45.3 / 640 | 0 | 135 | 0 | 0 |
-| lightweight/adaptive | 22675.537 | 25.48 / 8.41 | 201.7 / 3960 | 28.9 / 1720 | 141 | 112 | 342 | 2 |
-| lightweight/balanced | 24134.468 | 25.97 / 7.96 | 214.0 / 2965 | 29.4 / 2155 | 134 | 144 | 582 | 0 |
-| webrtc/bitrate_only | 82113.652 | 52.89 / 15.02 | 188.9 / 1285 | 64.1 / 810 | 0 | 215 | 0 | 0 |
-| lightweight/bitrate_only | 103536.504 | 25.42 / 13.99 | 169.2 / 1145 | 33.4 / 745 | 111 | 230 | 2659 | 0 |
-| webrtc/fixed | 279286.298 | 60.40 / 19.77 | 1120.8 / 11500 | 101.2 / 6170 | 0 | 23759 | 0 | 16 |
-| lightweight/fixed | 313974.385 | 24.56 / 14.36 | 1103.8 / 11505 | 33.4 / 6310 | 394 | 23929 | 1155 | 0 |
+| webrtc/adaptive | 455.336 | 56.84 / 15.33 | 135.2 / 1480 | 43.8 / 730 | 0 | 67 | 0 | 0 |
+| webrtc/balanced | 3342.996 | 56.85 / 15.33 | 141.2 / 1480 | 44.2 / 665 | 0 | 67 | 0 | 0 |
+| lightweight/adaptive | 10716.991 | 27.46 / 14.30 | 154.7 / 1965 | 29.1 / 845 | 74 | 67 | 276 | 3 |
+| lightweight/balanced | 14016.000 | 26.10 / 7.65 | 139.2 / 1980 | 27.2 / 775 | 80 | 64 | 269 | 0 |
+| webrtc/bitrate_only | 41023.278 | 52.95 / 15.46 | 184.8 / 890 | 62.4 / 430 | 0 | 104 | 0 | 0 |
+| lightweight/bitrate_only | 53477.620 | 25.98 / 14.30 | 175.9 / 1595 | 32.9 / 845 | 69 | 105 | 1279 | 0 |
+| webrtc/fixed | 135964.274 | 56.67 / 14.66 | 1344.4 / 9680 | 290.7 / 8775 | 0 | 8565 | 0 | 11 |
+| lightweight/fixed | 144408.946 | 24.21 / 10.98 | 988.7 / 8265 | 112.9 / 7165 | 64 | 8284 | 656 | 0 |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, content set, candidate set, backend set, seed set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, smoothed loss-driven FPS adaptation, and WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks. Under the current 2-run/3-content/5-scenario synthetic dynamic weak-network matrix, `webrtc/adaptive` is the best aggregate balanced-QoE candidate and has the best worst-case score (`259.620`, `detail_motion/loss_burst_recover`, seed 2).
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, content set, candidate set, backend set, seed set, 320x180 video profile, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, smoothed loss-driven FPS adaptation, and WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks. Under the current 3-content/5-scenario synthetic dynamic weak-network matrix, `webrtc/adaptive` is the best aggregate balanced-QoE candidate with `decode_errors=0` and `failed_cases=0`.
+
+720p targeted profile status:
+
+```bash
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_profile.sh
+```
+
+This profile intentionally raises the validation bar to 1280x720, start 2.5Mbps, max 5Mbps, and recovered-route start 3.5Mbps. It is not marked as Phase-1a passed yet. The latest local run had 18 validation failures: `webrtc/adaptive` still wins aggregate balanced QoE, but it violates the hard max-latency/jitter thresholds in high-detail and RTT/loss-burst cases.
+
+| Content | Scenario | Freeze / max ms | Drops | PSNR avg/min | Max latency/jitter ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| motion | rtt_jitter_spike_recover | 2 / 1115 | 11 | 61.10 / 31.43 | 2585 / 1485 |
+| motion | loss_burst_recover | 1 / 1135 | 51 | 58.26 / 24.24 | 2370 / 1410 |
+| detail_motion | walking_dead_zone | 2 / 1220 | 334 | 39.31 / 16.19 | 1870 / 910 |
+| detail_motion | jitter_loss_oscillation | 0 / 0 | 234 | 32.54 / 15.19 | 1805 / 930 |
+| detail_motion | bandwidth_staircase | 1 / 1125 | 152 | 42.15 / 23.16 | 2145 / 865 |
+| detail_motion | rtt_jitter_spike_recover | 1 / 1015 | 1475 | 39.59 / 16.03 | 4565 / 3460 |
+| detail_motion | loss_burst_recover | 0 / 0 | 829 | 38.41 / 15.08 | 4980 / 4155 |
+
+A lower 720p probe (`max_bitrate=3.5Mbps`, recovered-route start 3.0Mbps) reduces failures from 18 to 4, but still leaves `detail_motion/walking_dead_zone` and `detail_motion/bandwidth_staircase` above the 1800ms latency threshold. The next implementation step is therefore not more threshold tuning; it is adding receiver-side playout/deadline dropping, better sender-side stale-frame policy for complete frames, and/or a real runtime encoder rate-control path that does not depend on reopening libx264 on every rate change.
 
 UDP weak-network matrix:
 

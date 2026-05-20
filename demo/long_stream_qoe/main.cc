@@ -82,6 +82,12 @@ struct Summary {
   std::string backend;
   std::string strategy;
   std::string content_profile;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t start_bitrate_bps = 0;
+  uint32_t min_bitrate_bps = 0;
+  uint32_t max_bitrate_bps = 0;
+  uint32_t recovered_route_start_bps = 0;
   uint32_t network_seed = 0;
   bool ok = true;
   int64_t degrade_time_ms = -1;
@@ -129,6 +135,22 @@ bool IsSupportedContentProfile(const std::string& content_profile) {
   return content_profile == "motion" ||
          content_profile == "low_motion" ||
          content_profile == "detail_motion";
+}
+
+bool ShouldApplyEncoderRates(uint32_t target_bitrate_bps,
+                             uint32_t target_fps,
+                             uint32_t applied_bitrate_bps,
+                             uint32_t applied_fps) {
+  if (target_fps != applied_fps) {
+    return true;
+  }
+  const uint32_t delta =
+      target_bitrate_bps > applied_bitrate_bps
+          ? target_bitrate_bps - applied_bitrate_bps
+          : applied_bitrate_bps - target_bitrate_bps;
+  const uint32_t relative_threshold =
+      std::max<uint32_t>(30000, applied_bitrate_bps / 10);
+  return delta >= relative_threshold;
 }
 
 std::vector<Phase> BuildScenario(const std::string& scenario) {
@@ -462,6 +484,13 @@ void WriteSummary(const std::string& path,
   out << "  \"backend\": \"" << summary.backend << "\",\n";
   out << "  \"strategy\": \"" << summary.strategy << "\",\n";
   out << "  \"content_profile\": \"" << summary.content_profile << "\",\n";
+  out << "  \"width\": " << summary.width << ",\n";
+  out << "  \"height\": " << summary.height << ",\n";
+  out << "  \"start_bitrate_bps\": " << summary.start_bitrate_bps << ",\n";
+  out << "  \"min_bitrate_bps\": " << summary.min_bitrate_bps << ",\n";
+  out << "  \"max_bitrate_bps\": " << summary.max_bitrate_bps << ",\n";
+  out << "  \"recovered_route_start_bps\": "
+      << summary.recovered_route_start_bps << ",\n";
   out << "  \"network_seed\": " << summary.network_seed << ",\n";
   out << "  \"ok\": " << (summary.ok ? "true" : "false") << ",\n";
   out << "  \"degrade_time_ms\": " << summary.degrade_time_ms << ",\n";
@@ -588,6 +617,12 @@ int main(int argc, char** argv) {
   std::string strategy = "adaptive";
   std::string scenario = "walking_dead_zone";
   std::string content_profile = "motion";
+  uint32_t width = 320;
+  uint32_t height = 180;
+  uint32_t start_bitrate_bps = 1200000;
+  uint32_t min_bitrate_bps = 80000;
+  uint32_t max_bitrate_bps = 2500000;
+  uint32_t recovered_route_start_bps = 2000000;
   uint32_t network_seed = 0;
   const bool trace_rates = std::getenv("WEBRTC_QOS_TRACE_RATES") != nullptr;
   for (int i = 1; i < argc; ++i) {
@@ -617,6 +652,41 @@ int main(int argc, char** argv) {
       content_profile = arg.substr(content_prefix.size());
       continue;
     }
+    const std::string width_prefix = "--width=";
+    if (arg.rfind(width_prefix, 0) == 0) {
+      width = static_cast<uint32_t>(std::stoul(arg.substr(width_prefix.size())));
+      continue;
+    }
+    const std::string height_prefix = "--height=";
+    if (arg.rfind(height_prefix, 0) == 0) {
+      height =
+          static_cast<uint32_t>(std::stoul(arg.substr(height_prefix.size())));
+      continue;
+    }
+    const std::string start_bitrate_prefix = "--start-bitrate=";
+    if (arg.rfind(start_bitrate_prefix, 0) == 0) {
+      start_bitrate_bps = static_cast<uint32_t>(
+          std::stoul(arg.substr(start_bitrate_prefix.size())));
+      continue;
+    }
+    const std::string min_bitrate_prefix = "--min-bitrate=";
+    if (arg.rfind(min_bitrate_prefix, 0) == 0) {
+      min_bitrate_bps = static_cast<uint32_t>(
+          std::stoul(arg.substr(min_bitrate_prefix.size())));
+      continue;
+    }
+    const std::string max_bitrate_prefix = "--max-bitrate=";
+    if (arg.rfind(max_bitrate_prefix, 0) == 0) {
+      max_bitrate_bps = static_cast<uint32_t>(
+          std::stoul(arg.substr(max_bitrate_prefix.size())));
+      continue;
+    }
+    const std::string recovered_prefix = "--recovered-route-start-bps=";
+    if (arg.rfind(recovered_prefix, 0) == 0) {
+      recovered_route_start_bps = static_cast<uint32_t>(
+          std::stoul(arg.substr(recovered_prefix.size())));
+      continue;
+    }
     const std::string seed_prefix = "--network-seed=";
     if (arg.rfind(seed_prefix, 0) == 0) {
       network_seed =
@@ -640,6 +710,23 @@ int main(int argc, char** argv) {
     std::cerr << "unsupported content profile: " << content_profile << "\n";
     return 1;
   }
+  if (width == 0 || height == 0 || width % 2 != 0 || height % 2 != 0) {
+    std::cerr << "invalid frame size: " << width << "x" << height << "\n";
+    return 1;
+  }
+  if (start_bitrate_bps == 0 || min_bitrate_bps == 0 ||
+      max_bitrate_bps == 0 || min_bitrate_bps > max_bitrate_bps ||
+      start_bitrate_bps < min_bitrate_bps ||
+      start_bitrate_bps > max_bitrate_bps ||
+      recovered_route_start_bps < min_bitrate_bps ||
+      recovered_route_start_bps > max_bitrate_bps) {
+    std::cerr << "invalid bitrate config"
+              << " min=" << min_bitrate_bps
+              << " start=" << start_bitrate_bps
+              << " max=" << max_bitrate_bps
+              << " recovered=" << recovered_route_start_bps << "\n";
+    return 1;
+  }
 #ifndef WEBRTC_QOS_ENABLE_WEBRTC_BACKEND
   if (backend == "webrtc") {
     std::cerr << "webrtc backend support was not compiled in\n";
@@ -661,9 +748,9 @@ int main(int argc, char** argv) {
   TransportIds ids{1, 1, 1, 0x12345678, 2};
   SenderQosControllerConfig qos_config;
   qos_config.ids = ids;
-  qos_config.start_bitrate_bps = 1200000;
-  qos_config.min_bitrate_bps = 80000;
-  qos_config.max_bitrate_bps = 2500000;
+  qos_config.start_bitrate_bps = start_bitrate_bps;
+  qos_config.min_bitrate_bps = min_bitrate_bps;
+  qos_config.max_bitrate_bps = max_bitrate_bps;
   std::unique_ptr<SenderQosBackend> qos_backend;
 #ifdef WEBRTC_QOS_ENABLE_WEBRTC_BACKEND
   if (backend == "webrtc") {
@@ -673,10 +760,10 @@ int main(int argc, char** argv) {
   SenderQosController qos(qos_config, std::move(qos_backend));
 
   FfmpegH264EncoderConfig encoder_config;
-  encoder_config.width = 320;
-  encoder_config.height = 180;
+  encoder_config.width = width;
+  encoder_config.height = height;
   encoder_config.fps = 30;
-  encoder_config.bitrate_bps = 1200000;
+  encoder_config.bitrate_bps = start_bitrate_bps;
   encoder_config.gop_size = 30;
   FfmpegH264Encoder encoder;
   Status status = encoder.Open(encoder_config);
@@ -700,6 +787,12 @@ int main(int argc, char** argv) {
   summary.backend = backend;
   summary.strategy = strategy;
   summary.content_profile = content_profile;
+  summary.width = width;
+  summary.height = height;
+  summary.start_bitrate_bps = start_bitrate_bps;
+  summary.min_bitrate_bps = min_bitrate_bps;
+  summary.max_bitrate_bps = max_bitrate_bps;
+  summary.recovered_route_start_bps = recovered_route_start_bps;
   summary.network_seed = network_seed;
   int64_t link_available_us = 0;
   int64_t last_keyframe_encode_us = -10000000;
@@ -730,15 +823,15 @@ int main(int argc, char** argv) {
         std::max<uint32_t>(1, phase.downlink_capacity_bps);
     const int64_t tx_start_us = std::max(send_time_us, link_available_us);
     const int64_t queue_delay_us = tx_start_us - send_time_us;
-    const int64_t serialize_us =
-        static_cast<int64_t>((bytes * 8.0 * 1000000.0) /
-                             static_cast<double>(capacity_bps));
-    link_available_us = tx_start_us + std::max<int64_t>(1, serialize_us);
     if (!retransmission && queue_delay_us > 800000) {
       ++phase_metrics[FindPhaseIndex(phases, send_time_us)].network_drops;
       ++summary.network_drops;
       return;
     }
+    const int64_t serialize_us =
+        static_cast<int64_t>((bytes * 8.0 * 1000000.0) /
+                             static_cast<double>(capacity_bps));
+    link_available_us = tx_start_us + std::max<int64_t>(1, serialize_us);
     int64_t jitter_us = 0;
     if (phase.downlink_jitter_ms > 0) {
       const int sign =
@@ -762,7 +855,7 @@ int main(int argc, char** argv) {
   };
 
   SenderPacer pacer(
-      SenderPacerConfig{1200000, kPacerTickMs, kPacerMaxQueueMs,
+      SenderPacerConfig{start_bitrate_bps, kPacerTickMs, kPacerMaxQueueMs,
                         kPacerMaxQueueBytes},
       [&](const RtpPacket& packet) {
         const size_t bytes = packet.payload.size() + 20;
@@ -1010,14 +1103,13 @@ int main(int argc, char** argv) {
 
   constexpr int64_t kTickUs = 5000;
   constexpr int64_t kEndUs = 15000000;
-  constexpr uint32_t kRecoveredRouteStartBps = 2000000;
   for (now_us = 0; now_us <= kEndUs; now_us += kTickUs) {
     const Phase& phase = FindPhase(phases, now_us);
     if (!route_recovered && now_us >= phases[3].start_us) {
       // In C/S mode the server can declare the uplink route healthy again.
       // Bootstrap GoogCC from a known-good production target instead of waiting
       // for a slow AIMD climb from the conservative startup rate.
-      status = qos.OnNetworkRouteChange(kRecoveredRouteStartBps, now_us);
+      status = qos.OnNetworkRouteChange(recovered_route_start_bps, now_us);
       if (!status) {
         std::cerr << "route change failed: " << status.message << "\n";
         return 2;
@@ -1032,9 +1124,10 @@ int main(int argc, char** argv) {
         return 2;
       }
       pending_uplink_feedback.clear();
-      applied_pacing_bps = kRecoveredRouteStartBps;
+      applied_pacing_bps = recovered_route_start_bps;
       pacer.SetTargetBitrate(applied_pacing_bps);
       force_keyframe_next = true;
+      last_keyframe_encode_us = now_us - 2000000;
       route_recovered = true;
     }
     if (now_us >= next_process_us) {
@@ -1095,8 +1188,8 @@ int main(int argc, char** argv) {
     EncoderAdaptation adaptation = qos.GetEncoderAdaptation(now_us);
     TargetRates target_rates = qos.GetTargetRates(now_us);
     if (strategy == "fixed") {
-      adaptation.target_bitrate_bps = 1200000;
-      target_rates.pacing_bps = 1200000;
+      adaptation.target_bitrate_bps = start_bitrate_bps;
+      target_rates.pacing_bps = start_bitrate_bps;
       adaptation.max_fps = 30;
       adaptation.request_keyframe = false;
     } else if (strategy == "bitrate_only") {
@@ -1148,8 +1241,10 @@ int main(int argc, char** argv) {
       applied_pacing_bps = target_rates.pacing_bps;
       pacer.SetTargetBitrate(applied_pacing_bps);
     }
-    if (adaptation.target_bitrate_bps != applied_bitrate_bps ||
-        adaptation.max_fps != applied_fps) {
+    if (ShouldApplyEncoderRates(adaptation.target_bitrate_bps,
+                                adaptation.max_fps,
+                                applied_bitrate_bps,
+                                applied_fps)) {
       applied_bitrate_bps = adaptation.target_bitrate_bps;
       applied_fps = std::max<uint32_t>(1, adaptation.max_fps);
       status = encoder.SetRates(applied_bitrate_bps, applied_fps);
@@ -1308,6 +1403,9 @@ int main(int argc, char** argv) {
             << " scenario=" << scenario
             << " strategy=" << strategy
             << " content=" << content_profile
+            << " size=" << width << "x" << height
+            << " start_bps=" << start_bitrate_bps
+            << " max_bps=" << max_bitrate_bps
             << " network_seed=" << network_seed
             << " degrade_ms=" << summary.degrade_time_ms
             << " recovery_ms=" << summary.recovery_time_ms

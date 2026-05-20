@@ -9,6 +9,11 @@ MATRIX_RUNS="${MATRIX_RUNS:-1}"
 CXX="${CXX:-g++}"
 LIBATOMIC_DIR="${LIBATOMIC_DIR:-/usr/lib/gcc/x86_64-redhat-linux/10}"
 
+read -r -a scenarios <<< "${MATRIX_SCENARIOS:-walking_dead_zone jitter_loss_oscillation bandwidth_staircase rtt_jitter_spike_recover loss_burst_recover}"
+read -r -a contents <<< "${MATRIX_CONTENTS:-motion low_motion detail_motion}"
+read -r -a strategies <<< "${MATRIX_STRATEGIES:-adaptive balanced bitrate_only fixed}"
+read -r -a extra_demo_args <<< "${LONG_STREAM_DEMO_ARGS:-}"
+
 mkdir -p "${LOG_DIR}"
 rm -f "${LOG_DIR}/metrics.jsonl"
 
@@ -43,19 +48,27 @@ else
   echo "long_stream_qoe webrtc backend skipped: adapter archives or headers missing"
 fi
 
-scenarios=(
-  walking_dead_zone
-  jitter_loss_oscillation
-  bandwidth_staircase
-  rtt_jitter_spike_recover
-  loss_burst_recover
-)
-contents=(motion low_motion detail_motion)
-strategies=(adaptive balanced bitrate_only fixed)
-backends=(lightweight)
-if [[ "${webrtc_backend_available}" == "1" ]]; then
-  backends+=(webrtc)
+if [[ -n "${MATRIX_BACKENDS:-}" ]]; then
+  read -r -a backends <<< "${MATRIX_BACKENDS}"
+else
+  backends=(lightweight)
+  if [[ "${webrtc_backend_available}" == "1" ]]; then
+    backends+=(webrtc)
+  fi
 fi
+
+for backend in "${backends[@]}"; do
+  if [[ "${backend}" != "lightweight" && "${backend}" != "webrtc" ]]; then
+    echo "unsupported MATRIX_BACKENDS entry: ${backend}" >&2
+    exit 1
+  fi
+  if [[ "${backend}" == "webrtc" && "${webrtc_backend_available}" != "1" ]]; then
+    echo "MATRIX_BACKENDS requested webrtc, but WebRTC adapter archives or headers are missing" >&2
+    exit 1
+  fi
+done
+
+echo "long_stream_qoe matrix scenarios=${scenarios[*]} contents=${contents[*]} strategies=${strategies[*]} backends=${backends[*]} runs=${MATRIX_RUNS} extra_args=${LONG_STREAM_DEMO_ARGS:-}"
 
 for run in $(seq 1 "${MATRIX_RUNS}"); do
   network_seed="${run}"
@@ -78,7 +91,8 @@ for run in $(seq 1 "${MATRIX_RUNS}"); do
             --backend="${backend}" \
             --strategy="${strategy}" \
             --network-seed="${network_seed}" \
-            --summary="${summary_file}" >"${log_file}" 2>&1 || demo_exit=$?
+            --summary="${summary_file}" \
+            "${extra_demo_args[@]}" >"${log_file}" 2>&1 || demo_exit=$?
           if [[ "${demo_exit}" != "0" ]]; then
             echo "long_stream_qoe case failed run=${run} seed=${network_seed} content=${content} scenario=${scenario} backend=${backend} strategy=${strategy} exit=${demo_exit}"
           fi
@@ -529,6 +543,14 @@ for row in rows:
             "run": row.get("run", 1),
             "network_seed": row.get("network_seed", 1),
             "content_profile": row.get("content_profile", "motion"),
+            "width": row.get("width"),
+            "height": row.get("height"),
+            "start_bitrate_bps": row.get("start_bitrate_bps"),
+            "min_bitrate_bps": row.get("min_bitrate_bps"),
+            "max_bitrate_bps": row.get("max_bitrate_bps"),
+            "recovered_route_start_bps": row.get(
+                "recovered_route_start_bps"
+            ),
             "scenario": row.get("scenario", "unknown"),
         }
     item["worst_smoothness_score"] = (
@@ -770,6 +792,16 @@ summary = {
     "best_by_scenario_backend": best_by_scenario_backend,
     "content_profiles": contents,
     "content_count": len(contents),
+    "video_profiles": sorted({
+        "{width}x{height}:{start}-{max}:{recovered}".format(
+            width=row.get("width", "unknown"),
+            height=row.get("height", "unknown"),
+            start=row.get("start_bitrate_bps", "unknown"),
+            max=row.get("max_bitrate_bps", "unknown"),
+            recovered=row.get("recovered_route_start_bps", "unknown"),
+        )
+        for row in rows
+    }),
     "runs": runs,
     "run_count": len(runs),
     "expected_case_count_per_backend_strategy": expected_case_count,

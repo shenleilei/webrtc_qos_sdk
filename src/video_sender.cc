@@ -125,7 +125,8 @@ Status VideoSender::EnqueueNalu(const std::vector<uint8_t>& nalu,
                                                   (end ? 0x40 : 0x00) | type));
     packet.payload.insert(packet.payload.end(), nalu.begin() + offset,
                           nalu.begin() + offset + chunk);
-    Status status = pacer_->Enqueue(SendPacket{packet, frame_type, false, 33});
+    Status status = pacer_->Enqueue(
+        SendPacket{packet, frame_type, false, end ? 33u : 0u});
     if (!status && frame_type != VideoFrameType::kP) {
       return status;
     }

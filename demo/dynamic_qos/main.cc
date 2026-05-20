@@ -111,8 +111,8 @@ bool ValidateScenario(const std::vector<DecisionRow>& rows,
     const DecisionRow* recovered = phase("good_again");
     if (good && outage && poor && recovered) {
       ok &= Expect(good->decision.max_fps == 30, scenario + " good fps=30");
-      ok &= Expect(outage->decision.max_fps <= 5,
-                   scenario + " outage fps<=5");
+      ok &= Expect(outage->decision.max_fps <= 8,
+                   scenario + " outage fps<=8");
       ok &= Expect(outage->decision.request_keyframe,
                    scenario + " outage keyframe");
       ok &= Expect(poor->decision.max_fps <= 10, scenario + " poor fps<=10");
@@ -149,8 +149,8 @@ bool ValidateScenario(const std::vector<DecisionRow>& rows,
     if (good && spike && recovered) {
       ok &= Expect(spike->decision.max_fps <= 10,
                    scenario + " RTT spike reduces fps");
-      ok &= Expect(spike->decision.request_keyframe,
-                   scenario + " RTT spike keyframe");
+      ok &= Expect(!spike->decision.request_keyframe,
+                   scenario + " RTT spike does not request keyframe");
       ok &= Expect(recovered->decision.max_fps == 30,
                    scenario + " recovered fps=30");
       ok &= Expect(recovered->decision.target_bitrate_bps >=
@@ -179,8 +179,8 @@ bool ValidateScenario(const std::vector<DecisionRow>& rows,
     const DecisionRow* burst = phase("loss_burst");
     const DecisionRow* recovered = phase("recovered");
     if (good && burst && recovered) {
-      ok &= Expect(burst->decision.max_fps <= 5,
-                   scenario + " burst loss fps<=5");
+      ok &= Expect(burst->decision.max_fps <= 10,
+                   scenario + " burst loss fps<=10");
       ok &= Expect(burst->decision.request_keyframe,
                    scenario + " burst loss keyframe");
       ok &= Expect(burst->decision.target_bitrate_bps <

@@ -18,6 +18,7 @@ Status SenderPacer::Enqueue(const SendPacket& packet) {
   QueuedPacket queued;
   queued.packet = packet;
   queued.bytes = packet.packet.payload.size() + 20;
+  queued.enqueue_time_us = packet.packet.capture_time_us;
   if (ShouldDropForQueueLimit(queued)) {
     if (packet.frame_type == VideoFrameType::kP && !packet.retransmission) {
       ++stats_.dropped_packets;
@@ -54,6 +55,7 @@ Status SenderPacer::Tick(int64_t now_us) {
   if (last_tick_us_ == 0) {
     last_tick_us_ = now_us;
   }
+  DropExpiredMediaPackets(now_us);
   const int64_t delta_us = std::max<int64_t>(0, now_us - last_tick_us_);
   last_tick_us_ = now_us;
   budget_bytes_ += (static_cast<double>(target_bps_) / 8.0) *
@@ -114,6 +116,36 @@ bool SenderPacer::ShouldDropForQueueLimit(const QueuedPacket& packet) const {
     queued_ms += item.packet.media_duration_ms;
   }
   return queued_ms > static_cast<uint32_t>(config_.max_queue_ms);
+}
+
+void SenderPacer::DropExpiredMediaPackets(int64_t now_us) {
+  if (config_.max_media_packet_age_ms <= 0) {
+    return;
+  }
+  const int64_t max_age_us =
+      static_cast<int64_t>(config_.max_media_packet_age_ms) * 1000;
+  size_t removed_bytes = 0;
+  size_t removed_packets = 0;
+  for (auto it = media_queue_.begin(); it != media_queue_.end();) {
+    const bool expired =
+        it->enqueue_time_us > 0 && now_us - it->enqueue_time_us > max_age_us;
+    if (expired && it->packet.frame_type == VideoFrameType::kP) {
+      removed_bytes += it->bytes;
+      ++removed_packets;
+      it = media_queue_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  if (removed_packets == 0) {
+    return;
+  }
+  stats_.queued_bytes =
+      stats_.queued_bytes > removed_bytes ? stats_.queued_bytes - removed_bytes
+                                          : 0;
+  stats_.dropped_packets += removed_packets;
+  stats_.waiting_for_idr = true;
+  stats_.queued_packets = retransmission_queue_.size() + media_queue_.size();
 }
 
 Status SenderPacer::DropQueuedPFrames() {

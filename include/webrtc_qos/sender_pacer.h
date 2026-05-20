@@ -11,6 +11,7 @@ struct SenderPacerConfig {
   int tick_ms = kPacerTickMs;
   int max_queue_ms = kPacerMaxQueueMs;
   size_t max_queue_bytes = kPacerMaxQueueBytes;
+  int max_media_packet_age_ms = 1400;
 };
 
 struct SenderPacerStats {
@@ -38,6 +39,7 @@ class SenderPacer {
   };
 
   bool ShouldDropForQueueLimit(const QueuedPacket& packet) const;
+  void DropExpiredMediaPackets(int64_t now_us);
   Status DropQueuedPFrames();
 
   SenderPacerConfig config_;

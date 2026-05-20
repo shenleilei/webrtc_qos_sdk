@@ -249,9 +249,9 @@ EncoderAdaptation SenderQosController::GetEncoderAdaptation(
   adaptation.target_bitrate_bps = rates.final_target_bps;
   const double effective_loss =
       has_loss_sample_ ? smoothed_loss_fraction_ : rates.loss_fraction;
-  const bool severe_capacity = rates.final_target_bps < 150000;
+  const bool severe_capacity = rates.final_target_bps < 90000;
   const bool severe_rtt = rates.rtt_ms >= 800;
-  const bool very_constrained_capacity = rates.final_target_bps < 180000;
+  const bool very_constrained_capacity = rates.final_target_bps < 90000;
   const bool catastrophic_loss = effective_loss >= 0.45;
   const bool constrained_capacity = rates.final_target_bps < 300000;
   const bool high_rtt = rates.rtt_ms >= 400;
@@ -266,7 +266,7 @@ EncoderAdaptation SenderQosController::GetEncoderAdaptation(
   if (severe_capacity || severe_rtt_with_capacity_pressure ||
       (very_constrained_capacity && (rates.rtt_ms >= 500 ||
                                      catastrophic_loss))) {
-    adaptation.max_fps = 5;
+    adaptation.max_fps = 8;
   } else if (constrained_capacity || high_rtt || high_loss) {
     adaptation.max_fps = 10;
   } else if (moderate_capacity || moderate_rtt || moderate_loss) {
@@ -274,8 +274,7 @@ EncoderAdaptation SenderQosController::GetEncoderAdaptation(
   } else {
     adaptation.max_fps = 30;
   }
-  adaptation.request_keyframe =
-      rates.rtt_ms >= 500 || effective_loss >= 0.15;
+  adaptation.request_keyframe = effective_loss >= 0.15;
   return adaptation;
 }
 

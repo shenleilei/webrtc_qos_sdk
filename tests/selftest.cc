@@ -177,6 +177,26 @@ int main() {
   SenderPacerStats stats = pacer.GetStats();
   ok &= Expect(stats.waiting_for_idr, "pacer waits for IDR after P drop");
 
+  size_t aged_sent = 0;
+  SenderPacer aged_pacer(
+      SenderPacerConfig{80000, 5, 500, 512 * 1024, 100},
+      [&](const RtpPacket&) {
+        ++aged_sent;
+        return Status::Ok();
+      });
+  SendPacket aged_packet;
+  aged_packet.frame_type = VideoFrameType::kP;
+  aged_packet.media_duration_ms = 33;
+  aged_packet.packet.capture_time_us = 1000000;
+  aged_packet.packet.payload.assign(1200, 0x41);
+  status = aged_pacer.Enqueue(aged_packet);
+  ok &= Expect(status.code == StatusCode::kOk, "enqueue aged P packet");
+  aged_pacer.Tick(1200000);
+  stats = aged_pacer.GetStats();
+  ok &= Expect(aged_sent == 0, "expired P packet not sent");
+  ok &= Expect(stats.waiting_for_idr,
+               "pacer waits for IDR after expired P drop");
+
   SenderQosController controller(
       SenderQosControllerConfig{TransportIds{1, 2, 3, 4, 5}, 1200000, 300000,
                                 2500000});
