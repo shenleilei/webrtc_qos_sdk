@@ -244,7 +244,11 @@ Long-stream encoder QoE strategy matrix:
 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
 ```
 
-This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across a walking-network transition: good network, sudden outage below 100kbps with high RTT/loss/jitter, poor edge coverage, then recovery to good network.
+This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across multiple mobile weak-network transitions:
+
+- `walking_dead_zone`: good network, sudden outage below 100kbps with high RTT/loss/jitter, poor edge coverage, then recovery to good network.
+- `jitter_loss_oscillation`: moderate capacity with heavy jitter, periodic loss/reorder, then recovery.
+- `bandwidth_staircase`: medium bandwidth, step-down to poor edge bandwidth, then recovery.
 
 The matrix now compares two backend families:
 
@@ -261,22 +265,17 @@ For each backend, it compares:
 The script writes `${LOG_DIR}/metrics.jsonl` and `${LOG_DIR}/summary.json`. It reports two objective functions rather than a single ambiguous "best":
 
 - `smoothness_score`: freezes, max freeze duration, network drops, weak-phase receiver FPS, and recovery FPS.
-- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames and network drops. This prevents a strategy that repeats low-information frames from being marked best just because it does not visibly freeze.
+- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, weak-network non-adaptation, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames or refuses to adapt from being marked best just because it does not visibly freeze.
 
 Latest local long-stream QoE result:
 
-| Strategy | Smoothness score | Balanced QoE score | Freeze count | Max freeze | Network drops | Duplicate frames | Outage FPS | Poor FPS | Recovered FPS | Interpretation |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| lightweight/adaptive | 323.833 | 373.833 | 1 | 1805ms | 0 | 10 | 3.50 | 2.33 | 28.4 | Rate cap reduces drops, but duplicate output and one freeze remain. |
-| lightweight/balanced | 321.000 | 451.000 | 1 | 1910ms | 0 | 26 | 2.50 | 7.67 | 29.0 | More weak-phase output, but duplicate frames hurt balanced QoE. |
-| lightweight/bitrate_only | 0.000 | 725.000 | 0 | 0ms | 0 | 145 | 18.50 | 25.33 | 29.8 | Best if optimizing smoothness only, but duplicate output makes it a poor balanced QoE choice. |
-| lightweight/fixed | 1407.000 | 3157.000 | 1 | 1670ms | 860 | 6 | 4.00 | 0.00 | 0.0 | Fails weak-network recovery. |
-| webrtc/adaptive | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 4.00 | 5.67 | 28.0 | Best balanced-QoE candidate after probe, route-change, and server rate-cap closure. |
-| webrtc/balanced | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 7.75 | 7.33 | 28.6 | Also meets the current balanced QoE objective with stronger weak-phase output. |
-| webrtc/bitrate_only | 0.000 | 0.000 | 0 | 0ms | 0 | 0 | 24.25 | 29.67 | 31.4 | Smooth in this synthetic run, but still not the target policy because it does not adapt encoder FPS downward. |
-| webrtc/fixed | 1117.000 | 2791.000 | 0 | 0ms | 837 | 0 | 4.00 | 0.00 | 0.0 | No recovery. |
+| Scenario | Best balanced QoE | Score | Freeze | Drops | Duplicates | Outage FPS | Poor FPS | Recovered FPS | Weak target bps | Recovered target bps |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| walking_dead_zone | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 4.00 | 5.67 | 28.0 | 144000 / 132000 | 2032038 |
+| jitter_loss_oscillation | webrtc/adaptive | 27.000 | 0 | 9 | 0 | 9.00 | 9.33 | 28.8 | 182930 / 186768 | 2063557 |
+| bandwidth_staircase | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 12.75 | 5.00 | 29.2 | 390000 / 156000 | 2095566 |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario, candidate set, backend set, and objective function. It does not prove a global optimum. It also shows why the product objective matters: smoothness-only can prefer high-output strategies, while balanced QoE penalizes duplicate output and network drops. The target `webrtc` backend now closes the missing WebRTC control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery, and server `SENDER_RATE_CAP_V1`. Under the current synthetic dynamic weak-network matrix, `webrtc/adaptive` and `webrtc/balanced` are the best balanced-QoE candidates.
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, candidate set, backend set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, and server `SENDER_RATE_CAP_V1`. Under the current synthetic multi-scenario dynamic weak-network matrix, `webrtc/adaptive` is the best balanced-QoE candidate.
 
 UDP weak-network matrix:
 

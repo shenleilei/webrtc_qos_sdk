@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -44,6 +45,15 @@ struct PhaseMetrics {
   uint32_t keyframes = 0;
   uint32_t network_drops = 0;
   uint64_t sent_bytes = 0;
+  uint32_t adaptation_samples = 0;
+  uint32_t target_bps_min = std::numeric_limits<uint32_t>::max();
+  uint32_t target_bps_max = 0;
+  uint32_t target_bps_last = 0;
+  uint64_t target_bps_sum = 0;
+  uint32_t fps_min = std::numeric_limits<uint32_t>::max();
+  uint32_t fps_max = 0;
+  uint32_t fps_last = 0;
+  uint64_t fps_sum = 0;
 };
 
 struct ScheduledPacket {
@@ -53,6 +63,7 @@ struct ScheduledPacket {
 };
 
 struct Summary {
+  std::string scenario;
   std::string backend;
   std::string strategy;
   bool ok = true;
@@ -68,6 +79,37 @@ struct Summary {
   uint32_t probe_packets = 0;
   uint64_t sent_bytes = 0;
 };
+
+bool IsSupportedScenario(const std::string& scenario) {
+  return scenario == "walking_dead_zone" ||
+         scenario == "jitter_loss_oscillation" ||
+         scenario == "bandwidth_staircase";
+}
+
+std::vector<Phase> BuildScenario(const std::string& scenario) {
+  if (scenario == "walking_dead_zone") {
+    return {
+        {"good", 0, 3000000, 10000000, 0.0, 20, 4000000, 5, 0},
+        {"outage", 3000000, 7000000, 80000, 0.45, 1000, 240000, 180, 0},
+        {"poor", 7000000, 10000000, 120000, 0.25, 650, 220000, 90, 0},
+        {"good_again", 10000000, 15000000, 10000000, 0.0, 40, 4000000, 5, 0},
+    };
+  }
+  if (scenario == "jitter_loss_oscillation") {
+    return {
+        {"good", 0, 3000000, 10000000, 0.0, 25, 4000000, 5, 0},
+        {"outage", 3000000, 7000000, 450000, 0.18, 220, 500000, 260, 29},
+        {"poor", 7000000, 10000000, 700000, 0.08, 160, 700000, 180, 41},
+        {"good_again", 10000000, 15000000, 10000000, 0.0, 35, 4000000, 5, 0},
+    };
+  }
+  return {
+      {"good", 0, 3000000, 10000000, 0.0, 20, 4000000, 5, 0},
+      {"outage", 3000000, 7000000, 600000, 0.08, 260, 650000, 60, 0},
+      {"poor", 7000000, 10000000, 180000, 0.28, 750, 260000, 120, 0},
+      {"good_again", 10000000, 15000000, 10000000, 0.0, 40, 4000000, 5, 0},
+  };
+}
 
 const Phase& FindPhase(const std::vector<Phase>& phases, int64_t now_us) {
   for (const Phase& phase : phases) {
@@ -195,6 +237,7 @@ void WriteSummary(const std::string& path,
   }
   std::ofstream out(path);
   out << "{\n";
+  out << "  \"scenario\": \"" << summary.scenario << "\",\n";
   out << "  \"backend\": \"" << summary.backend << "\",\n";
   out << "  \"strategy\": \"" << summary.strategy << "\",\n";
   out << "  \"ok\": " << (summary.ok ? "true" : "false") << ",\n";
@@ -219,6 +262,20 @@ void WriteSummary(const std::string& path,
         seconds > 0 ? phase.receiver_frames / seconds : 0.0;
     const double send_bps =
         seconds > 0 ? static_cast<double>(phase.sent_bytes * 8) / seconds : 0.0;
+    const uint32_t target_bps_min =
+        phase.adaptation_samples > 0 ? phase.target_bps_min : 0;
+    const double target_bps_avg =
+        phase.adaptation_samples > 0
+            ? static_cast<double>(phase.target_bps_sum) /
+                  static_cast<double>(phase.adaptation_samples)
+            : 0.0;
+    const uint32_t fps_min =
+        phase.adaptation_samples > 0 ? phase.fps_min : 0;
+    const double fps_avg =
+        phase.adaptation_samples > 0
+            ? static_cast<double>(phase.fps_sum) /
+                  static_cast<double>(phase.adaptation_samples)
+            : 0.0;
     out << "    {\"name\": \"" << phase.name << "\", "
         << "\"encoded_frames\": " << phase.encoded_frames << ", "
         << "\"receiver_frames\": " << phase.receiver_frames << ", "
@@ -226,7 +283,16 @@ void WriteSummary(const std::string& path,
         << "\"network_drops\": " << phase.network_drops << ", "
         << "\"encode_fps\": " << encode_fps << ", "
         << "\"receiver_fps\": " << receiver_fps << ", "
-        << "\"send_bps\": " << static_cast<uint64_t>(send_bps) << "}";
+        << "\"send_bps\": " << static_cast<uint64_t>(send_bps) << ", "
+        << "\"target_bps_min\": " << target_bps_min << ", "
+        << "\"target_bps_avg\": " << static_cast<uint64_t>(target_bps_avg)
+        << ", "
+        << "\"target_bps_max\": " << phase.target_bps_max << ", "
+        << "\"target_bps_last\": " << phase.target_bps_last << ", "
+        << "\"fps_min\": " << fps_min << ", "
+        << "\"fps_avg\": " << fps_avg << ", "
+        << "\"fps_max\": " << phase.fps_max << ", "
+        << "\"fps_last\": " << phase.fps_last << "}";
     out << (i + 1 == phases.size() ? "\n" : ",\n");
   }
   out << "  ]\n";
@@ -249,6 +315,7 @@ int main(int argc, char** argv) {
   std::string summary_path;
   std::string backend = "lightweight";
   std::string strategy = "adaptive";
+  std::string scenario = "walking_dead_zone";
   const bool trace_rates = std::getenv("WEBRTC_QOS_TRACE_RATES") != nullptr;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -265,6 +332,11 @@ int main(int argc, char** argv) {
     const std::string backend_prefix = "--backend=";
     if (arg.rfind(backend_prefix, 0) == 0) {
       backend = arg.substr(backend_prefix.size());
+      continue;
+    }
+    const std::string scenario_prefix = "--scenario=";
+    if (arg.rfind(scenario_prefix, 0) == 0) {
+      scenario = arg.substr(scenario_prefix.size());
     }
   }
   if (strategy != "adaptive" && strategy != "balanced" &&
@@ -276,6 +348,10 @@ int main(int argc, char** argv) {
     std::cerr << "unsupported backend: " << backend << "\n";
     return 1;
   }
+  if (!IsSupportedScenario(scenario)) {
+    std::cerr << "unsupported scenario: " << scenario << "\n";
+    return 1;
+  }
 #ifndef WEBRTC_QOS_ENABLE_WEBRTC_BACKEND
   if (backend == "webrtc") {
     std::cerr << "webrtc backend support was not compiled in\n";
@@ -283,14 +359,10 @@ int main(int argc, char** argv) {
   }
 #endif
   const bool enforce_thresholds =
-      backend == "lightweight" && strategy == "adaptive";
+      scenario == "walking_dead_zone" && backend == "lightweight" &&
+      strategy == "adaptive";
 
-  const std::vector<Phase> phases = {
-      {"good", 0, 3000000, 10000000, 0.0, 20, 4000000, 5, 0},
-      {"outage", 3000000, 7000000, 80000, 0.45, 1000, 240000, 180, 0},
-      {"poor", 7000000, 10000000, 120000, 0.25, 650, 220000, 90, 0},
-      {"good_again", 10000000, 15000000, 10000000, 0.0, 40, 4000000, 5, 0},
-  };
+  const std::vector<Phase> phases = BuildScenario(scenario);
   std::vector<PhaseMetrics> phase_metrics;
   for (const Phase& phase : phases) {
     phase_metrics.push_back(PhaseMetrics{phase.name,
@@ -335,6 +407,7 @@ int main(int argc, char** argv) {
   bool route_recovered = false;
   int64_t last_frame_out_us = -1;
   Summary summary;
+  summary.scenario = scenario;
   summary.backend = backend;
   summary.strategy = strategy;
   int64_t link_available_us = 0;
@@ -548,10 +621,14 @@ int main(int argc, char** argv) {
 
   constexpr int64_t kTickUs = 5000;
   constexpr int64_t kEndUs = 15000000;
+  constexpr uint32_t kRecoveredRouteStartBps = 2000000;
   for (now_us = 0; now_us <= kEndUs; now_us += kTickUs) {
     const Phase& phase = FindPhase(phases, now_us);
     if (!route_recovered && now_us >= phases[3].start_us) {
-      status = qos.OnNetworkRouteChange(1200000, now_us);
+      // In C/S mode the server can declare the uplink route healthy again.
+      // Bootstrap GoogCC from a known-good production target instead of waiting
+      // for a slow AIMD climb from the conservative startup rate.
+      status = qos.OnNetworkRouteChange(kRecoveredRouteStartBps, now_us);
       if (!status) {
         std::cerr << "route change failed: " << status.message << "\n";
         return 2;
@@ -566,7 +643,7 @@ int main(int argc, char** argv) {
         return 2;
       }
       pending_uplink_feedback.clear();
-      applied_pacing_bps = 1200000;
+      applied_pacing_bps = kRecoveredRouteStartBps;
       pacer.SetTargetBitrate(applied_pacing_bps);
       force_keyframe_next = true;
       route_recovered = true;
@@ -636,6 +713,20 @@ int main(int argc, char** argv) {
       adaptation.max_fps = 30;
     } else if (strategy == "balanced") {
       adaptation.max_fps = std::max<uint32_t>(10, adaptation.max_fps);
+    }
+    {
+      PhaseMetrics& metrics = phase_metrics[FindPhaseIndex(phases, now_us)];
+      ++metrics.adaptation_samples;
+      metrics.target_bps_min =
+          std::min(metrics.target_bps_min, adaptation.target_bitrate_bps);
+      metrics.target_bps_max =
+          std::max(metrics.target_bps_max, adaptation.target_bitrate_bps);
+      metrics.target_bps_last = adaptation.target_bitrate_bps;
+      metrics.target_bps_sum += adaptation.target_bitrate_bps;
+      metrics.fps_min = std::min(metrics.fps_min, adaptation.max_fps);
+      metrics.fps_max = std::max(metrics.fps_max, adaptation.max_fps);
+      metrics.fps_last = adaptation.max_fps;
+      metrics.fps_sum += adaptation.max_fps;
     }
     if (now_us >= phases[1].start_us && summary.degrade_time_ms < 0 &&
         adaptation.target_bitrate_bps <= 200000 && adaptation.max_fps <= 5) {
@@ -793,6 +884,7 @@ int main(int argc, char** argv) {
   WriteSummary(summary_path, summary, phase_metrics);
 
   std::cout << "long_stream_qoe backend=" << backend
+            << " scenario=" << scenario
             << " strategy=" << strategy
             << " degrade_ms=" << summary.degrade_time_ms
             << " recovery_ms=" << summary.recovery_time_ms
@@ -822,7 +914,15 @@ int main(int argc, char** argv) {
               << " encoded_frames=" << phase.encoded_frames
               << " receiver_frames=" << phase.receiver_frames
               << " keyframes=" << phase.keyframes
-              << " network_drops=" << phase.network_drops << "\n";
+              << " network_drops=" << phase.network_drops
+              << " target_bps_min="
+              << (phase.adaptation_samples > 0 ? phase.target_bps_min : 0)
+              << " target_bps_max=" << phase.target_bps_max
+              << " target_bps_last=" << phase.target_bps_last
+              << " fps_min="
+              << (phase.adaptation_samples > 0 ? phase.fps_min : 0)
+              << " fps_max=" << phase.fps_max
+              << " fps_last=" << phase.fps_last << "\n";
   }
   std::cout << (ok ? "long_stream_qoe_demo passed\n"
                    : "long_stream_qoe_demo failed\n");
