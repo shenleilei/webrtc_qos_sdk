@@ -136,6 +136,9 @@ SCENARIO_EXPECTATIONS = {
         "outage_fps_max": 8.0,
         "poor_fps_max": 12.0,
         "recovered_fps_min": 24.0,
+        "outage_response_ms_max": 1200,
+        "poor_response_ms_max": 1200,
+        "recovered_response_ms_max": 1500,
     },
     "jitter_loss_oscillation": {
         "outage_bps_max": 350000.0,
@@ -144,6 +147,9 @@ SCENARIO_EXPECTATIONS = {
         "outage_fps_max": 12.0,
         "poor_fps_max": 12.0,
         "recovered_fps_min": 24.0,
+        "outage_response_ms_max": 2500,
+        "poor_response_ms_max": 1200,
+        "recovered_response_ms_max": 1500,
     },
     "bandwidth_staircase": {
         "outage_bps_max": 450000.0,
@@ -152,6 +158,9 @@ SCENARIO_EXPECTATIONS = {
         "outage_fps_max": 15.0,
         "poor_fps_max": 12.0,
         "recovered_fps_min": 24.0,
+        "outage_response_ms_max": 4500,
+        "poor_response_ms_max": 1200,
+        "recovered_response_ms_max": 1500,
     },
 }
 
@@ -171,6 +180,12 @@ def adaptation_penalty(row):
     outage_fps = phase_value(row, "outage", "fps_min")
     poor_fps = phase_value(row, "poor", "fps_min")
     recovered_fps = phase_value(row, "good_again", "fps_last")
+    outage_response_ms = phase_value(
+        row, "outage", "adaptation_response_time_ms", -1.0)
+    poor_response_ms = phase_value(
+        row, "poor", "adaptation_response_time_ms", -1.0)
+    recovered_response_ms = phase_value(
+        row, "good_again", "adaptation_response_time_ms", -1.0)
     expected = SCENARIO_EXPECTATIONS.get(
         row.get("scenario", "unknown"),
         SCENARIO_EXPECTATIONS["walking_dead_zone"],
@@ -182,6 +197,24 @@ def adaptation_penalty(row):
     penalty += max(0.0, outage_fps - expected["outage_fps_max"]) * 20.0
     penalty += max(0.0, poor_fps - expected["poor_fps_max"]) * 20.0
     penalty += max(0.0, expected["recovered_fps_min"] - recovered_fps) * 20.0
+    if outage_response_ms < 0:
+        penalty += 1000.0
+    else:
+        penalty += max(
+            0.0,
+            outage_response_ms - expected["outage_response_ms_max"]) / 10.0
+    if poor_response_ms < 0:
+        penalty += 1000.0
+    else:
+        penalty += max(
+            0.0,
+            poor_response_ms - expected["poor_response_ms_max"]) / 10.0
+    if recovered_response_ms < 0:
+        penalty += 1000.0
+    else:
+        penalty += max(
+            0.0,
+            recovered_response_ms - expected["recovered_response_ms_max"]) / 10.0
     return penalty
 
 def smoothness_score(row):
@@ -395,6 +428,22 @@ if webrtc_rows:
                 f"poor_fps<={expected['poor_fps_max']}, "
                 f"recovered_fps>={expected['recovered_fps_min']})"
             )
+        for phase_name, expectation_key in (
+            ("outage", "outage_response_ms_max"),
+            ("poor", "poor_response_ms_max"),
+            ("good_again", "recovered_response_ms_max"),
+        ):
+            response_ms = phase_value(
+                adaptive, phase_name, "adaptation_response_time_ms", -1)
+            if response_ms < 0:
+                validation_failures.append(
+                    f"{scenario}: {phase_name} adaptation response missing"
+                )
+            elif response_ms > expected[expectation_key]:
+                validation_failures.append(
+                    f"{scenario}: {phase_name} adaptation response "
+                    f"{response_ms}ms exceeds {expected[expectation_key]}ms"
+                )
         scenario_best = scenario_results[scenario]
         if (
             scenario_best["best_balanced_qoe_backend"] != "webrtc"
@@ -450,6 +499,17 @@ summary = {
             "outage_fps_min": phase(row, "outage").get("fps_min"),
             "poor_fps_min": phase(row, "poor").get("fps_min"),
             "recovered_fps_last": phase(row, "good_again").get("fps_last"),
+            "outage_adaptation_response_ms": phase(row, "outage").get(
+                "adaptation_response_time_ms"
+            ),
+            "poor_adaptation_response_ms": phase(row, "poor").get(
+                "adaptation_response_time_ms"
+            ),
+            "recovered_adaptation_response_ms": phase(row, "good_again").get(
+                "adaptation_response_time_ms"
+            ),
+            "degrade_time_ms": row.get("degrade_time_ms"),
+            "recovery_time_ms": row.get("recovery_time_ms"),
         }
         for row in rows
     ],

@@ -62,6 +62,7 @@ struct PhaseMetrics {
   uint32_t fps_max = 0;
   uint32_t fps_last = 0;
   uint64_t fps_sum = 0;
+  int64_t adaptation_response_time_ms = -1;
 };
 
 struct ScheduledPacket {
@@ -130,6 +131,53 @@ std::vector<Phase> BuildScenario(const std::string& scenario) {
       {"poor", 7000000, 10000000, 180000, 0.28, 750, 260000, 120, 0},
       {"good_again", 10000000, 15000000, 10000000, 0.0, 40, 4000000, 5, 0},
   };
+}
+
+bool MeetsPhaseAdaptationTarget(const std::string& scenario,
+                                const std::string& phase,
+                                const webrtc_qos::EncoderAdaptation& adaptation) {
+  struct Target {
+    uint32_t bps = 0;
+    uint32_t fps = 0;
+    bool minimum = false;
+  };
+
+  Target target;
+  if (scenario == "walking_dead_zone") {
+    if (phase == "outage") {
+      target = Target{250000, 8, false};
+    } else if (phase == "poor") {
+      target = Target{350000, 12, false};
+    } else if (phase == "good_again") {
+      target = Target{1800000, 24, true};
+    }
+  } else if (scenario == "jitter_loss_oscillation") {
+    if (phase == "outage") {
+      target = Target{350000, 12, false};
+    } else if (phase == "poor") {
+      target = Target{450000, 12, false};
+    } else if (phase == "good_again") {
+      target = Target{1800000, 24, true};
+    }
+  } else if (scenario == "bandwidth_staircase") {
+    if (phase == "outage") {
+      target = Target{450000, 15, false};
+    } else if (phase == "poor") {
+      target = Target{300000, 12, false};
+    } else if (phase == "good_again") {
+      target = Target{1800000, 24, true};
+    }
+  }
+
+  if (target.bps == 0 || target.fps == 0) {
+    return false;
+  }
+  if (target.minimum) {
+    return adaptation.target_bitrate_bps >= target.bps &&
+           adaptation.max_fps >= target.fps;
+  }
+  return adaptation.target_bitrate_bps <= target.bps &&
+         adaptation.max_fps <= target.fps;
 }
 
 const Phase& FindPhase(const std::vector<Phase>& phases, int64_t now_us) {
@@ -370,7 +418,9 @@ void WriteSummary(const std::string& path,
         << "\"fps_min\": " << fps_min << ", "
         << "\"fps_avg\": " << fps_avg << ", "
         << "\"fps_max\": " << phase.fps_max << ", "
-        << "\"fps_last\": " << phase.fps_last << "}";
+        << "\"fps_last\": " << phase.fps_last << ", "
+        << "\"adaptation_response_time_ms\": "
+        << phase.adaptation_response_time_ms << "}";
     out << (i + 1 == phases.size() ? "\n" : ",\n");
   }
   out << "  ]\n";
@@ -841,6 +891,11 @@ int main(int argc, char** argv) {
       metrics.fps_max = std::max(metrics.fps_max, adaptation.max_fps);
       metrics.fps_last = adaptation.max_fps;
       metrics.fps_sum += adaptation.max_fps;
+      if (metrics.adaptation_response_time_ms < 0 &&
+          MeetsPhaseAdaptationTarget(scenario, phase.name, adaptation)) {
+        metrics.adaptation_response_time_ms =
+            (now_us - phase.start_us) / 1000;
+      }
     }
     if (now_us >= phases[1].start_us && summary.degrade_time_ms < 0 &&
         adaptation.target_bitrate_bps <= 200000 && adaptation.max_fps <= 5) {
@@ -1067,7 +1122,9 @@ int main(int argc, char** argv) {
               << " fps_min="
               << (phase.adaptation_samples > 0 ? phase.fps_min : 0)
               << " fps_max=" << phase.fps_max
-              << " fps_last=" << phase.fps_last << "\n";
+              << " fps_last=" << phase.fps_last
+              << " adaptation_response_ms="
+              << phase.adaptation_response_time_ms << "\n";
   }
   std::cout << (ok ? "long_stream_qoe_demo passed\n"
                    : "long_stream_qoe_demo failed\n");
