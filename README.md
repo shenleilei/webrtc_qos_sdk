@@ -240,7 +240,7 @@ The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `en
 
 When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
-When FFmpeg's H264 decoder is available, the long-stream QoE matrix also decodes every receiver Annex-B AU before counting it as a rendered receiver frame. The decoder outputs I420 frames, and the matrix compares them with the generated source I420 frames by RTP timestamp to produce PSNR. `decode_errors`, `decoded_frames`, `quality_samples`, `psnr_avg`, and `psnr_min` are therefore hard QoE inputs, not log-only diagnostics.
+When FFmpeg's H264 decoder is available, the long-stream QoE matrix also decodes receiver Annex-B AUs before counting rendered receiver frames. The decoder runs in low-latency single-thread mode, receives the RTP timestamp as packet PTS, outputs I420 frames, and the matrix compares decoded PTS/RTP timestamp with the generated source I420 frame to produce PSNR. `decode_errors` only counts real FFmpeg send/receive failures; legal decoder buffering with no immediate output is not misclassified as a bad frame. `decode_errors`, `decoded_frames`, `quality_samples`, `psnr_avg`, and `psnr_min` are therefore hard QoE inputs, not log-only diagnostics.
 
 Long-stream encoder QoE strategy matrix:
 
@@ -253,6 +253,8 @@ This matrix is the first quantitative answer to whether the current QoS policy i
 - `walking_dead_zone`: good network, sudden outage below 100kbps with high RTT/loss/jitter, poor edge coverage, then recovery to good network.
 - `jitter_loss_oscillation`: moderate capacity with heavy jitter, periodic loss/reorder, then recovery.
 - `bandwidth_staircase`: medium bandwidth, step-down to poor edge bandwidth, then recovery.
+- `rtt_jitter_spike_recover`: high RTT and heavy jitter without explicit packet loss, then recovery.
+- `loss_burst_recover`: burst packet loss with recovery, separated from the RTT/jitter-only case.
 
 The matrix now compares two backend families:
 
@@ -289,21 +291,23 @@ Latest local long-stream QoE result:
 | walking_dead_zone | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 62.18 / 55.16 | 0 / 0 / 100 | 0 / 100 | 4.00 / 5.67 | 28.0 | 144000 / 132000 | 2032038 |
 | jitter_loss_oscillation | webrtc/adaptive | 27.000 | 0 | 9 | 0 | 60.57 / 27.36 | 300 / 0 / 0 | 2200 / 0 | 9.00 / 9.33 | 28.8 | 182930 / 186768 | 2063557 |
 | bandwidth_staircase | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 46.32 / 21.27 | 0 / 0 / 100 | 4100 / 100 | 12.75 / 5.00 | 29.2 | 390000 / 156000 | 2095566 |
+| rtt_jitter_spike_recover | webrtc/adaptive | 0.000 | 0 | 0 | 0 | 61.54 / 25.66 | 0 / 0 / 0 | -1 / 0 | 4.50 / 13.00 | 29.2 | 480000 / 390000 | 2063557 |
+| loss_burst_recover | webrtc/adaptive | 36.000 | 0 | 12 | 0 | 62.25 / 54.14 | 0 / 0 / 0 | 3900 / 0 | 5.50 / 6.33 | 28.6 | 183980 / 130348 | 2063557 |
 
 Latest aggregate ranking:
 
 | Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Decode errors | Drops | Duplicates | Failed cases |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 27.000 | 56.071 / 21.271 | 0 | 9 | 0 | 0 |
-| webrtc/balanced | 1073.000 | 60.610 / 27.374 | 0 | 11 | 0 | 0 |
-| lightweight/adaptive | 1227.241 | 22.589 / 15.813 | 9 | 10 | 40 | 0 |
-| lightweight/balanced | 3361.252 | 22.561 / 16.621 | 30 | 11 | 80 | 0 |
-| webrtc/bitrate_only | 9922.000 | 57.313 / 20.646 | 34 | 14 | 0 | 3 |
-| lightweight/bitrate_only | 12045.696 | 22.515 / 17.477 | 41 | 17 | 341 | 0 |
-| webrtc/fixed | 26001.500 | 60.543 / 22.041 | 27 | 1756 | 0 | 2 |
-| lightweight/fixed | 38302.342 | 21.126 / 13.883 | 234 | 1927 | 66 | 0 |
+| webrtc/adaptive | 63.000 | 58.372 / 21.271 | 0 | 21 | 0 | 0 |
+| webrtc/balanced | 1119.000 | 60.738 / 24.306 | 0 | 23 | 0 | 0 |
+| lightweight/adaptive | 2262.395 | 22.309 / 15.594 | 5 | 17 | 66 | 0 |
+| lightweight/balanced | 2613.168 | 22.512 / 16.327 | 2 | 19 | 131 | 0 |
+| webrtc/bitrate_only | 13671.000 | 57.674 / 20.572 | 0 | 37 | 0 | 0 |
+| lightweight/bitrate_only | 16353.760 | 22.337 / 16.354 | 0 | 38 | 509 | 0 |
+| webrtc/fixed | 37363.000 | 60.081 / 21.706 | 0 | 2033 | 0 | 0 |
+| lightweight/fixed | 40654.050 | 20.399 / 12.909 | 0 | 2258 | 161 | 0 |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, candidate set, backend set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, and WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks. Under the current synthetic multi-scenario dynamic weak-network matrix, `webrtc/adaptive` is the best balanced-QoE candidate.
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, candidate set, backend set, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, and WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks. Under the current 5-scenario synthetic dynamic weak-network matrix, `webrtc/adaptive` is the best balanced-QoE candidate.
 
 UDP weak-network matrix:
 

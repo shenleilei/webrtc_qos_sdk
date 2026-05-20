@@ -105,7 +105,9 @@ struct I420Frame {
 bool IsSupportedScenario(const std::string& scenario) {
   return scenario == "walking_dead_zone" ||
          scenario == "jitter_loss_oscillation" ||
-         scenario == "bandwidth_staircase";
+         scenario == "bandwidth_staircase" ||
+         scenario == "rtt_jitter_spike_recover" ||
+         scenario == "loss_burst_recover";
 }
 
 std::vector<Phase> BuildScenario(const std::string& scenario) {
@@ -123,6 +125,22 @@ std::vector<Phase> BuildScenario(const std::string& scenario) {
         {"outage", 3000000, 7000000, 450000, 0.18, 220, 500000, 260, 29},
         {"poor", 7000000, 10000000, 700000, 0.08, 160, 700000, 180, 41},
         {"good_again", 10000000, 15000000, 10000000, 0.0, 35, 4000000, 5, 0},
+    };
+  }
+  if (scenario == "rtt_jitter_spike_recover") {
+    return {
+        {"good", 0, 3000000, 8000000, 0.0, 35, 4000000, 5, 0},
+        {"outage", 3000000, 7000000, 700000, 0.08, 900, 800000, 320, 0},
+        {"poor", 7000000, 10000000, 500000, 0.04, 420, 650000, 180, 0},
+        {"good_again", 10000000, 15000000, 8000000, 0.0, 45, 4000000, 5, 0},
+    };
+  }
+  if (scenario == "loss_burst_recover") {
+    return {
+        {"good", 0, 3000000, 6000000, 0.0, 25, 4000000, 5, 0},
+        {"outage", 3000000, 7000000, 500000, 0.60, 220, 560000, 140, 17},
+        {"poor", 7000000, 10000000, 650000, 0.15, 160, 700000, 90, 29},
+        {"good_again", 10000000, 15000000, 6000000, 0.0, 35, 4000000, 5, 0},
     };
   }
   return {
@@ -164,6 +182,22 @@ bool MeetsPhaseAdaptationTarget(const std::string& scenario,
       target = Target{450000, 15, false};
     } else if (phase == "poor") {
       target = Target{300000, 12, false};
+    } else if (phase == "good_again") {
+      target = Target{1800000, 24, true};
+    }
+  } else if (scenario == "rtt_jitter_spike_recover") {
+    if (phase == "outage") {
+      target = Target{500000, 12, false};
+    } else if (phase == "poor") {
+      target = Target{450000, 12, false};
+    } else if (phase == "good_again") {
+      target = Target{1800000, 24, true};
+    }
+  } else if (scenario == "loss_burst_recover") {
+    if (phase == "outage") {
+      target = Target{350000, 15, false};
+    } else if (phase == "poor") {
+      target = Target{450000, 12, false};
     } else if (phase == "good_again") {
       target = Target{1800000, 24, true};
     }
@@ -696,18 +730,32 @@ int main(int argc, char** argv) {
     std::vector<DecodedVideoFrame> decoded_frames;
     Status decode_status =
         decoder.DecodeAnnexB(frame.annexb_access_unit.data(),
-                             frame.annexb_access_unit.size(), &decoded_frames);
-    if (!decode_status || decoded_frames.empty()) {
+                             frame.annexb_access_unit.size(),
+                             frame.rtp_timestamp, &decoded_frames);
+    if (!decode_status) {
+      std::cerr << "long_stream_qoe decode_error"
+                << " timestamp=" << frame.rtp_timestamp
+                << " bytes=" << frame.annexb_access_unit.size()
+                << " keyframe=" << (frame.keyframe ? 1 : 0)
+                << " status=" << decode_status.message
+                << " decoded_outputs=" << decoded_frames.size() << "\n";
       ++phase_metrics[phase_index].decode_errors;
       ++summary.decode_errors;
+      return;
+    }
+    if (decoded_frames.empty()) {
       return;
     }
     phase_metrics[phase_index].decoded_frames +=
         static_cast<uint32_t>(decoded_frames.size());
     summary.decoded_frames += static_cast<uint32_t>(decoded_frames.size());
-    auto source_it = source_frames.find(frame.rtp_timestamp);
-    if (source_it != source_frames.end()) {
-      for (const DecodedVideoFrame& decoded_frame : decoded_frames) {
+    for (const DecodedVideoFrame& decoded_frame : decoded_frames) {
+      const uint32_t decoded_rtp_timestamp =
+          decoded_frame.pts >= 0
+              ? static_cast<uint32_t>(decoded_frame.pts)
+              : frame.rtp_timestamp;
+      auto source_it = source_frames.find(decoded_rtp_timestamp);
+      if (source_it != source_frames.end()) {
         const double psnr = ComputeI420Psnr(source_it->second, decoded_frame);
         if (psnr > 0.0) {
           ++phase_metrics[phase_index].quality_samples;
@@ -718,8 +766,8 @@ int main(int argc, char** argv) {
           summary.psnr_sum += psnr;
           summary.psnr_min = std::min(summary.psnr_min, psnr);
         }
+        source_frames.erase(source_it);
       }
-      source_frames.erase(source_it);
     }
     ++phase_metrics[phase_index].receiver_frames;
     ++summary.receiver_frames;

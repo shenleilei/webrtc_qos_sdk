@@ -47,6 +47,9 @@ Status FfmpegH264Decoder::Open() {
     return Status::Error(StatusCode::kInternalError,
                          "avcodec_alloc_context3 failed");
   }
+  impl_->context->thread_count = 1;
+  impl_->context->thread_type = 0;
+  impl_->context->flags |= AV_CODEC_FLAG_LOW_DELAY;
   int ret = avcodec_open2(impl_->context, codec, nullptr);
   if (ret < 0) {
     const std::string error = FfmpegError(ret);
@@ -72,6 +75,14 @@ Status FfmpegH264Decoder::DecodeAnnexB(
     const uint8_t* data,
     size_t size,
     std::vector<DecodedVideoFrame>* decoded_frames) {
+  return DecodeAnnexB(data, size, AV_NOPTS_VALUE, decoded_frames);
+}
+
+Status FfmpegH264Decoder::DecodeAnnexB(
+    const uint8_t* data,
+    size_t size,
+    int64_t pts,
+    std::vector<DecodedVideoFrame>* decoded_frames) {
   if (!impl_->context || !impl_->frame) {
     return Status::Error(StatusCode::kInvalidArgument, "decoder is not open");
   }
@@ -90,6 +101,8 @@ Status FfmpegH264Decoder::DecodeAnnexB(
     return Status::Error(StatusCode::kInternalError,
                          "av_new_packet failed: " + error);
   }
+  packet->pts = pts;
+  packet->dts = pts;
   std::copy(data, data + size, packet->data);
   ret = avcodec_send_packet(impl_->context, packet);
   av_packet_free(&packet);

@@ -38,6 +38,10 @@ class FfmpegH264Decoder {
   Status DecodeAnnexB(const uint8_t* data,
                       size_t size,
                       std::vector<DecodedVideoFrame>* decoded_frames);
+  Status DecodeAnnexB(const uint8_t* data,
+                      size_t size,
+                      int64_t pts,
+                      std::vector<DecodedVideoFrame>* decoded_frames);
   FfmpegH264DecoderStats GetStats() const;
   void Close();
 

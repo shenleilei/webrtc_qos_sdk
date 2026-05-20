@@ -42,7 +42,13 @@ else
   echo "long_stream_qoe webrtc backend skipped: adapter archives or headers missing"
 fi
 
-scenarios=(walking_dead_zone jitter_loss_oscillation bandwidth_staircase)
+scenarios=(
+  walking_dead_zone
+  jitter_loss_oscillation
+  bandwidth_staircase
+  rtt_jitter_spike_recover
+  loss_burst_recover
+)
 strategies=(adaptive balanced bitrate_only fixed)
 backends=(lightweight)
 if [[ "${webrtc_backend_available}" == "1" ]]; then
@@ -159,6 +165,28 @@ SCENARIO_EXPECTATIONS = {
         "poor_fps_max": 12.0,
         "recovered_fps_min": 24.0,
         "outage_response_ms_max": 4500,
+        "poor_response_ms_max": 1200,
+        "recovered_response_ms_max": 1500,
+    },
+    "rtt_jitter_spike_recover": {
+        "outage_bps_max": 500000.0,
+        "poor_bps_max": 450000.0,
+        "recovered_bps_min": 1800000.0,
+        "outage_fps_max": 12.0,
+        "poor_fps_max": 12.0,
+        "recovered_fps_min": 24.0,
+        "outage_response_ms_max": 2500,
+        "poor_response_ms_max": 1200,
+        "recovered_response_ms_max": 1500,
+    },
+    "loss_burst_recover": {
+        "outage_bps_max": 350000.0,
+        "poor_bps_max": 450000.0,
+        "recovered_bps_min": 1800000.0,
+        "outage_fps_max": 15.0,
+        "poor_fps_max": 12.0,
+        "recovered_fps_min": 24.0,
+        "outage_response_ms_max": 1200,
         "poor_response_ms_max": 1200,
         "recovered_response_ms_max": 1500,
     },
