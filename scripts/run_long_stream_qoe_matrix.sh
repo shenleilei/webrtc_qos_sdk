@@ -50,6 +50,7 @@ scenarios=(
   rtt_jitter_spike_recover
   loss_burst_recover
 )
+contents=(motion low_motion detail_motion)
 strategies=(adaptive balanced bitrate_only fixed)
 backends=(lightweight)
 if [[ "${webrtc_backend_available}" == "1" ]]; then
@@ -64,22 +65,24 @@ for run in $(seq 1 "${MATRIX_RUNS}"); do
     else
       demo="${BUILD_DIR}/long_stream_qoe_demo"
     fi
-    for scenario in "${scenarios[@]}"; do
-      for strategy in "${strategies[@]}"; do
-        log_file="${LOG_DIR}/run${run}_${scenario}_${backend}_${strategy}.log"
-        summary_file="${LOG_DIR}/run${run}_${scenario}_${backend}_${strategy}.summary.json"
-        echo "long_stream_qoe run=${run} seed=${network_seed} scenario=${scenario} backend=${backend} strategy=${strategy}"
-        demo_exit=0
-        "${demo}" \
-          --scenario="${scenario}" \
-          --backend="${backend}" \
-          --strategy="${strategy}" \
-          --network-seed="${network_seed}" \
-          --summary="${summary_file}" >"${log_file}" 2>&1 || demo_exit=$?
-        if [[ "${demo_exit}" != "0" ]]; then
-          echo "long_stream_qoe case failed run=${run} seed=${network_seed} scenario=${scenario} backend=${backend} strategy=${strategy} exit=${demo_exit}"
-        fi
-        python3 - "${summary_file}" "${LOG_DIR}/metrics.jsonl" "${run}" "${network_seed}" <<'PY'
+    for content in "${contents[@]}"; do
+      for scenario in "${scenarios[@]}"; do
+        for strategy in "${strategies[@]}"; do
+          log_file="${LOG_DIR}/run${run}_${content}_${scenario}_${backend}_${strategy}.log"
+          summary_file="${LOG_DIR}/run${run}_${content}_${scenario}_${backend}_${strategy}.summary.json"
+          echo "long_stream_qoe run=${run} seed=${network_seed} content=${content} scenario=${scenario} backend=${backend} strategy=${strategy}"
+          demo_exit=0
+          "${demo}" \
+            --scenario="${scenario}" \
+            --content="${content}" \
+            --backend="${backend}" \
+            --strategy="${strategy}" \
+            --network-seed="${network_seed}" \
+            --summary="${summary_file}" >"${log_file}" 2>&1 || demo_exit=$?
+          if [[ "${demo_exit}" != "0" ]]; then
+            echo "long_stream_qoe case failed run=${run} seed=${network_seed} content=${content} scenario=${scenario} backend=${backend} strategy=${strategy} exit=${demo_exit}"
+          fi
+          python3 - "${summary_file}" "${LOG_DIR}/metrics.jsonl" "${run}" "${network_seed}" "${content}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -88,19 +91,22 @@ summary_path = Path(sys.argv[1])
 jsonl_path = Path(sys.argv[2])
 run = int(sys.argv[3])
 network_seed = int(sys.argv[4])
+content = sys.argv[5]
 data = json.loads(summary_path.read_text(encoding="utf-8"))
 data.setdefault("run", run)
 data.setdefault("network_seed", network_seed)
+data.setdefault("content_profile", content)
 with jsonl_path.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps(data, sort_keys=True) + "\n")
 print(
-    "metrics run={run} seed={seed} scenario={scenario} backend={backend} strategy={strategy} freeze={freeze} "
+    "metrics run={run} seed={seed} content={content} scenario={scenario} backend={backend} strategy={strategy} freeze={freeze} "
     "max_freeze_ms={max_freeze} drops={drops} frames={frames} "
     "decoded={decoded} decode_errors={decode_errors} psnr_avg={psnr_avg} "
     "psnr_min={psnr_min} latency_max_ms={latency_max} "
     "jitter_buffer_max_ms={jitter_max} duplicates={duplicates}".format(
         run=data.get("run"),
         seed=data.get("network_seed"),
+        content=data.get("content_profile"),
         scenario=data.get("scenario"),
         backend=data.get("backend"),
         strategy=data.get("strategy"),
@@ -118,6 +124,7 @@ print(
     )
 )
 PY
+        done
       done
     done
   done
@@ -323,8 +330,9 @@ for backend in sorted({row.get("backend", "unknown") for row in rows}):
     }
 
 scenarios = sorted({row.get("scenario", "unknown") for row in rows})
+contents = sorted({row.get("content_profile", "motion") for row in rows})
 runs = sorted({row.get("run", 1) for row in rows})
-expected_case_count = len(scenarios) * len(runs)
+expected_case_count = len(scenarios) * len(contents) * len(runs)
 scenario_results = {}
 for scenario in scenarios:
     scenario_rows = [row for row in rows if row.get("scenario", "unknown") == scenario]
@@ -344,35 +352,38 @@ for scenario in scenarios:
 case_results = {}
 for run in runs:
     case_results[str(run)] = {}
-    for scenario in scenarios:
-        case_rows = [
-            row
-            for row in rows
-            if row.get("run", 1) == run
-            and row.get("scenario", "unknown") == scenario
-        ]
-        if not case_rows:
-            continue
-        case_best_smoothness = min(
-            case_rows, key=lambda row: row["smoothness_score"]
-        )
-        case_best_balanced = min(
-            case_rows, key=lambda row: row["balanced_qoe_score"]
-        )
-        case_results[str(run)][scenario] = {
-            "best_smoothness_backend": case_best_smoothness.get(
-                "backend", "unknown"
-            ),
-            "best_smoothness_strategy": case_best_smoothness.get("strategy"),
-            "best_smoothness_score": case_best_smoothness["smoothness_score"],
-            "best_balanced_qoe_backend": case_best_balanced.get(
-                "backend", "unknown"
-            ),
-            "best_balanced_qoe_strategy": case_best_balanced.get("strategy"),
-            "best_balanced_qoe_score": case_best_balanced[
-                "balanced_qoe_score"
-            ],
-        }
+    for content in contents:
+        case_results[str(run)][content] = {}
+        for scenario in scenarios:
+            case_rows = [
+                row
+                for row in rows
+                if row.get("run", 1) == run
+                and row.get("content_profile", "motion") == content
+                and row.get("scenario", "unknown") == scenario
+            ]
+            if not case_rows:
+                continue
+            case_best_smoothness = min(
+                case_rows, key=lambda row: row["smoothness_score"]
+            )
+            case_best_balanced = min(
+                case_rows, key=lambda row: row["balanced_qoe_score"]
+            )
+            case_results[str(run)][content][scenario] = {
+                "best_smoothness_backend": case_best_smoothness.get(
+                    "backend", "unknown"
+                ),
+                "best_smoothness_strategy": case_best_smoothness.get("strategy"),
+                "best_smoothness_score": case_best_smoothness["smoothness_score"],
+                "best_balanced_qoe_backend": case_best_balanced.get(
+                    "backend", "unknown"
+                ),
+                "best_balanced_qoe_strategy": case_best_balanced.get("strategy"),
+                "best_balanced_qoe_score": case_best_balanced[
+                    "balanced_qoe_score"
+                ],
+            }
 
 best_by_scenario_backend = {}
 for scenario in scenarios:
@@ -517,6 +528,7 @@ for row in rows:
         item["worst_case"] = {
             "run": row.get("run", 1),
             "network_seed": row.get("network_seed", 1),
+            "content_profile": row.get("content_profile", "motion"),
             "scenario": row.get("scenario", "unknown"),
         }
     item["worst_smoothness_score"] = (
@@ -563,114 +575,122 @@ validation_failures = []
 webrtc_rows = [row for row in rows if row.get("backend", "unknown") == "webrtc"]
 if webrtc_rows:
     for run in runs:
-      for scenario in scenarios:
-        candidates = [
-            row
-            for row in rows
-            if row.get("run", 1) == run
-            and row.get("scenario", "unknown") == scenario
-            and row.get("backend", "unknown") == "webrtc"
-            and row.get("strategy") == "adaptive"
-        ]
-        case_label = f"run={run} scenario={scenario}"
-        if not candidates:
-            validation_failures.append(
-                f"{case_label}: missing webrtc/adaptive result"
-            )
-            continue
-        adaptive = candidates[0]
-        expected = SCENARIO_EXPECTATIONS[scenario]
-        if not adaptive.get("ok", False):
-            validation_failures.append(
-                f"{case_label}: webrtc/adaptive case failed"
-            )
-        if adaptive.get("decode_errors", 0) != 0:
-            validation_failures.append(
-                f"{case_label}: webrtc/adaptive decode_errors="
-                f"{adaptive.get('decode_errors', 0)}"
-            )
-        if adaptive.get("receiver_frames", 0) <= 0:
-            validation_failures.append(
-                f"{case_label}: webrtc/adaptive produced no receiver frames"
-            )
-        if adaptive.get("decoded_frames", 0) < adaptive.get("receiver_frames", 0):
-            validation_failures.append(
-                f"{case_label}: decoded frames below receiver frames"
-            )
-        if adaptive.get("quality_samples", 0) < adaptive.get("receiver_frames", 0):
-            validation_failures.append(
-                f"{case_label}: quality samples below receiver frames"
-            )
-        if adaptive.get("frame_latency_samples", 0) < adaptive.get(
-                "receiver_frames", 0):
-            validation_failures.append(
-                f"{case_label}: frame latency samples below receiver frames"
-            )
-        if adaptive.get("jitter_buffer_samples", 0) < adaptive.get(
-                "receiver_frames", 0):
-            validation_failures.append(
-                f"{case_label}: jitter buffer samples below receiver frames"
-            )
-        if adaptive.get("psnr_avg", 0.0) < 20.0:
-            validation_failures.append(
-                f"{case_label}: webrtc/adaptive psnr_avg="
-                f"{adaptive.get('psnr_avg', 0.0):.3f} below 20.0"
-            )
-        if adaptive.get("psnr_min", 0.0) < 14.0:
-            validation_failures.append(
-                f"{case_label}: webrtc/adaptive psnr_min="
-                f"{adaptive.get('psnr_min', 0.0):.3f} below 14.0"
-            )
-        if adaptive.get("frame_latency_max_ms", 0) > 1800:
-            validation_failures.append(
-                f"{case_label}: frame_latency_max_ms="
-                f"{adaptive.get('frame_latency_max_ms', 0)} exceeds 1800"
-            )
-        if adaptive.get("jitter_buffer_max_ms", 0) > 1200:
-            validation_failures.append(
-                f"{case_label}: jitter_buffer_max_ms="
-                f"{adaptive.get('jitter_buffer_max_ms', 0)} exceeds 1200"
-            )
-        if adaptation_penalty(adaptive) != 0:
-            validation_failures.append(
-                f"{case_label}: adaptation thresholds not met "
-                f"(outage_bps<={expected['outage_bps_max']}, "
-                f"poor_bps<={expected['poor_bps_max']}, "
-                f"recovered_bps>={expected['recovered_bps_min']}, "
-                f"outage_fps<={expected['outage_fps_max']}, "
-                f"poor_fps<={expected['poor_fps_max']}, "
-                f"recovered_fps>={expected['recovered_fps_min']})"
-            )
-        for phase_name, expectation_key in (
-            ("outage", "outage_response_ms_max"),
-            ("poor", "poor_response_ms_max"),
-            ("good_again", "recovered_response_ms_max"),
-        ):
-            response_ms = phase_value(
-                adaptive, phase_name, "adaptation_response_time_ms", -1)
-            if response_ms < 0:
-                validation_failures.append(
-                    f"{case_label}: {phase_name} adaptation response missing"
+        for content in contents:
+            for scenario in scenarios:
+                candidates = [
+                    row
+                    for row in rows
+                    if row.get("run", 1) == run
+                    and row.get("content_profile", "motion") == content
+                    and row.get("scenario", "unknown") == scenario
+                    and row.get("backend", "unknown") == "webrtc"
+                    and row.get("strategy") == "adaptive"
+                ]
+                case_label = f"run={run} content={content} scenario={scenario}"
+                if not candidates:
+                    validation_failures.append(
+                        f"{case_label}: missing webrtc/adaptive result"
+                    )
+                    continue
+                adaptive = candidates[0]
+                expected = SCENARIO_EXPECTATIONS[scenario]
+                if not adaptive.get("ok", False):
+                    validation_failures.append(
+                        f"{case_label}: webrtc/adaptive case failed"
+                    )
+                if adaptive.get("decode_errors", 0) != 0:
+                    validation_failures.append(
+                        f"{case_label}: webrtc/adaptive decode_errors="
+                        f"{adaptive.get('decode_errors', 0)}"
+                    )
+                if adaptive.get("receiver_frames", 0) <= 0:
+                    validation_failures.append(
+                        f"{case_label}: webrtc/adaptive produced no receiver frames"
+                    )
+                if adaptive.get("decoded_frames", 0) < adaptive.get(
+                        "receiver_frames", 0):
+                    validation_failures.append(
+                        f"{case_label}: decoded frames below receiver frames"
+                    )
+                if adaptive.get("quality_samples", 0) < adaptive.get(
+                        "receiver_frames", 0):
+                    validation_failures.append(
+                        f"{case_label}: quality samples below receiver frames"
+                    )
+                if adaptive.get("frame_latency_samples", 0) < adaptive.get(
+                        "receiver_frames", 0):
+                    validation_failures.append(
+                        f"{case_label}: frame latency samples below receiver frames"
+                    )
+                if adaptive.get("jitter_buffer_samples", 0) < adaptive.get(
+                        "receiver_frames", 0):
+                    validation_failures.append(
+                        f"{case_label}: jitter buffer samples below receiver frames"
+                    )
+                if adaptive.get("psnr_avg", 0.0) < 20.0:
+                    validation_failures.append(
+                        f"{case_label}: webrtc/adaptive psnr_avg="
+                        f"{adaptive.get('psnr_avg', 0.0):.3f} below 20.0"
+                    )
+                if adaptive.get("psnr_min", 0.0) < 14.0:
+                    validation_failures.append(
+                        f"{case_label}: webrtc/adaptive psnr_min="
+                        f"{adaptive.get('psnr_min', 0.0):.3f} below 14.0"
+                    )
+                if adaptive.get("frame_latency_max_ms", 0) > 1800:
+                    validation_failures.append(
+                        f"{case_label}: frame_latency_max_ms="
+                        f"{adaptive.get('frame_latency_max_ms', 0)} exceeds 1800"
+                    )
+                if adaptive.get("jitter_buffer_max_ms", 0) > 1200:
+                    validation_failures.append(
+                        f"{case_label}: jitter_buffer_max_ms="
+                        f"{adaptive.get('jitter_buffer_max_ms', 0)} exceeds 1200"
+                    )
+                if adaptation_penalty(adaptive) != 0:
+                    validation_failures.append(
+                        f"{case_label}: adaptation thresholds not met "
+                        f"(outage_bps<={expected['outage_bps_max']}, "
+                        f"poor_bps<={expected['poor_bps_max']}, "
+                        f"recovered_bps>={expected['recovered_bps_min']}, "
+                        f"outage_fps<={expected['outage_fps_max']}, "
+                        f"poor_fps<={expected['poor_fps_max']}, "
+                        f"recovered_fps>={expected['recovered_fps_min']})"
+                    )
+                for phase_name, expectation_key in (
+                    ("outage", "outage_response_ms_max"),
+                    ("poor", "poor_response_ms_max"),
+                    ("good_again", "recovered_response_ms_max"),
+                ):
+                    response_ms = phase_value(
+                        adaptive, phase_name, "adaptation_response_time_ms", -1)
+                    if response_ms < 0:
+                        validation_failures.append(
+                            f"{case_label}: {phase_name} adaptation response missing"
+                        )
+                    elif response_ms > expected[expectation_key]:
+                        validation_failures.append(
+                            f"{case_label}: {phase_name} adaptation response "
+                            f"{response_ms}ms exceeds {expected[expectation_key]}ms"
+                        )
+                case_best = (
+                    case_results.get(str(run), {})
+                    .get(content, {})
+                    .get(scenario, {})
                 )
-            elif response_ms > expected[expectation_key]:
-                validation_failures.append(
-                    f"{case_label}: {phase_name} adaptation response "
-                    f"{response_ms}ms exceeds {expected[expectation_key]}ms"
-                )
-        case_best = case_results.get(str(run), {}).get(scenario, {})
-        best_score = case_best.get("best_balanced_qoe_score")
-        adaptive_score = adaptive.get("balanced_qoe_score", float("inf"))
-        if best_score is None or adaptive_score > best_score + 1e-6:
-            best_score_text = (
-                "missing" if best_score is None else f"{best_score:.3f}"
-            )
-            validation_failures.append(
-                f"{case_label}: webrtc/adaptive balanced QoE "
-                f"{adaptive_score:.3f} is worse than best "
-                f"{case_best.get('best_balanced_qoe_backend')}/"
-                f"{case_best.get('best_balanced_qoe_strategy')} "
-                f"{best_score_text}; expected best or tied-best"
-            )
+                best_score = case_best.get("best_balanced_qoe_score")
+                adaptive_score = adaptive.get("balanced_qoe_score", float("inf"))
+                if best_score is None or adaptive_score > best_score + 1e-6:
+                    best_score_text = (
+                        "missing" if best_score is None else f"{best_score:.3f}"
+                    )
+                    validation_failures.append(
+                        f"{case_label}: webrtc/adaptive balanced QoE "
+                        f"{adaptive_score:.3f} is worse than best "
+                        f"{case_best.get('best_balanced_qoe_backend')}/"
+                        f"{case_best.get('best_balanced_qoe_strategy')} "
+                        f"{best_score_text}; expected best or tied-best"
+                    )
 
     if (
         best_aggregate["backend"] != "webrtc"
@@ -687,6 +707,7 @@ summary = {
         {
             "run": row.get("run", 1),
             "network_seed": row.get("network_seed", 1),
+            "content_profile": row.get("content_profile", "motion"),
             "scenario": row.get("scenario", "unknown"),
             "backend": row.get("backend", "unknown"),
             "strategy": row.get("strategy"),
@@ -747,6 +768,8 @@ summary = {
     "scenario_results": scenario_results,
     "case_results": case_results,
     "best_by_scenario_backend": best_by_scenario_backend,
+    "content_profiles": contents,
+    "content_count": len(contents),
     "runs": runs,
     "run_count": len(runs),
     "expected_case_count_per_backend_strategy": expected_case_count,
@@ -780,8 +803,8 @@ summary = {
         "high jitter-buffer residence time, and failure to recover when the "
         "route becomes good again. It also penalizes low decoded-frame PSNR "
         "against the generated I420 source. Validation requires "
-        "webrtc/adaptive to meet per-run/per-scenario "
-        "decode/quality/adaptation thresholds, win each per-run/per-scenario "
+        "webrtc/adaptive to meet per-run/per-content/per-scenario "
+        "decode/quality/adaptation thresholds, win each per-run/per-content/per-scenario "
         "balanced QoE comparison, and win the aggregate balanced QoE score "
         "inside this seeded scenario set; it is not a global mathematical "
         "optimum."
@@ -792,7 +815,7 @@ summary_path.write_text(
     encoding="utf-8",
 )
 print(
-    "long stream qoe matrix passed scenarios={scenario_count} runs={run_count} "
+    "long stream qoe matrix passed scenarios={scenario_count} contents={content_count} runs={run_count} "
     "cases_per_backend_strategy={case_count} "
     "best_smoothness={smooth_backend}/{smooth} smoothness_score={smooth_score} "
     "best_balanced={balanced_backend}/{balanced} "
@@ -800,6 +823,7 @@ print(
     "best_aggregate={aggregate_backend}/{aggregate_strategy} "
     "aggregate_balanced_qoe_score={aggregate_score}".format(
         scenario_count=len(scenarios),
+        content_count=len(contents),
         run_count=len(runs),
         case_count=expected_case_count,
         smooth_backend=summary["best_smoothness_backend"],

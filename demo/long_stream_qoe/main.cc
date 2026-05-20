@@ -81,6 +81,7 @@ struct Summary {
   std::string scenario;
   std::string backend;
   std::string strategy;
+  std::string content_profile;
   uint32_t network_seed = 0;
   bool ok = true;
   int64_t degrade_time_ms = -1;
@@ -122,6 +123,12 @@ bool IsSupportedScenario(const std::string& scenario) {
          scenario == "bandwidth_staircase" ||
          scenario == "rtt_jitter_spike_recover" ||
          scenario == "loss_burst_recover";
+}
+
+bool IsSupportedContentProfile(const std::string& content_profile) {
+  return content_profile == "motion" ||
+         content_profile == "low_motion" ||
+         content_profile == "detail_motion";
 }
 
 std::vector<Phase> BuildScenario(const std::string& scenario) {
@@ -330,6 +337,7 @@ webrtc_qos::UplinkTransportFeedback BuildFeedback(
 
 void FillI420Frame(uint32_t width,
                    uint32_t height,
+                   const std::string& content_profile,
                    int frame_index,
                    std::vector<uint8_t>* y,
                    std::vector<uint8_t>* u,
@@ -339,26 +347,58 @@ void FillI420Frame(uint32_t width,
   v->resize(width * height / 4);
   for (uint32_t row = 0; row < height; ++row) {
     for (uint32_t col = 0; col < width; ++col) {
-      const uint32_t gradient =
-          48 + (col * 96 / std::max<uint32_t>(1, width)) +
-          (row * 48 / std::max<uint32_t>(1, height));
-      (*y)[row * width + col] = static_cast<uint8_t>(gradient);
+      uint32_t luma = 0;
+      if (content_profile == "low_motion") {
+        luma = 86 + (col * 42 / std::max<uint32_t>(1, width)) +
+               (row * 20 / std::max<uint32_t>(1, height)) +
+               static_cast<uint32_t>((frame_index / 8) % 6);
+      } else if (content_profile == "detail_motion") {
+        const uint32_t checker =
+            (((col / 16) + (row / 16) +
+              static_cast<uint32_t>(frame_index / 4)) &
+             1u)
+                ? 104
+                : 152;
+        const uint32_t diagonal =
+            ((col * 2 + row + static_cast<uint32_t>(frame_index * 3)) % 32);
+        luma = checker + diagonal / 4;
+      } else {
+        luma = 48 + (col * 96 / std::max<uint32_t>(1, width)) +
+               (row * 48 / std::max<uint32_t>(1, height));
+      }
+      (*y)[row * width + col] =
+          static_cast<uint8_t>(std::min<uint32_t>(255, luma));
     }
   }
-  const uint32_t square = std::max<uint32_t>(8, width / 8);
+  const uint32_t square =
+      content_profile == "detail_motion"
+          ? std::max<uint32_t>(10, width / 7)
+          : std::max<uint32_t>(8, width / 8);
+  const uint32_t x_step = content_profile == "low_motion" ? 1 : 3;
+  const uint32_t y_step = content_profile == "low_motion" ? 1 : 2;
   const uint32_t x0 =
-      static_cast<uint32_t>((frame_index * 3) % std::max<uint32_t>(1, width - square));
+      static_cast<uint32_t>((frame_index * x_step) %
+                            std::max<uint32_t>(1, width - square));
   const uint32_t y0 =
-      static_cast<uint32_t>((frame_index * 2) % std::max<uint32_t>(1, height - square));
+      static_cast<uint32_t>((frame_index * y_step) %
+                            std::max<uint32_t>(1, height - square));
+  const uint8_t square_luma =
+      content_profile == "detail_motion" ? 235 : 210;
   for (uint32_t row = y0; row < y0 + square && row < height; ++row) {
     for (uint32_t col = x0; col < x0 + square && col < width; ++col) {
-      (*y)[row * width + col] = 210;
+      (*y)[row * width + col] = square_luma;
     }
   }
-  std::fill(u->begin(), u->end(),
-            static_cast<uint8_t>(96 + (frame_index % 8)));
-  std::fill(v->begin(), v->end(),
-            static_cast<uint8_t>(150 - (frame_index % 8)));
+  const uint8_t u_value =
+      content_profile == "low_motion"
+          ? 112
+          : static_cast<uint8_t>(96 + (frame_index % 8));
+  const uint8_t v_value =
+      content_profile == "detail_motion"
+          ? static_cast<uint8_t>(132 + (frame_index % 16))
+          : static_cast<uint8_t>(150 - (frame_index % 8));
+  std::fill(u->begin(), u->end(), u_value);
+  std::fill(v->begin(), v->end(), v_value);
 }
 
 double ComputePlaneSse(const uint8_t* reference,
@@ -421,6 +461,7 @@ void WriteSummary(const std::string& path,
   out << "  \"scenario\": \"" << summary.scenario << "\",\n";
   out << "  \"backend\": \"" << summary.backend << "\",\n";
   out << "  \"strategy\": \"" << summary.strategy << "\",\n";
+  out << "  \"content_profile\": \"" << summary.content_profile << "\",\n";
   out << "  \"network_seed\": " << summary.network_seed << ",\n";
   out << "  \"ok\": " << (summary.ok ? "true" : "false") << ",\n";
   out << "  \"degrade_time_ms\": " << summary.degrade_time_ms << ",\n";
@@ -546,6 +587,7 @@ int main(int argc, char** argv) {
   std::string backend = "lightweight";
   std::string strategy = "adaptive";
   std::string scenario = "walking_dead_zone";
+  std::string content_profile = "motion";
   uint32_t network_seed = 0;
   const bool trace_rates = std::getenv("WEBRTC_QOS_TRACE_RATES") != nullptr;
   for (int i = 1; i < argc; ++i) {
@@ -570,6 +612,11 @@ int main(int argc, char** argv) {
       scenario = arg.substr(scenario_prefix.size());
       continue;
     }
+    const std::string content_prefix = "--content=";
+    if (arg.rfind(content_prefix, 0) == 0) {
+      content_profile = arg.substr(content_prefix.size());
+      continue;
+    }
     const std::string seed_prefix = "--network-seed=";
     if (arg.rfind(seed_prefix, 0) == 0) {
       network_seed =
@@ -587,6 +634,10 @@ int main(int argc, char** argv) {
   }
   if (!IsSupportedScenario(scenario)) {
     std::cerr << "unsupported scenario: " << scenario << "\n";
+    return 1;
+  }
+  if (!IsSupportedContentProfile(content_profile)) {
+    std::cerr << "unsupported content profile: " << content_profile << "\n";
     return 1;
   }
 #ifndef WEBRTC_QOS_ENABLE_WEBRTC_BACKEND
@@ -648,6 +699,7 @@ int main(int argc, char** argv) {
   summary.scenario = scenario;
   summary.backend = backend;
   summary.strategy = strategy;
+  summary.content_profile = content_profile;
   summary.network_seed = network_seed;
   int64_t link_available_us = 0;
   int64_t last_keyframe_encode_us = -10000000;
@@ -1116,8 +1168,8 @@ int main(int argc, char** argv) {
       const uint32_t rtp_timestamp =
           kVideoClockRateHz + static_cast<uint32_t>(frame_index) *
                                   (kVideoClockRateHz / 30);
-      FillI420Frame(encoder_config.width, encoder_config.height, frame_index,
-                    &y, &u, &v);
+      FillI420Frame(encoder_config.width, encoder_config.height,
+                    content_profile, frame_index, &y, &u, &v);
       I420Frame source_frame;
       source_frame.width = encoder_config.width;
       source_frame.height = encoder_config.height;
@@ -1255,6 +1307,7 @@ int main(int argc, char** argv) {
   std::cout << "long_stream_qoe backend=" << backend
             << " scenario=" << scenario
             << " strategy=" << strategy
+            << " content=" << content_profile
             << " network_seed=" << network_seed
             << " degrade_ms=" << summary.degrade_time_ms
             << " recovery_ms=" << summary.recovery_time_ms

@@ -260,7 +260,10 @@ EncoderAdaptation SenderQosController::GetEncoderAdaptation(
   const bool moderate_rtt = rates.rtt_ms >= 250;
   const bool moderate_loss = effective_loss >= 0.03;
 
-  if (severe_capacity || severe_rtt ||
+  const bool severe_rtt_with_capacity_pressure =
+      severe_rtt && rates.final_target_bps < 300000;
+
+  if (severe_capacity || severe_rtt_with_capacity_pressure ||
       (very_constrained_capacity && (rates.rtt_ms >= 500 ||
                                      catastrophic_loss))) {
     adaptation.max_fps = 5;
