@@ -26,6 +26,7 @@ class SenderQosBackend {
       const UplinkTransportFeedback& feedback) = 0;
   virtual Status OnRtcpReceiverReport(const RtcpReceiverReport& report) = 0;
   virtual uint32_t target_bitrate_bps() const = 0;
+  virtual uint32_t pacing_bitrate_bps() const { return target_bitrate_bps(); }
 };
 
 class SenderQosController {
@@ -52,6 +53,7 @@ class SenderQosController {
  private:
   SenderQosControllerConfig config_;
   uint32_t estimate_bps_;
+  uint32_t pacing_bps_;
   uint32_t rate_cap_bps_ = kUnlimitedRateCapBps;
   int64_t rate_cap_expire_time_us_ = 0;
   uint32_t rtt_ms_ = 0;

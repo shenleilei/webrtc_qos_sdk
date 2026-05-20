@@ -23,11 +23,12 @@ if [[ -f "${PREFIX}/include/webrtc_qos/googcc_adapter.h" &&
       -f "${PREFIX}/lib/libwebrtc_qos_video_jitter_bridge.a" &&
       -f "${BUILD_DIR}/libwebrtc_qos_ffmpeg_encoder.a" ]]; then
   "${CXX}" -std=c++20 -DWEBRTC_QOS_ENABLE_WEBRTC_BACKEND \
+    -I"${SDK_ROOT}/include" \
     -I"${PREFIX}/include" \
     "${SDK_ROOT}/demo/long_stream_qoe/main.cc" \
+    "${SDK_ROOT}/src/sender_qos_googcc_bridge.cc" \
+    "${SDK_ROOT}/src/video_jitter_bridge.cc" \
     "${BUILD_DIR}/libwebrtc_qos_ffmpeg_encoder.a" \
-    "${PREFIX}/lib/libwebrtc_qos_googcc_bridge.a" \
-    "${PREFIX}/lib/libwebrtc_qos_video_jitter_bridge.a" \
     "${BUILD_DIR}/libwebrtc_qos.a" \
     "${PREFIX}/lib/libwebrtc_qos_googcc_adapter.a" \
     "${PREFIX}/lib/libwebrtc_qos_video_jitter_adapter.a" \

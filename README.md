@@ -271,12 +271,12 @@ Latest local long-stream QoE result:
 | lightweight/balanced | 445.833 | 495.833 | 3 | 1325ms | 0 | 10 | 7.25 | 3.33 | 27.8 | Best current candidate under the balanced QoE objective. |
 | lightweight/bitrate_only | 0.000 | 830.000 | 0 | 0ms | 0 | 166 | 22.75 | 25.67 | 30.2 | Best if optimizing smoothness only, but duplicate output makes it a poor balanced QoE choice. |
 | lightweight/fixed | 1406.000 | 3154.000 | 1 | 1670ms | 859 | 6 | 4.00 | 0.00 | 0.0 | Fails weak-network recovery. |
-| webrtc/adaptive | 843.333 | 1215.333 | 2 | 2590ms | 186 | 0 | 3.25 | 0.33 | 9.0 | Target backend is wired in, but current feedback/pacing model recovers too slowly. |
-| webrtc/balanced | 804.500 | 1156.500 | 2 | 2945ms | 176 | 0 | 4.75 | 1.00 | 12.6 | Best WebRTC-backend candidate, still worse than lightweight balanced in this test. |
-| webrtc/bitrate_only | 1685.500 | 2965.500 | 1 | 8655ms | 640 | 0 | 4.00 | 0.00 | 63.2 | High recovery output but severe freeze/drop artifacts. |
+| webrtc/adaptive | 795.667 | 1149.667 | 2 | 2670ms | 177 | 0 | 3.25 | 0.67 | 13.0 | Best WebRTC-backend candidate after exposing GoogCC pacing, still worse than lightweight balanced. |
+| webrtc/balanced | 936.000 | 1322.000 | 3 | 2970ms | 193 | 0 | 4.75 | 1.00 | 11.4 | Pacing output alone does not solve WebRTC recovery. |
+| webrtc/bitrate_only | 1710.000 | 3030.000 | 1 | 8700ms | 660 | 0 | 4.00 | 0.00 | 65.4 | High recovery output but severe freeze/drop artifacts. |
 | webrtc/fixed | 1117.000 | 2791.000 | 0 | 0ms | 837 | 0 | 4.00 | 0.00 | 0.0 | No recovery. |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario, candidate set, backend set, and objective function. It does not prove a global optimum. It also shows why the product objective matters: smoothness-only can prefer `lightweight/bitrate_only`, while balanced QoE prefers `lightweight/balanced`. The target `webrtc` backend is now in the same matrix, but its current recovery is worse under this synthetic feedback model; P1a+ should tune GoogCC input pacing, feedback timing, and recovery policy before treating the WebRTC backend as production-ready.
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario, candidate set, backend set, and objective function. It does not prove a global optimum. It also shows why the product objective matters: smoothness-only can prefer `lightweight/bitrate_only`, while balanced QoE prefers `lightweight/balanced`. The target `webrtc` backend is now in the same matrix and the SDK pacer consumes GoogCC `pacing_bps`, but its current recovery is still worse under this synthetic feedback model; P1a+ should next tune feedback timing, process cadence, keyframe/recovery policy, and downlink simulation before treating the WebRTC backend as production-ready.
 
 UDP weak-network matrix:
 

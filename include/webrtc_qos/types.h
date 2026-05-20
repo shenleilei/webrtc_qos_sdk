@@ -133,6 +133,7 @@ struct SenderRateCap {
 
 struct TargetRates {
   uint32_t googcc_target_bps = 1200000;
+  uint32_t pacing_bps = 1200000;
   uint32_t sender_rate_cap_bps = kUnlimitedRateCapBps;
   uint32_t final_target_bps = 1200000;
   uint32_t rtt_ms = 0;

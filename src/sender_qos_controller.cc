@@ -6,13 +6,16 @@
 namespace webrtc_qos {
 
 SenderQosController::SenderQosController(SenderQosControllerConfig config)
-    : config_(config), estimate_bps_(config.start_bitrate_bps) {}
+    : config_(config),
+      estimate_bps_(config.start_bitrate_bps),
+      pacing_bps_(config.start_bitrate_bps) {}
 
 SenderQosController::SenderQosController(
     SenderQosControllerConfig config,
     std::unique_ptr<SenderQosBackend> backend)
     : config_(config),
       estimate_bps_(config.start_bitrate_bps),
+      pacing_bps_(config.start_bitrate_bps),
       backend_(std::move(backend)) {}
 
 Status SenderQosController::OnPacketSent(uint16_t transport_sequence_number,
@@ -42,6 +45,9 @@ Status SenderQosController::OnUplinkTransportFeedback(
     estimate_bps_ = std::max(config_.min_bitrate_bps,
                              std::min(config_.max_bitrate_bps,
                                       backend_->target_bitrate_bps()));
+    pacing_bps_ = std::max(config_.min_bitrate_bps,
+                           std::min(config_.max_bitrate_bps * 2,
+                                    backend_->pacing_bitrate_bps()));
   }
 
   size_t reported = 0;
@@ -109,6 +115,7 @@ Status SenderQosController::OnUplinkTransportFeedback(
   estimate_bps_ =
       std::max(config_.min_bitrate_bps,
                std::min(config_.max_bitrate_bps, estimate_bps_));
+  pacing_bps_ = estimate_bps_;
   return Status::Ok();
 }
 
@@ -149,8 +156,12 @@ TargetRates SenderQosController::GetTargetRates(int64_t now_us) const {
       effective_cap == kUnlimitedRateCapBps
           ? estimate_bps_
           : std::min(estimate_bps_, effective_cap);
-  return TargetRates{estimate_bps_, effective_cap, final_target, rtt_ms_,
-                     loss_fraction_};
+  const uint32_t final_pacing =
+      effective_cap == kUnlimitedRateCapBps
+          ? pacing_bps_
+          : std::min(pacing_bps_, effective_cap);
+  return TargetRates{estimate_bps_, final_pacing, effective_cap, final_target,
+                     rtt_ms_, loss_fraction_};
 }
 
 EncoderAdaptation SenderQosController::GetEncoderAdaptation(

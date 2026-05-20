@@ -483,6 +483,7 @@ int main(int argc, char** argv) {
   int64_t next_feedback_us = 0;
   int64_t next_encode_us = 0;
   uint32_t applied_bitrate_bps = encoder_config.bitrate_bps;
+  uint32_t applied_pacing_bps = encoder_config.bitrate_bps;
   uint32_t applied_fps = encoder_config.fps;
   int frame_index = 0;
   std::vector<uint8_t> y;
@@ -518,8 +519,10 @@ int main(int argc, char** argv) {
     }
 
     EncoderAdaptation adaptation = qos.GetEncoderAdaptation(now_us);
+    TargetRates target_rates = qos.GetTargetRates(now_us);
     if (strategy == "fixed") {
       adaptation.target_bitrate_bps = 1200000;
+      target_rates.pacing_bps = 1200000;
       adaptation.max_fps = 30;
       adaptation.request_keyframe = false;
     } else if (strategy == "bitrate_only") {
@@ -535,6 +538,10 @@ int main(int argc, char** argv) {
         adaptation.target_bitrate_bps >= 2000000 && adaptation.max_fps == 30) {
       summary.recovery_time_ms = (now_us - phases[3].start_us) / 1000;
     }
+    if (target_rates.pacing_bps != applied_pacing_bps) {
+      applied_pacing_bps = target_rates.pacing_bps;
+      pacer.SetTargetBitrate(applied_pacing_bps);
+    }
     if (adaptation.target_bitrate_bps != applied_bitrate_bps ||
         adaptation.max_fps != applied_fps) {
       applied_bitrate_bps = adaptation.target_bitrate_bps;
@@ -544,7 +551,10 @@ int main(int argc, char** argv) {
         std::cerr << "set rates failed: " << status.message << "\n";
         return 4;
       }
-      pacer.SetTargetBitrate(applied_bitrate_bps);
+      if (target_rates.pacing_bps == 0) {
+        applied_pacing_bps = applied_bitrate_bps;
+        pacer.SetTargetBitrate(applied_pacing_bps);
+      }
       force_keyframe_next = true;
     }
 

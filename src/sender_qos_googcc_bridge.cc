@@ -64,6 +64,11 @@ class GoogCcSenderQosBackend final : public SenderQosBackend {
     return rates_.target_bitrate_bps;
   }
 
+  uint32_t pacing_bitrate_bps() const override {
+    return rates_.pacing_bitrate_bps > 0 ? rates_.pacing_bitrate_bps
+                                         : rates_.target_bitrate_bps;
+  }
+
  private:
   GoogCcAdapter adapter_;
   GoogCcAdapterRates rates_;
