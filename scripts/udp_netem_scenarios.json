@@ -13,6 +13,8 @@
       "min_nack": 1,
       "min_retransmitted": 1,
       "min_frames": 3,
+      "min_keyframes": 1,
+      "max_frame_gap_ms": 34,
       "min_retransmit_ratio": 1.0,
       "rate_cap": true
     }
@@ -31,6 +33,8 @@
       "min_nack": 1,
       "min_retransmitted": 2,
       "min_frames": 3,
+      "min_keyframes": 1,
+      "max_frame_gap_ms": 34,
       "min_retransmit_ratio": 1.0,
       "rate_cap": true
     }
@@ -51,6 +55,8 @@
       "min_nack": 1,
       "min_retransmitted": 1,
       "min_frames": 3,
+      "min_keyframes": 1,
+      "max_frame_gap_ms": 34,
       "min_retransmit_ratio": 1.0,
       "rate_cap": true,
       "reorder": true
@@ -71,6 +77,8 @@
       "min_nack": 1,
       "min_retransmitted": 1,
       "min_frames": 3,
+      "min_keyframes": 1,
+      "max_frame_gap_ms": 34,
       "min_retransmit_ratio": 1.0,
       "rate_cap": true,
       "delay": true
@@ -92,6 +100,8 @@
       "min_nack": 1,
       "min_retransmitted": 1,
       "min_frames": 3,
+      "min_keyframes": 1,
+      "max_frame_gap_ms": 34,
       "min_retransmit_ratio": 1.0,
       "rate_cap": true,
       "jitter": true
@@ -116,6 +126,8 @@
       "min_nack": 1,
       "min_retransmitted": 2,
       "min_frames": 3,
+      "min_keyframes": 1,
+      "max_frame_gap_ms": 34,
       "min_retransmit_ratio": 1.0,
       "rate_cap": true,
       "reorder": true,

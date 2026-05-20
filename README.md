@@ -211,8 +211,29 @@ bash webrtc_qos_sdk/scripts/run_dynamic_qos_matrix.sh
 The matrix is driven by `scripts/dynamic_qos_scenarios.json` and writes:
 
 - `${LOG_DIR}/metrics.jsonl`: one row per scenario phase with estimate bitrate, final bitrate, RTT, loss, encoder target bitrate, max FPS, and keyframe request.
-- `${LOG_DIR}/summary.json`: aggregate FPS/bitrate range, keyframe count, and threshold failures.
-- Threshold checks cover degraded FPS caps, recovered FPS, bitrate drop, bitrate recovery, and keyframe requests.
+- `${LOG_DIR}/summary.json`: aggregate FPS/bitrate range, keyframe count, threshold failures, and per-phase expected-vs-actual quantitative checks.
+- Threshold checks cover explicit per-phase bitrate ranges, FPS ranges, keyframe expectation, degraded bitrate drop, and recovery bitrate rise.
+
+Latest local dynamic QoS result:
+
+| Scenario | Phase | Network | Expected encoder bps | Actual encoder bps | Expected FPS | Actual FPS | Expected keyframe | Actual keyframe | Result |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| walk_outage_recover | good | 10000kbps / 20ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
+| walk_outage_recover | outage | 80kbps / 1000ms / loss 0.45 | 80000-200000 | 156250 | 5-5 | 5 | true | true | PASS |
+| walk_outage_recover | poor | 120kbps / 650ms / loss 0.25 | 80000-150000 | 80000 | 5-10 | 5 | true | true | PASS |
+| walk_outage_recover | recovering | 1200kbps / 180ms / loss 0.03 | 800000-1200000 | 931187 | 15-30 | 30 | false | false | PASS |
+| walk_outage_recover | good_again | 10000kbps / 40ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
+| bandwidth_cliff_recover | bandwidth_cliff | 90kbps / 80ms / loss 0.02 | 80000-150000 | 118549 | 5-5 | 5 | false | false | PASS |
+| bandwidth_cliff_recover | recovered | 8000kbps / 30ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
+| rtt_jitter_spike_recover | rtt_spike | 700kbps / 900ms / loss 0.08 | 1000000-1500000 | 1305015 | 5-5 | 5 | true | true | PASS |
+| rtt_jitter_spike_recover | recovered | 5000kbps / 45ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
+| oscillating_edge | poor_1 | 180kbps / 550ms / loss 0.18 | 700000-950000 | 857500 | 10-10 | 10 | true | true | PASS |
+| oscillating_edge | poor_2 | 130kbps / 700ms / loss 0.22 | 700000-950000 | 857500 | 10-10 | 10 | true | true | PASS |
+| oscillating_edge | good_3 | 5000kbps / 35ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
+| loss_burst_recover | loss_burst | 500kbps / 220ms / loss 0.60 | 120000-200000 | 156250 | 5-5 | 5 | true | true | PASS |
+| loss_burst_recover | recovered | 6000kbps / 35ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
+
+The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `encoder_bps` range `80000..2500000`, FPS range `5..30`, keyframe requests `6`, threshold failures `0`.
 
 When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
@@ -227,7 +248,20 @@ It also writes machine-readable metrics:
 
 - `${LOG_DIR}/metrics.jsonl`: one JSON object per scenario run.
 - `${LOG_DIR}/summary.json`: aggregate min/max/avg values for frames, RTT, final bitrate, retransmission success ratio, observed loss, reported loss, and jitter.
-- Threshold failures include missing feedback/RR/rate-cap/PLI/NACK/retransmission, insufficient recovered frames, missing reorder/delay observation, and failed rate-cap application.
+- Threshold failures include missing feedback/RR/rate-cap/PLI/NACK/retransmission, insufficient recovered frames, missing keyframes, max frame gap above 34ms, missing reorder/delay/jitter observation, and failed rate-cap application.
+
+Latest local UDP QoE/QoS result:
+
+| Scenario | Observed impairment | Expected frames | Actual frames | Expected keyframes | Actual keyframes | Expected max frame gap | Actual max frame gap | Expected retransmit ratio | Actual retransmit ratio | Result |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| baseline_single_loss | drop=1 reorder=0 delay=0 jitter=0 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.00 | PASS |
+| burst_loss | drop=2 reorder=0 delay=0 jitter=0 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 2.00 | PASS |
+| reorder_only | drop=1 reorder=1 delay=0 jitter=0 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.00 | PASS |
+| delay_only | drop=1 reorder=0 delay=2 jitter=0 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.50 | PASS |
+| jitter_periodic | drop=1 reorder=0 delay=0 jitter=3 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.33 | PASS |
+| mixed_loss_reorder_delay_jitter | drop=2 reorder=2 delay=1 jitter=3 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.67 | PASS |
+
+This Phase-1a QoE definition is intentionally minimal and measurable before a real renderer exists: the receiver must recover frames, output keyframes, keep RTP timestamp frame gaps within one 30fps frame interval, and complete retransmission-based recovery. After renderer integration, this should be extended with real freeze duration, render queue depth, and end-to-end glass-to-glass latency.
 
 The predefined weak-network scenario file is `scripts/udp_netem_scenarios.json`. It currently covers:
 

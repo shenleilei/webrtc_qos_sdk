@@ -50,6 +50,8 @@ for run in range(1, runs + 1):
             str(expect.get("min_nack", 1)),
             str(expect.get("min_retransmitted", 1)),
             str(expect.get("min_frames", 3)),
+            str(expect.get("min_keyframes", 1)),
+            str(expect.get("max_frame_gap_ms", 34)),
             str(expect.get("min_retransmit_ratio", 1.0)),
             "1" if expect.get("rate_cap", True) else "0",
             "1" if expect.get("reorder", False) else "0",
@@ -81,7 +83,7 @@ print(len(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))))
 PY
 )"
 
-while IFS="|" read -r run name base_port drop_seqs reorder_seqs reorder_delay_ms delay_ms jitter_ms jitter_every_n min_feedback min_rr min_rate_caps min_pli min_nack min_retransmitted min_frames min_retransmit_ratio expect_rate_cap expect_reorder expect_delay expect_jitter; do
+while IFS="|" read -r run name base_port drop_seqs reorder_seqs reorder_delay_ms delay_ms jitter_ms jitter_every_n min_feedback min_rr min_rate_caps min_pli min_nack min_retransmitted min_frames min_keyframes max_frame_gap_ms min_retransmit_ratio expect_rate_cap expect_reorder expect_delay expect_jitter; do
   log_file="${LOG_DIR}/${run}_${name}.log"
   summary_file="${LOG_DIR}/${run}_${name}.summary.json"
 
@@ -125,6 +127,8 @@ PY
     --min-nack "${min_nack}"
     --min-retransmitted "${min_retransmitted}"
     --min-frames "${min_frames}"
+    --min-keyframes "${min_keyframes}"
+    --max-frame-gap-ms "${max_frame_gap_ms}"
     --min-retransmit-ratio "${min_retransmit_ratio}"
   )
   if [[ "${expect_rate_cap}" == "1" ]]; then
@@ -203,6 +207,8 @@ summary = {
     "receiver_frames": aggregate(["receiver", "frames"]),
     "sender_rtt_ms": aggregate(["sender", "rtt_ms"]),
     "sender_final_target_bps": aggregate(["sender", "final_target_bps"]),
+    "receiver_keyframes": aggregate(["derived", "keyframes"]),
+    "max_frame_gap_ms": aggregate(["derived", "max_frame_gap_ms"]),
     "retransmission_success_ratio": aggregate(
         ["derived", "retransmission_success_ratio"]
     ),

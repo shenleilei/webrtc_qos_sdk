@@ -1360,15 +1360,21 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 
 - `${LOG_DIR}/metrics.jsonl`：每个 scenario/run 一行 JSON 指标
 - `${LOG_DIR}/summary.json`：矩阵级聚合指标
-- 当前覆盖指标：恢复帧数、sender RTT、最终目标码率、NACK 次数、重传次数、重传成功率、观测丢包率、上报 loss_q8、jitter frames、rate cap 是否生效
+- 当前覆盖 QoS 指标：sender RTT、最终目标码率、NACK 次数、重传次数、重传成功率、观测丢包率、上报 loss_q8、jitter frames、rate cap 是否生效
+- 当前覆盖 QoE 指标：恢复帧数、关键帧数、最大 frame gap、是否满足最小可播放连续性
+- 当前 QoE 阈值：`receiver_frames >= 3`、`keyframes >= 1`、`max_frame_gap_ms <= 34`、`retransmission_success_ratio >= 1.0`
 - 当前阈值失败会导致矩阵脚本直接失败，不再只依赖人工读日志
 
 动态 QoS/QoE 指标输出：
 
 - `${LOG_DIR}/metrics.jsonl`：每个动态 scenario/phase 一行 JSON 指标
 - `${LOG_DIR}/summary.json`：动态矩阵级聚合指标
-- 当前覆盖指标：估算码率、最终码率、RTT、loss、编码器目标码率、max FPS、是否请求关键帧
-- 当前阈值：弱网阶段必须降码率/降 FPS，严重弱网必须请求关键帧，恢复阶段必须恢复 FPS 和码率
+- 当前覆盖 QoS 指标：估算码率、最终码率、RTT、loss、编码器目标码率、max FPS、是否请求关键帧
+- 当前覆盖 QoE proxy 指标：降码率/降 FPS 后是否仍保持目标最低可播放帧率档位，以及恢复期是否回到 30fps
+- 当前阈值不是定性描述，而是每个 phase 都显式定义 `encoder_bps_min/max`、`max_fps_min/max`、`keyframe` expected-vs-actual
+- 例：`walk_outage_recover/outage` 期望 `encoder_bps=80000..200000`、`max_fps=5`、`keyframe=true`，本地实测 `156250bps / 5fps / true`
+- 例：`bandwidth_cliff_recover/bandwidth_cliff` 期望 `encoder_bps=80000..150000`、`max_fps=5`，本地实测 `118549bps / 5fps`
+- 例：`walk_outage_recover/good_again` 期望恢复到 `encoder_bps=2000000..2500000`、`max_fps=30`，本地实测 `2500000bps / 30fps`
 - 场景文件：`/root/webrtc_qos_sdk/scripts/dynamic_qos_scenarios.json`
 - 场景包括行走掉网恢复、带宽 cliff、RTT/jitter spike、振荡网络、突发丢包恢复
 

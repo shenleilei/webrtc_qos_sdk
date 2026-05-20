@@ -96,6 +96,13 @@ def derive(summary):
     googcc_target = sender.get("googcc_target_bps", 0)
     rtp_in = server.get("rtp_in", 0)
     dropped = server.get("dropped", 0)
+    timestamps = sorted(frame.get("timestamp", 0) for frame in frames)
+    frame_gaps = [
+        timestamps[index] - timestamps[index - 1]
+        for index in range(1, len(timestamps))
+    ]
+    max_frame_gap_rtp_ticks = max(frame_gaps or [0])
+    max_frame_gap_ms = max_frame_gap_rtp_ticks / 90.0
 
     summary["derived"] = {
         "retransmission_success_ratio": (
@@ -107,6 +114,9 @@ def derive(summary):
         and final_target <= googcc_target,
         "observed_loss_fraction": dropped / rtp_in if rtp_in else 0.0,
         "keyframes": sum(1 for frame in frames if frame.get("keyframe")),
+        "max_frame_gap_rtp_ticks": max_frame_gap_rtp_ticks,
+        "max_frame_gap_ms": max_frame_gap_ms,
+        "playable_without_frame_gap": bool(frames) and max_frame_gap_ms <= 34.0,
         "max_reported_loss_q8": max(
             [report.get("loss_q8", 0) for report in quality_reports] or [0]
         ),
@@ -138,6 +148,10 @@ def check_thresholds(summary, args):
         failures.append(f"nack_sent<{args.min_nack}")
     if receiver.get("frames", 0) < args.min_frames:
         failures.append(f"frames<{args.min_frames}")
+    if derived.get("keyframes", 0) < args.min_keyframes:
+        failures.append(f"keyframes<{args.min_keyframes}")
+    if derived.get("max_frame_gap_ms", 0.0) > args.max_frame_gap_ms:
+        failures.append(f"max_frame_gap_ms>{args.max_frame_gap_ms}")
     if derived.get("retransmission_success_ratio", 0.0) < args.min_retransmit_ratio:
         failures.append(f"retransmission_success_ratio<{args.min_retransmit_ratio}")
     if args.expect_rate_cap and not derived.get("sender_rate_cap_applied", False):
@@ -186,6 +200,8 @@ def main():
     parser.add_argument("--min-retransmitted", type=int, default=1)
     parser.add_argument("--min-nack", type=int, default=1)
     parser.add_argument("--min-frames", type=int, default=3)
+    parser.add_argument("--min-keyframes", type=int, default=1)
+    parser.add_argument("--max-frame-gap-ms", type=float, default=34.0)
     parser.add_argument("--min-retransmit-ratio", type=float, default=1.0)
     parser.add_argument("--expect-rate-cap", action="store_true")
     parser.add_argument("--expect-reorder", action="store_true")

@@ -38,12 +38,76 @@ def parse_log(path):
 
 def check_scenario(scenario, rows):
     failures = []
+    checks = []
     by_phase = {row["phase"]: row for row in rows}
     phases = [phase["name"] for phase in scenario.get("phases", [])]
     missing = [phase for phase in phases if phase not in by_phase]
     if missing:
         failures.append("missing_phases=" + ",".join(missing))
-        return failures
+        return failures, checks
+
+    for phase_config in scenario.get("phases", []):
+        phase = phase_config["name"]
+        row = by_phase[phase]
+        expect = phase_config.get("expect", {})
+        phase_checks = []
+        for metric, actual_key in (
+                ("encoder_bps_min", "encoder_bps"),
+                ("encoder_bps_max", "encoder_bps"),
+                ("max_fps_min", "max_fps"),
+                ("max_fps_max", "max_fps")):
+            if metric not in expect:
+                continue
+            actual = row[actual_key]
+            expected = expect[metric]
+            if metric.endswith("_min"):
+                ok = actual >= expected
+                op = ">="
+            else:
+                ok = actual <= expected
+                op = "<="
+            if not ok:
+                failures.append(
+                    f"{phase}_{actual_key}_{op}{expected}_actual={actual}")
+            phase_checks.append({
+                "metric": actual_key,
+                "operator": op,
+                "expected": expected,
+                "actual": actual,
+                "ok": ok,
+            })
+        if "keyframe" in expect:
+            actual = row["keyframe"]
+            expected = bool(expect["keyframe"])
+            ok = actual == expected
+            if not ok:
+                failures.append(
+                    f"{phase}_keyframe_expected={int(expected)}_actual={int(actual)}")
+            phase_checks.append({
+                "metric": "keyframe",
+                "operator": "==",
+                "expected": expected,
+                "actual": actual,
+                "ok": ok,
+            })
+        checks.append({
+            "scenario": scenario["name"],
+            "phase": phase,
+            "network": {
+                "bandwidth_kbps": phase_config.get("bandwidth_kbps"),
+                "rtt_ms": phase_config.get("rtt_ms"),
+                "loss": phase_config.get("loss"),
+            },
+            "actual": {
+                "encoder_bps": row["encoder_bps"],
+                "max_fps": row["max_fps"],
+                "rtt_ms": row["rtt_ms"],
+                "loss": row["loss"],
+                "keyframe": row["keyframe"],
+            },
+            "checks": phase_checks,
+            "ok": all(item["ok"] for item in phase_checks),
+        })
 
     expect = scenario.get("expect", {})
     degraded_phases = expect.get("degraded_phases", [])
@@ -79,7 +143,7 @@ def check_scenario(scenario, rows):
         if recovered["encoder_bps"] <= worst_degraded:
             failures.append(f"{recovered_phase}_bitrate_not_recovered")
 
-    return failures
+    return failures, checks
 
 
 def write_json(path, data):
@@ -115,8 +179,11 @@ def main():
         rows_by_scenario.setdefault(row["scenario"], []).append(row)
 
     threshold_failures = []
+    quantitative_checks = []
     for name, scenario in expected.items():
-        failures = check_scenario(scenario, rows_by_scenario.get(name, []))
+        failures, checks = check_scenario(
+            scenario, rows_by_scenario.get(name, []))
+        quantitative_checks.extend(checks)
         if failures:
             threshold_failures.append({
                 "scenario": name,
@@ -146,6 +213,7 @@ def main():
             "max": max(bitrate_values),
         },
         "keyframe_requests": keyframe_requests,
+        "quantitative_checks": quantitative_checks,
     }
 
     write_json(args.summary, summary)
