@@ -21,6 +21,11 @@ cmake --install "${BUILD_DIR}" --prefix "${PREFIX}"
 if [[ -x "${BUILD_DIR}/ffmpeg_encoder_demo" ]]; then
   "${BUILD_DIR}/ffmpeg_encoder_demo"
 fi
+if [[ -x "${BUILD_DIR}/long_stream_qoe_demo" ]]; then
+  "${BUILD_DIR}/long_stream_qoe_demo" \
+    --strategy=adaptive \
+    --summary=/tmp/webrtc_qos_long_stream_qoe_adaptive.json
+fi
 
 "${PREFIX}/demo/webrtc_qos_googcc_smoke"
 "${PREFIX}/demo/webrtc_qos_video_jitter_smoke"
@@ -28,6 +33,9 @@ fi
 "${SDK_ROOT}/scripts/build_output_integration_demo.sh"
 "${SDK_ROOT}/scripts/build_udp_demos.sh"
 BUILD_DIR="${BUILD_DIR}" "${SDK_ROOT}/scripts/run_dynamic_qos_matrix.sh"
+if [[ -x "${BUILD_DIR}/long_stream_qoe_demo" ]]; then
+  BUILD_DIR="${BUILD_DIR}" "${SDK_ROOT}/scripts/run_long_stream_qoe_matrix.sh"
+fi
 BUILD_DEMOS=0 RUNS=1 "${SDK_ROOT}/scripts/run_udp_netem_matrix.sh"
 BUILD_DEMOS=0 DURATION_SEC="${SOAK_DURATION_SEC}" MATRIX_RUNS="${SOAK_MATRIX_RUNS}" \
   "${SDK_ROOT}/scripts/run_udp_soak.sh"
@@ -70,6 +78,7 @@ if [[ -x "${BUILD_DIR}/ffmpeg_encoder_demo" ]]; then
     "${PREFIX}/include/webrtc_qos/ffmpeg_h264_encoder.h"
     "${PREFIX}/lib/libwebrtc_qos_ffmpeg_encoder.a"
     "${PREFIX}/demo/ffmpeg_encoder_demo"
+    "${PREFIX}/demo/long_stream_qoe_demo"
   )
 fi
 

@@ -190,6 +190,7 @@ Transport integration boundary:
 ./output/demo/production_transport_demo
 ./output/demo/dynamic_qos_demo
 ./output/demo/ffmpeg_encoder_demo
+./output/demo/long_stream_qoe_demo --strategy=adaptive
 ```
 
 Production transport code should implement the `TransportPort` send/deliver callbacks and map SDK message types to the business wire protocol. `TransportMessage::payload` is a borrowed view valid only during the callback, so async socket/reliable-channel code must copy it before returning. `DEMO_TRANSPORT_V1` is only the UDP demo envelope; it is not required by the SDK.
@@ -237,6 +238,35 @@ The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `en
 
 When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
+Long-stream encoder QoE strategy matrix:
+
+```bash
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
+```
+
+This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across a walking-network transition: good network, sudden outage below 100kbps with high RTT/loss/jitter, poor edge coverage, then recovery to good network. It compares:
+
+- `adaptive`: current QoS decision applies bitrate and FPS reduction.
+- `balanced`: bitrate adapts, FPS is kept at least 10fps.
+- `bitrate_only`: bitrate adapts, FPS remains 30fps.
+- `fixed`: no bitrate/FPS adaptation.
+
+The script writes `${LOG_DIR}/metrics.jsonl` and `${LOG_DIR}/summary.json`. It reports two objective functions rather than a single ambiguous "best":
+
+- `smoothness_score`: freezes, max freeze duration, network drops, weak-phase receiver FPS, and recovery FPS.
+- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames and network drops. This prevents a strategy that repeats low-information frames from being marked best just because it does not visibly freeze.
+
+Latest local long-stream QoE result:
+
+| Strategy | Smoothness score | Balanced QoE score | Freeze count | Max freeze | Network drops | Duplicate frames | Outage FPS | Poor FPS | Recovered FPS | Interpretation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| adaptive | 546.167 | 571.167 | 3 | 1745ms | 0 | 5 | 1.75 | 2.67 | 28.2 | Recovers after network improves, but weak-phase continuity is too low. |
+| balanced | 396.000 | 441.000 | 2 | 1710ms | 0 | 9 | 2.75 | 5.00 | 28.8 | Best current candidate under the balanced QoE objective. |
+| bitrate_only | 0.000 | 915.000 | 0 | 0ms | 0 | 183 | 22.50 | 29.00 | 30.8 | Best if optimizing smoothness only, but duplicate output makes it a poor balanced QoE choice. |
+| fixed | 1406.000 | 3154.000 | 1 | 1670ms | 859 | 6 | 4.00 | 0.00 | 0.0 | Fails weak-network recovery; not acceptable for Phase-1a. |
+
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario, candidate set, and objective function. It does not prove a global optimum. It also shows why the product objective matters: smoothness-only can prefer `bitrate_only`, while balanced QoE prefers `balanced`. The next improvement should add decoder/render metrics and real content quality metrics before claiming a production optimum.
+
 UDP weak-network matrix:
 
 ```bash
@@ -283,7 +313,7 @@ DURATION_SEC=60 MATRIX_RUNS=1 bash webrtc_qos_sdk/scripts/run_udp_soak.sh
 This repeatedly runs the weak-network matrix for the requested duration, stores per-iteration logs, and reports pass/fail counts.
 
 `verify_phase1a.sh` runs the build/install path, standalone demos, WebRTC adapter smokes, output integration demo, UDP weak-network matrix, short soak, role-linking check, GN dependency checks, and required artifact checks.
-It also runs the dynamic QoS adaptation matrix and, when present, the FFmpeg/libx264 encoder demo.
+It also runs the dynamic QoS adaptation matrix and, when present, the FFmpeg/libx264 encoder demo plus the long-stream QoE strategy matrix.
 
 `verify_cmake_package.sh` verifies external projects can consume `/root/output` via `find_package(WebRtcQosSdk CONFIG REQUIRED)` and link module targets such as `WebRtcQosSdk::webrtc_qos_transport`.
 It also verifies optional WebRTC adapter targets such as `WebRtcQosSdk::webrtc_qos_googcc_adapter` and `WebRtcQosSdk::webrtc_qos_video_jitter_adapter` when those archives are present.
@@ -308,5 +338,11 @@ Implementation boundary in this slice:
 - `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.
 - `run_dynamic_qos_matrix.sh` proves the sender adaptation surface reacts in both directions: it degrades under bandwidth/RTT/loss impairment and climbs back when the network recovers.
 - `ffmpeg_encoder_demo` proves real H264 encoder output can enter the same Annex-B -> RTP -> pacer path used by synthetic/file demos.
+- `run_long_stream_qoe_matrix.sh` compares adaptive, balanced, bitrate-only, and fixed strategies with real H264 output over a dynamic weak-network transition and separates smoothness-only scoring from balanced QoE scoring.
 - `run_udp_soak.sh` repeats the weak-network matrix by duration and provides the local soak/stress entry point before replacing `DEMO_TRANSPORT_V1`.
 - `verify_role_linking.sh` proves role-based integration can avoid a monolithic `libwebrtc.a`.
+
+Metric references:
+
+- W3C WebRTC Stats defines receiver-side video freeze, total freeze duration, jitter buffer delay, packet discard, NACK, and sender-side target bitrate, FPS, encoded frames, keyframes, QP, encode time, packet send delay, and quality-limitation fields: https://www.w3.org/TR/webrtc-stats/
+- LiveKit's connection-quality calculation is a useful SFU-side reference: its knowledge-base article describes packet loss, video layer delivery, and bitrates as the active quality components, with jitter/RTT currently disabled in that packet-score path: https://kb.livekit.io/articles/2455399507-how-is-connection-quality-determined

@@ -1219,6 +1219,9 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - 动态弱网场景包括：`walk_outage_recover`、`bandwidth_cliff_recover`、`rtt_jitter_spike_recover`、`oscillating_edge`、`loss_burst_recover`
 - 动态矩阵必须验证：弱网进入时 `encoder_bps/max_fps` 降档，严重弱网请求关键帧，网络恢复时 `encoder_bps/max_fps` 升档
 - `ffmpeg_encoder_demo` 在存在 FFmpeg/libx264 时必须跑通真实 I420 -> H264 Annex-B -> `VideoSender` -> `SenderPacer` 链路
+- `long_stream_qoe_demo` 在存在 FFmpeg/libx264 时必须跑通真实 H264 长流：`VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer`
+- `run_long_stream_qoe_matrix.sh` 必须比较 `adaptive / balanced / bitrate_only / fixed` 四类策略，并输出 smoothness-only 与 balanced-QoE 两套目标函数结果
+- 长流 QoE 结论必须限定在预定义场景、候选策略集合和目标函数内，不能宣称全局最优
 
 ## 21. 外部参考
 
@@ -1230,6 +1233,12 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - mediasoup-cpp PlainTransport QoS case 设计参考：
   - https://github.com/shenleilei/mediasoup-cpp/blob/main/docs/plain-client-qos-case-results.md
   - 该参考覆盖 baseline、bandwidth sweep、loss sweep、RTT sweep、jitter sweep、transition、burst、traffic model、oscillation 等 case 分类；本 SDK Phase-1a 采用相同思路，把静态弱网矩阵和动态转场矩阵拆开验收。
+- W3C WebRTC Stats：
+  - https://www.w3.org/TR/webrtc-stats/
+  - 指标体系参考 sender target bitrate / FPS / encoded frames / key frames / QP / encode time / packet send delay，以及 receiver freeze / total freeze duration / jitter buffer delay / NACK / discarded packets 等字段。
+- LiveKit connection quality：
+  - https://kb.livekit.io/articles/2455399507-how-is-connection-quality-determined
+  - LiveKit 的 SFU 侧质量评分把 packet loss、video layer delivery、bitrate 等作为活跃因子。Phase-1a 先采用同类方向：同时看连续性、丢包/丢弃、有效帧和重复帧，不只看单一 bitrate。
 
 ## 22. Phase-1a 结论
 
@@ -1305,6 +1314,8 @@ SDK 所有时间相关逻辑统一要求依赖业务层注入的 `monotonic cloc
 - `dynamic_qos_demo` 已支持多类动态弱网转场：行走掉网恢复、带宽 cliff、RTT/jitter spike、振荡网络、突发丢包恢复
 - `run_dynamic_qos_matrix.sh` 已支持 JSONL/summary 指标输出和阈值验收，覆盖弱网降档、恢复升档、关键帧请求
 - `ffmpeg_encoder_demo` 已支持真实 FFmpeg/libx264 I420 -> H264 Annex-B 编码，并将输出接入 `VideoSender + SenderPacer`
+- `long_stream_qoe_demo` 已支持真实 FFmpeg/libx264 H264 长流穿过 `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer`
+- `run_long_stream_qoe_matrix.sh` 已支持 `adaptive / balanced / bitrate_only / fixed` 策略对比，并输出 smoothness-only 与 balanced-QoE 两套分数
 - UDP soak 脚本已支持按时长重复执行弱网矩阵并汇总 pass/fail
 - WebRTC-backed video jitter bridge 已处理重传包先到、原包后到导致的重复帧去重
 - synthetic/file 风格 loopback demo
@@ -1347,6 +1358,7 @@ bash webrtc_qos_sdk/scripts/build_udp_demos.sh
 bash webrtc_qos_sdk/scripts/run_udp_loopback_demo.sh
 REORDER_RTP_SEQ=4 DELAY_MS=30 bash webrtc_qos_sdk/scripts/run_udp_loopback_demo.sh
 bash webrtc_qos_sdk/scripts/run_dynamic_qos_matrix.sh
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
 bash webrtc_qos_sdk/scripts/run_udp_netem_matrix.sh
 DURATION_SEC=60 MATRIX_RUNS=1 bash webrtc_qos_sdk/scripts/run_udp_soak.sh
 bash webrtc_qos_sdk/scripts/verify_role_linking.sh
@@ -1377,6 +1389,40 @@ bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 - 例：`walk_outage_recover/good_again` 期望恢复到 `encoder_bps=2000000..2500000`、`max_fps=30`，本地实测 `2500000bps / 30fps`
 - 场景文件：`/root/webrtc_qos_sdk/scripts/dynamic_qos_scenarios.json`
 - 场景包括行走掉网恢复、带宽 cliff、RTT/jitter spike、振荡网络、突发丢包恢复
+
+长流 QoE 策略对比指标输出：
+
+- 脚本：`/root/webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh`
+- demo：`/root/webrtc_qos_sdk/build/long_stream_qoe_demo`
+- 链路：真实 FFmpeg/libx264 I420 -> H264 Annex-B -> RTP/FU-A -> SDK pacer -> server-like cache/NACK -> receiver jitter/player
+- 场景：`good -> outage -> poor -> good_again`
+- `good`：`10Mbps / 20ms RTT / 0 loss / 4Mbps downlink`
+- `outage`：feedback `80kbps`、loss `0.45`、RTT `1000ms`、downlink `240kbps`、jitter `180ms`
+- `poor`：feedback `120kbps`、loss `0.25`、RTT `650ms`、downlink `220kbps`、jitter `90ms`
+- `good_again`：`10Mbps / 40ms RTT / 0 loss / 4Mbps downlink`
+- 候选策略：`adaptive`、`balanced`、`bitrate_only`、`fixed`
+- `smoothness_score`：只优化连续性，包含 freeze count、max freeze、network drops、弱网期 receiver FPS、恢复期 receiver FPS
+- `balanced_qoe_score`：在 `smoothness_score` 基础上强惩罚 duplicate frames 和 network drops，避免“重复帧不卡顿”被误判成高质量
+- 当前本地结果：`smoothness_score` 最优为 `bitrate_only=0.0`，但它有 `183` 个 duplicate frames
+- 当前本地结果：`balanced_qoe_score` 最优为 `balanced=441.0`
+- 当前本地结果：`fixed` 最差，`network_drops=859`，`poor receiver_fps=0`，`good_again receiver_fps=0`
+
+当前长流 QoE 结果表：
+
+| Strategy | Smoothness score | Balanced QoE score | Freeze count | Max freeze | Network drops | Duplicate frames | Outage FPS | Poor FPS | Recovered FPS | 结论 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `adaptive` | 546.167 | 571.167 | 3 | 1745ms | 0 | 5 | 1.75 | 2.67 | 28.2 | 能恢复，但弱网期连续性偏低 |
+| `balanced` | 396.000 | 441.000 | 2 | 1710ms | 0 | 9 | 2.75 | 5.00 | 28.8 | 当前 balanced QoE 目标下最好 |
+| `bitrate_only` | 0.000 | 915.000 | 0 | 0ms | 0 | 183 | 22.50 | 29.00 | 30.8 | smoothness-only 最好，但重复帧过多 |
+| `fixed` | 1406.000 | 3154.000 | 1 | 1670ms | 859 | 6 | 4.00 | 0.00 | 0.0 | 不能弱网恢复，不可接受 |
+
+当前判断：
+
+- 不能再只说“adaptive 能降码率/FPS，所以 QoS 正确”
+- QoS 最优必须先定义目标函数：如果产品目标只要不卡，`bitrate_only` 会胜；如果目标包含有效帧和画质 proxy，`balanced` 更合理
+- 当前证据只证明在这个动态弱网场景和候选策略集合中，`balanced` 是 balanced-QoE 目标下的最优候选
+- 后续接真实解码/渲染后，需要补 WebRTC stats 同类指标：`freezeCount`、`totalFreezesDuration`、`jitterBufferDelay`、`framesDecoded`、`framesDropped`、QP、端到端延迟和真实画质指标
+- 后续如果要证明“生产最优”，必须扩展到多内容类型、多分辨率、多码率、多时长、多接收端和真实业务传输链路
 
 弱网场景定义：
 

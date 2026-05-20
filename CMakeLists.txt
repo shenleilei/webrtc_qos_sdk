@@ -146,7 +146,15 @@ if(TARGET webrtc_qos_ffmpeg_encoder)
     webrtc_qos_pacer
     ${AVCODEC_LIBRARY}
     ${AVUTIL_LIBRARY})
-  list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS ffmpeg_encoder_demo)
+  add_executable(long_stream_qoe_demo demo/long_stream_qoe/main.cc)
+  target_link_libraries(long_stream_qoe_demo PRIVATE
+    webrtc_qos_ffmpeg_encoder
+    webrtc_qos
+    ${AVCODEC_LIBRARY}
+    ${AVUTIL_LIBRARY})
+  list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS
+    ffmpeg_encoder_demo
+    long_stream_qoe_demo)
 endif()
 
 add_executable(webrtc_qos_selftest tests/selftest.cc)
