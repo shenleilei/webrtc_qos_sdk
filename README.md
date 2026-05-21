@@ -248,6 +248,7 @@ Long-stream encoder QoE strategy matrix:
 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
 MATRIX_RUNS=2 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_profile.sh
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_stability.sh
 ```
 
 This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across multiple mobile weak-network transitions:
@@ -365,6 +366,28 @@ This profile intentionally raises the validation bar to 1280x720, start 2.5Mbps,
 | webrtc/fixed | 278640.500 | 58.19 / 39.31 | 141.3 / 1650 | 52.5 / 1190 | 0 | 46374 | 1001 | 0 |
 
 This is still not a production-global optimum. The tightest 720p cases are `detail_motion/walking_dead_zone` and `detail_motion/bandwidth_staircase`: they pass, but their max latency is close to the 1800ms threshold and they require 1-2 render deadline drops. The next improvement should be a real runtime encoder rate-control path and additional multi-seed/mobile-trace validation, not just looser thresholds.
+
+720p multi-seed stability profile:
+
+```bash
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_stability.sh
+```
+
+This profile fixes the candidate set to `webrtc/adaptive` and repeats the 720p content/scenario matrix across three deterministic network seeds. It is not a strategy comparison; it is a stability gate for checking whether the 720p single-run pass was accidental.
+
+Latest local stability result (`MATRIX_RUNS=3`, 3 content profiles, 5 scenarios, 45 total cases):
+
+| Backend/strategy | Cases | Aggregate balanced QoE | PSNR avg/min | Max latency/jitter ms | Decode errors | Drops | Deadline drops | Failed cases | Validation failures |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| webrtc/adaptive | 45 | 5381.653 | 54.961 / 15.098 | 1800 / 860 | 0 | 214 | 6 | 0 | 0 |
+
+Important boundary samples from the stability run:
+
+- `motion/walking_dead_zone` and `detail_motion/walking_dead_zone` can reach the 1800ms latency gate exactly, so the pass has limited latency margin.
+- `detail_motion/bandwidth_staircase` remains the hardest recovery case: one seeded run produced `freeze=1`, `max_freeze_ms=2790`, `render_deadline_drops=2`, while still staying inside the hard latency/jitter/decode validation gates.
+- `detail_motion/jitter_loss_oscillation` can drop to `psnr_min ~= 15.1 dB`, which is above the current hard floor but still visually fragile.
+
+The current 720p evidence is therefore stronger than a one-off demo pass: hard validation passes across 45 seeded cases with no decode errors and no validation failures. It still does not prove global optimum. The next proof step is to add real runtime encoder reconfiguration, longer mobile traces, and stricter recovery-margin metrics rather than only checking whether the current thresholds pass.
 
 UDP weak-network matrix:
 
