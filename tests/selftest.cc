@@ -197,6 +197,67 @@ int main() {
   ok &= Expect(stats.waiting_for_idr,
                "pacer waits for IDR after expired P drop");
 
+  size_t live_sent = 0;
+  SenderPacer live_pacer(
+      SenderPacerConfig{80000, 5, 500, 512 * 1024, 100, false},
+      [&](const RtpPacket&) {
+        ++live_sent;
+        return Status::Ok();
+      });
+  SendPacket live_old_packet;
+  live_old_packet.frame_type = VideoFrameType::kP;
+  live_old_packet.media_duration_ms = 33;
+  live_old_packet.packet.capture_time_us = 1000000;
+  live_old_packet.packet.payload.assign(1200, 0x41);
+  status = live_pacer.Enqueue(live_old_packet);
+  ok &= Expect(status.code == StatusCode::kOk, "enqueue live expired P packet");
+  live_pacer.Tick(1200000);
+  stats = live_pacer.GetStats();
+  ok &= Expect(!stats.waiting_for_idr,
+               "live pacer does not require IDR after expired P drop");
+  SendPacket live_next_packet = live_old_packet;
+  live_next_packet.packet.capture_time_us = 1230000;
+  status = live_pacer.Enqueue(live_next_packet);
+  ok &= Expect(status.code == StatusCode::kOk,
+               "live pacer accepts P after expired P drop");
+
+  size_t atomic_sent = 0;
+  SenderPacer atomic_pacer(SenderPacerConfig{300000, 5, 500, 220},
+                           [&](const RtpPacket&) {
+                             ++atomic_sent;
+                             return Status::Ok();
+                           });
+  SendPacket atomic_packet_a = live_old_packet;
+  atomic_packet_a.packet.payload.assign(120, 0x41);
+  SendPacket atomic_packet_b = atomic_packet_a;
+  atomic_packet_b.packet.sequence_number = 2;
+  std::vector<SendPacket> atomic_au = {atomic_packet_a, atomic_packet_b};
+  status = atomic_pacer.EnqueueAccessUnit(atomic_au);
+  ok &= Expect(status.code == StatusCode::kQueueFull,
+               "oversized P access unit is dropped atomically");
+  stats = atomic_pacer.GetStats();
+  ok &= Expect(stats.queued_packets == 0,
+               "atomic P access unit leaves no partial packets queued");
+
+  SenderPacer recovery_pacer(
+      SenderPacerConfig{80000, 5, 500, 512 * 1024, 100},
+      [&](const RtpPacket&) { return Status::Ok(); });
+  SendPacket recovery_old_packet = live_old_packet;
+  status = recovery_pacer.Enqueue(recovery_old_packet);
+  ok &= Expect(status.code == StatusCode::kOk,
+               "enqueue recovery expired P packet");
+  recovery_pacer.Tick(1200000);
+  SendPacket recovery_idr_packet = recovery_old_packet;
+  recovery_idr_packet.frame_type = VideoFrameType::kIdr;
+  recovery_idr_packet.packet.capture_time_us = 1230000;
+  recovery_idr_packet.packet.payload.assign(1200, 0x65);
+  status = recovery_pacer.Enqueue(recovery_idr_packet);
+  ok &= Expect(status.code == StatusCode::kOk,
+               "IDR clears default pacer recovery wait");
+  stats = recovery_pacer.GetStats();
+  ok &= Expect(!stats.waiting_for_idr,
+               "default pacer exits recovery wait after IDR");
+
   SenderQosController controller(
       SenderQosControllerConfig{TransportIds{1, 2, 3, 4, 5}, 1200000, 300000,
                                 2500000});
@@ -224,6 +285,14 @@ int main() {
                "very constrained capacity lowers fps to 8");
   ok &= Expect(!adaptation.request_keyframe,
                "very constrained capacity suppresses loss-driven IDR");
+  SenderRateCap severe_cap = very_low_cap;
+  severe_cap.cap_bps = 90000;
+  severe_cap.receive_time_us = 3200000;
+  status = controller.OnSenderRateCap(severe_cap);
+  ok &= Expect(status.code == StatusCode::kOk, "apply severe sender cap");
+  adaptation = controller.GetEncoderAdaptation(3300000);
+  ok &= Expect(adaptation.max_fps == 5,
+               "severe capacity lowers fps to 5");
 
   std::vector<RtpPacket> fu_packets;
   SenderPacer fu_pacer(SenderPacerConfig{},
@@ -274,6 +343,24 @@ int main() {
                "FU-A frame records first packet receive time");
   ok &= Expect(last_frame.completed_time_us == 2000000,
                "FU-A frame records completion time");
+
+  SenderPacer reject_pacer(SenderPacerConfig{300000, 5, 500, 1},
+                           [&](const RtpPacket&) { return Status::Ok(); });
+  VideoSender reject_sender(
+      VideoSenderConfig{TransportIds{1, 2, 3, 0x33333333, 5}},
+      &reject_pacer);
+  const uint16_t rejected_rtp_before = reject_sender.next_rtp_sequence_number();
+  const uint16_t rejected_twcc_before =
+      reject_sender.next_transport_sequence_number();
+  status = reject_sender.SendAnnexBAccessUnit(large_au.data(), large_au.size(),
+                                              3000);
+  ok &= Expect(status.code == StatusCode::kQueueFull,
+               "video sender surfaces atomic AU queue full");
+  ok &= Expect(reject_sender.next_rtp_sequence_number() == rejected_rtp_before,
+               "failed atomic AU enqueue rolls back RTP sequence numbers");
+  ok &= Expect(reject_sender.next_transport_sequence_number() ==
+                   rejected_twcc_before,
+               "failed atomic AU enqueue rolls back TWCC sequence numbers");
 
   size_t nack_events = 0;
   VideoReceiver loss_receiver(

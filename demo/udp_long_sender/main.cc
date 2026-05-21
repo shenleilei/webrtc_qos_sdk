@@ -61,6 +61,11 @@ uint32_t CompactNtp(uint64_t ntp_timestamp) {
   return static_cast<uint32_t>((ntp_timestamp >> 16) & 0xffffffffu);
 }
 
+constexpr uint32_t kHealthyPeriodicKeyframeBps = 800000;
+constexpr uint32_t kPeriodicKeyframeSourceFrames = 90;
+constexpr int64_t kNormalKeyframeIntervalUs = 2000000;
+constexpr int64_t kPacerRecoveryKeyframeIntervalUs = 750000;
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -120,6 +125,7 @@ int main(int argc, char** argv) {
   uint64_t rr_feedback = 0;
   uint64_t rate_caps = 0;
   uint64_t encoder_reconfigs = 0;
+  uint64_t forced_keyframes = 0;
   uint32_t adapt_target_min = std::numeric_limits<uint32_t>::max();
   uint32_t adapt_target_max = 0;
   uint32_t adapt_target_last = bitrate_bps;
@@ -129,13 +135,14 @@ int main(int argc, char** argv) {
   uint32_t applied_bitrate_bps = bitrate_bps;
   uint32_t applied_fps = 30;
   bool force_keyframe_next = true;
+  int64_t last_keyframe_encode_us = -10000000;
   int64_t route_recovery_until_us = 0;
   uint32_t route_recovery_bps = 0;
   std::unordered_map<uint16_t, PacketFeedback> sent_packet_feedback;
   int64_t pacer_time_us = 0;
   SenderPacer pacer(
       SenderPacerConfig{bitrate_bps, kPacerTickMs, kPacerMaxQueueMs,
-                        kPacerMaxQueueBytes},
+                        kPacerMaxQueueBytes, 1400, false},
       [&](const RtpPacket& packet) {
         const std::vector<uint8_t> encoded = SerializeRtpPacket(packet);
         if (!SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kRtp, ids),
@@ -164,7 +171,7 @@ int main(int argc, char** argv) {
   config.height = height;
   config.fps = 30;
   config.bitrate_bps = bitrate_bps;
-  config.gop_size = 30;
+  config.gop_size = kPeriodicKeyframeSourceFrames;
   Status status = encoder.Open(config);
   if (!status) {
     std::cerr << "udp_long_sender: encoder open failed: " << status.message
@@ -178,6 +185,11 @@ int main(int argc, char** argv) {
   std::vector<uint8_t> annexb;
   uint64_t last_sr_ntp = 0;
   uint32_t last_sr_lsr = 0;
+  const auto request_keyframe = [&](int64_t min_interval_us) {
+    if (pacer_time_us - last_keyframe_encode_us >= min_interval_us) {
+      force_keyframe_next = true;
+    }
+  };
   const auto apply_adaptation = [&]() -> Status {
     const TargetRates rates = qos.GetTargetRates(pacer_time_us);
     const bool in_route_recovery =
@@ -191,7 +203,6 @@ int main(int argc, char** argv) {
       adaptation.target_bitrate_bps =
           std::max(route_recovery_bps, adaptation.target_bitrate_bps);
       adaptation.max_fps = 30;
-      adaptation.request_keyframe = true;
     }
     adaptation.target_bitrate_bps =
         std::max<uint32_t>(qos_config.min_bitrate_bps,
@@ -210,7 +221,7 @@ int main(int argc, char** argv) {
                                  adaptation.max_fps, applied_bitrate_bps,
                                  applied_fps)) {
       if (adaptation.request_keyframe) {
-        force_keyframe_next = true;
+        request_keyframe(kNormalKeyframeIntervalUs);
       }
       return Status::Ok();
     }
@@ -223,8 +234,10 @@ int main(int argc, char** argv) {
       return status;
     }
     ++encoder_reconfigs;
-    if (bitrate_increased || adaptation.request_keyframe) {
-      force_keyframe_next = true;
+    if (bitrate_increased) {
+      request_keyframe(kPacerRecoveryKeyframeIntervalUs);
+    } else if (adaptation.request_keyframe) {
+      request_keyframe(kNormalKeyframeIntervalUs);
     }
     return Status::Ok();
   };
@@ -291,8 +304,9 @@ int main(int argc, char** argv) {
         return status;
       }
       if (cap.cap_bps == kUnlimitedRateCapBps) {
-        route_recovery_bps = std::max<uint32_t>(bitrate_bps, 2000000);
-        route_recovery_until_us = pacer_time_us + 1500000;
+        route_recovery_bps = std::max<uint32_t>(bitrate_bps, 2500000);
+        route_recovery_until_us = pacer_time_us + 2500000;
+        request_keyframe(kPacerRecoveryKeyframeIntervalUs);
         status = qos.OnNetworkRouteChange(route_recovery_bps, pacer_time_us);
         if (!status) {
           return status;
@@ -315,9 +329,25 @@ int main(int argc, char** argv) {
     }
     if (i >= next_encode_source_index) {
       FillI420Frame(width, height, content, static_cast<int>(i), &y, &u, &v);
-      const bool force_keyframe =
-          encoded_frames == 0 || force_keyframe_next || (i % 30) == 0 ||
-          pacer.GetStats().waiting_for_idr;
+      const TargetRates current_rates = qos.GetTargetRates(pacer_time_us);
+      const bool healthy_periodic_keyframe =
+          i > 0 && i % kPeriodicKeyframeSourceFrames == 0 &&
+          current_rates.final_target_bps >= kHealthyPeriodicKeyframeBps &&
+          applied_bitrate_bps >= kHealthyPeriodicKeyframeBps &&
+          pacer_time_us - last_keyframe_encode_us >= kNormalKeyframeIntervalUs;
+      const bool pacer_recovery_keyframe =
+          pacer.GetStats().waiting_for_idr &&
+          pacer_time_us - last_keyframe_encode_us >=
+              kPacerRecoveryKeyframeIntervalUs;
+      const bool keyframe_requested = encoded_frames == 0 || force_keyframe_next ||
+                                      healthy_periodic_keyframe ||
+                                      pacer_recovery_keyframe;
+      const bool interval_ok =
+          encoded_frames == 0 ||
+          pacer_time_us - last_keyframe_encode_us >=
+              (pacer_recovery_keyframe ? kPacerRecoveryKeyframeIntervalUs
+                                       : kNormalKeyframeIntervalUs);
+      const bool force_keyframe = keyframe_requested && interval_ok;
       status = encoder.EncodeI420(y.data(), width, u.data(), width / 2, v.data(),
                                   width / 2, force_keyframe, &annexb);
       if (!status) {
@@ -327,6 +357,8 @@ int main(int argc, char** argv) {
       }
       if (force_keyframe) {
         force_keyframe_next = false;
+        last_keyframe_encode_us = pacer_time_us;
+        ++forced_keyframes;
       }
       status = sender.SendAnnexBAccessUnit(annexb.data(), annexb.size(),
                                            capture_time_us);
@@ -431,6 +463,7 @@ int main(int argc, char** argv) {
             << " sent_packets=" << sent_packets
             << " sent_bytes=" << sent_bytes
             << " pacer_drops=" << pacer.GetStats().dropped_packets
+            << " forced_keyframes=" << forced_keyframes
             << " twcc_feedback=" << twcc_feedback
             << " rr=" << rr_feedback
             << " rate_caps=" << rate_caps

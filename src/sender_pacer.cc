@@ -22,7 +22,9 @@ Status SenderPacer::Enqueue(const SendPacket& packet) {
   if (ShouldDropForQueueLimit(queued)) {
     if (packet.frame_type == VideoFrameType::kP && !packet.retransmission) {
       ++stats_.dropped_packets;
-      stats_.waiting_for_idr = true;
+      if (config_.wait_for_idr_after_p_drop) {
+        stats_.waiting_for_idr = true;
+      }
       return Status::Error(StatusCode::kQueueFull, "dropped queued P frame");
     }
     Status drop_status = DropQueuedPFrames();
@@ -39,7 +41,8 @@ Status SenderPacer::Enqueue(const SendPacket& packet) {
   } else {
     if (packet.frame_type == VideoFrameType::kIdr) {
       stats_.waiting_for_idr = false;
-    } else if (stats_.waiting_for_idr && packet.frame_type == VideoFrameType::kP) {
+    } else if (config_.wait_for_idr_after_p_drop && stats_.waiting_for_idr &&
+               packet.frame_type == VideoFrameType::kP) {
       ++stats_.dropped_packets;
       return Status::Error(StatusCode::kQueueFull,
                            "waiting for IDR after P frame drop");
@@ -48,6 +51,91 @@ Status SenderPacer::Enqueue(const SendPacket& packet) {
   }
   stats_.queued_packets = retransmission_queue_.size() + media_queue_.size();
   stats_.queued_bytes += packet.packet.payload.size() + 20;
+  return Status::Ok();
+}
+
+Status SenderPacer::EnqueueAccessUnit(const std::vector<SendPacket>& packets) {
+  if (packets.empty()) {
+    return Status::Error(StatusCode::kInvalidArgument,
+                         "empty access unit packet list");
+  }
+  if (!send_callback_) {
+    return Status::Error(StatusCode::kInvalidArgument,
+                         "SendPacket callback not set");
+  }
+
+  size_t access_unit_bytes = 0;
+  uint32_t access_unit_duration_ms = 0;
+  bool has_media = false;
+  bool is_p_frame = false;
+  bool has_idr = false;
+  std::vector<QueuedPacket> queued_packets;
+  queued_packets.reserve(packets.size());
+  for (const SendPacket& packet : packets) {
+    QueuedPacket queued;
+    queued.packet = packet;
+    queued.bytes = packet.packet.payload.size() + 20;
+    queued.enqueue_time_us = packet.packet.capture_time_us;
+    access_unit_bytes += queued.bytes;
+    access_unit_duration_ms += packet.media_duration_ms;
+    has_media = has_media || !packet.retransmission;
+    is_p_frame = is_p_frame || (packet.frame_type == VideoFrameType::kP &&
+                                !packet.retransmission);
+    has_idr = has_idr || (packet.frame_type == VideoFrameType::kIdr &&
+                          !packet.retransmission);
+    queued_packets.push_back(std::move(queued));
+  }
+
+  if (has_media) {
+    if (has_idr) {
+      stats_.waiting_for_idr = false;
+    } else if (config_.wait_for_idr_after_p_drop && stats_.waiting_for_idr &&
+               is_p_frame) {
+      stats_.dropped_packets += packets.size();
+      return Status::Error(StatusCode::kQueueFull,
+                           "waiting for IDR after P frame drop");
+    }
+  }
+
+  const size_t queued_bytes = stats_.queued_bytes + access_unit_bytes;
+  uint32_t queued_ms = access_unit_duration_ms;
+  for (const auto& item : media_queue_) {
+    queued_ms += item.packet.media_duration_ms;
+  }
+  if (queued_bytes > config_.max_queue_bytes ||
+      queued_ms > static_cast<uint32_t>(config_.max_queue_ms)) {
+    if (is_p_frame) {
+      stats_.dropped_packets += packets.size();
+      if (config_.wait_for_idr_after_p_drop) {
+        stats_.waiting_for_idr = true;
+      }
+      return Status::Error(StatusCode::kQueueFull,
+                           "dropped P access unit");
+    }
+    Status drop_status = DropQueuedPFrames();
+    if (!drop_status) {
+      return drop_status;
+    }
+    const size_t retry_bytes = stats_.queued_bytes + access_unit_bytes;
+    queued_ms = access_unit_duration_ms;
+    for (const auto& item : media_queue_) {
+      queued_ms += item.packet.media_duration_ms;
+    }
+    if (retry_bytes > config_.max_queue_bytes ||
+        queued_ms > static_cast<uint32_t>(config_.max_queue_ms)) {
+      return Status::Error(StatusCode::kQueueFull, "pacer queue is full");
+    }
+  }
+
+  for (QueuedPacket& queued : queued_packets) {
+    if (queued.packet.retransmission) {
+      retransmission_queue_.push_back(std::move(queued));
+    } else {
+      media_queue_.push_back(std::move(queued));
+    }
+  }
+  stats_.queued_packets = retransmission_queue_.size() + media_queue_.size();
+  stats_.queued_bytes += access_unit_bytes;
   return Status::Ok();
 }
 
@@ -144,7 +232,9 @@ void SenderPacer::DropExpiredMediaPackets(int64_t now_us) {
       stats_.queued_bytes > removed_bytes ? stats_.queued_bytes - removed_bytes
                                           : 0;
   stats_.dropped_packets += removed_packets;
-  stats_.waiting_for_idr = true;
+  if (config_.wait_for_idr_after_p_drop) {
+    stats_.waiting_for_idr = true;
+  }
   stats_.queued_packets = retransmission_queue_.size() + media_queue_.size();
 }
 
@@ -167,7 +257,9 @@ Status SenderPacer::DropQueuedPFrames() {
       stats_.queued_bytes > removed_bytes ? stats_.queued_bytes - removed_bytes
                                           : 0;
   stats_.dropped_packets += removed_packets;
-  stats_.waiting_for_idr = true;
+  if (config_.wait_for_idr_after_p_drop) {
+    stats_.waiting_for_idr = true;
+  }
   return Status::Ok();
 }
 

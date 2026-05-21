@@ -28,11 +28,12 @@ class VideoSender {
  private:
   Status ValidateAccessUnit(const std::vector<std::vector<uint8_t>>& nalus,
                             VideoFrameType* frame_type) const;
-  Status EnqueueNalu(const std::vector<uint8_t>& nalu,
-                     bool marker,
-                     VideoFrameType frame_type,
-                     int64_t capture_time_us,
-                     uint32_t rtp_timestamp);
+  Status BuildNaluPackets(const std::vector<uint8_t>& nalu,
+                          bool marker,
+                          VideoFrameType frame_type,
+                          int64_t capture_time_us,
+                          uint32_t rtp_timestamp,
+                          std::vector<SendPacket>* packets);
 
   VideoSenderConfig config_;
   SenderPacer* pacer_ = nullptr;

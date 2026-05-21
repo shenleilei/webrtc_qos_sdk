@@ -91,7 +91,11 @@ int main(int argc, char** argv) {
   double psnr_sum = 0.0;
   double psnr_min = std::numeric_limits<double>::infinity();
   int64_t last_frame_time_us = -1;
+  int64_t max_completion_gap_ms = 0;
+  int64_t last_frame_media_ms = -1;
   int64_t max_frame_gap_ms = 0;
+  int64_t max_frame_gap_from_ms = 0;
+  int64_t max_frame_gap_to_ms = 0;
   bool bye = false;
   const int64_t start_us = NowUs();
   const int64_t deadline_us = start_us + 20000000;
@@ -133,11 +137,24 @@ int main(int argc, char** argv) {
         observer.OnFrameDecoded(frame.rtp_timestamp);
         ++completed_frames;
         if (last_frame_time_us >= 0) {
-          max_frame_gap_ms =
-              std::max<int64_t>(max_frame_gap_ms,
+          max_completion_gap_ms =
+              std::max<int64_t>(max_completion_gap_ms,
                                 (now_us - last_frame_time_us) / 1000);
         }
         last_frame_time_us = now_us;
+        const int64_t frame_media_ms =
+            frame.rtp_timestamp >= 90000
+                ? static_cast<int64_t>(frame.rtp_timestamp - 90000) / 90
+                : static_cast<int64_t>(frame.rtp_timestamp) / 90;
+        if (last_frame_media_ms >= 0) {
+          const int64_t frame_gap_ms = frame_media_ms - last_frame_media_ms;
+          if (frame_gap_ms > max_frame_gap_ms) {
+            max_frame_gap_ms = frame_gap_ms;
+            max_frame_gap_from_ms = last_frame_media_ms;
+            max_frame_gap_to_ms = frame_media_ms;
+          }
+        }
+        last_frame_media_ms = frame_media_ms;
         std::vector<DecodedVideoFrame> decoded;
         status = decoder.DecodeAnnexB(frame.annexb_access_unit.data(),
                                       frame.annexb_access_unit.size(),
@@ -208,7 +225,10 @@ int main(int argc, char** argv) {
             << " quality_samples=" << quality_samples
             << " psnr_avg=" << psnr_avg
             << " psnr_min=" << safe_psnr_min
+            << " max_completion_gap_ms=" << max_completion_gap_ms
             << " max_frame_gap_ms=" << max_frame_gap_ms
+            << " max_frame_gap_from_ms=" << max_frame_gap_from_ms
+            << " max_frame_gap_to_ms=" << max_frame_gap_to_ms
             << " nack_sent=" << nack_sent
             << " downlink_reports=" << downlink_reports << "\n";
   close(fd);

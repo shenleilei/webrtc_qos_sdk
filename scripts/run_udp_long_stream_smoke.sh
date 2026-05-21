@@ -97,6 +97,7 @@ sender_match = re.search(
     r"udp_long_sender frames=(?P<frames>\d+) "
     r"encoded_frames=(?P<encoded_frames>\d+) sent_packets=(?P<sent>\d+) "
     r"sent_bytes=(?P<bytes>\d+) pacer_drops=(?P<pacer_drops>\d+) "
+    r"(?:forced_keyframes=(?P<forced_keyframes>\d+) )?"
     r"twcc_feedback=(?P<twcc>\d+) rr=(?P<rr>\d+) "
     r"rate_caps=(?P<rate_caps>\d+) final_target_bps=(?P<target>\d+) "
     r"pacing_bps=(?P<pacing>\d+) rtt_ms=(?P<rtt>\d+) "
@@ -129,7 +130,11 @@ receiver_match = re.search(
     r"udp_long_receiver rtp=(?P<rtp>\d+) completed_frames=(?P<completed>\d+) "
     r"decoded_frames=(?P<decoded>\d+) decode_errors=(?P<errors>\d+) "
     r"quality_samples=(?P<quality>\d+) psnr_avg=(?P<psnr_avg>[0-9.]+) "
-    r"psnr_min=(?P<psnr_min>[0-9.]+) max_frame_gap_ms=(?P<gap>\d+) "
+    r"psnr_min=(?P<psnr_min>[0-9.]+) "
+    r"(?:max_completion_gap_ms=(?P<completion_gap>\d+) )?"
+    r"max_frame_gap_ms=(?P<gap>\d+) "
+    r"(?:max_frame_gap_from_ms=(?P<gap_from>\d+) "
+    r"max_frame_gap_to_ms=(?P<gap_to>\d+) )?"
     r"nack_sent=(?P<nack>\d+) downlink_reports=(?P<downlink_reports>\d+)",
     receiver_text,
 )
@@ -141,7 +146,7 @@ if not receiver_match:
     raise SystemExit("missing receiver summary line")
 
 def parse(match):
-    return {
+    parsed = {
         key: (
             value
             if key == "profile"
@@ -150,7 +155,9 @@ def parse(match):
             else int(value)
         )
         for key, value in match.groupdict().items()
+        if value is not None
     }
+    return parsed
 
 summary = {
     "sender": parse(sender_match),
@@ -170,12 +177,13 @@ if summary["receiver"]["completed"] > summary["sender"]["frames"]:
 summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
 print(
     "udp long stream smoke passed frames={completed} decoded={decoded} "
-    "psnr_avg={psnr_avg:.3f} max_gap_ms={gap} twcc={twcc} rr={rr} "
+    "psnr_avg={psnr_avg:.3f} max_gap_ms={gap} completion_gap_ms={completion_gap} twcc={twcc} rr={rr} "
     "rate_caps={rate_caps}".format(
         completed=summary["receiver"]["completed"],
         decoded=summary["receiver"]["decoded"],
         psnr_avg=summary["receiver"]["psnr_avg"],
         gap=summary["receiver"]["gap"],
+        completion_gap=summary["receiver"].get("completion_gap", 0),
         twcc=summary["sender"]["twcc"],
         rr=summary["sender"]["rr"],
         rate_caps=summary["sender"]["rate_caps"],

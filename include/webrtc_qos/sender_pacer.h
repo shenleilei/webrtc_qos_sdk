@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <vector>
 
 #include "webrtc_qos/types.h"
 
@@ -12,6 +13,7 @@ struct SenderPacerConfig {
   int max_queue_ms = kPacerMaxQueueMs;
   size_t max_queue_bytes = kPacerMaxQueueBytes;
   int max_media_packet_age_ms = 1400;
+  bool wait_for_idr_after_p_drop = true;
 };
 
 struct SenderPacerStats {
@@ -27,6 +29,7 @@ class SenderPacer {
   SenderPacer(SenderPacerConfig config, SendPacketCallback send_callback);
 
   Status Enqueue(const SendPacket& packet);
+  Status EnqueueAccessUnit(const std::vector<SendPacket>& packets);
   Status Tick(int64_t now_us);
   void SetTargetBitrate(uint32_t target_bps);
   SenderPacerStats GetStats() const;

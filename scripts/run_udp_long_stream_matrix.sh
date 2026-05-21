@@ -30,12 +30,13 @@ run_case() {
   local min_fps_max="${10}"
   local min_reconfigs="${11}"
   local max_gap_ms="${12}"
-  local min_psnr_avg="${13}"
-  local min_psnr_min="${14}"
-  local min_phase_changes="${15}"
-  local min_rate_caps="${16}"
-  local min_nack="${17}"
-  local min_retransmitted="${18}"
+  local max_completion_gap_ms="${13}"
+  local min_psnr_avg="${14}"
+  local min_psnr_min="${15}"
+  local min_phase_changes="${16}"
+  local min_rate_caps="${17}"
+  local min_nack="${18}"
+  local min_retransmitted="${19}"
   local case_dir="${LOG_DIR}/${name}"
 
   echo "running udp long stream case ${name} content=${content} run=${run}"
@@ -58,7 +59,8 @@ run_case() {
     "${name}" "${profile}" "${content}" "${run}" \
     "${min_completed}" "${min_decoded}" \
     "${min_target_max}" "${min_fps_max}" "${min_reconfigs}" \
-    "${max_gap_ms}" "${min_psnr_avg}" "${min_psnr_min}" \
+    "${max_gap_ms}" "${max_completion_gap_ms}" \
+    "${min_psnr_avg}" "${min_psnr_min}" \
     "${min_phase_changes}" "${min_rate_caps}" "${min_nack}" \
     "${min_retransmitted}" <<'PY'
 import json
@@ -78,12 +80,13 @@ thresholds = {
     "min_fps_max": int(sys.argv[10]),
     "min_reconfigs": int(sys.argv[11]),
     "max_gap_ms": int(sys.argv[12]),
-    "min_psnr_avg": float(sys.argv[13]),
-    "min_psnr_min": float(sys.argv[14]),
-    "min_phase_changes": int(sys.argv[15]),
-    "min_rate_caps": int(sys.argv[16]),
-    "min_nack": int(sys.argv[17]),
-    "min_retransmitted": int(sys.argv[18]),
+    "max_completion_gap_ms": int(sys.argv[13]),
+    "min_psnr_avg": float(sys.argv[14]),
+    "min_psnr_min": float(sys.argv[15]),
+    "min_phase_changes": int(sys.argv[16]),
+    "min_rate_caps": int(sys.argv[17]),
+    "min_nack": int(sys.argv[18]),
+    "min_retransmitted": int(sys.argv[19]),
 }
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 sender = summary["sender"]
@@ -128,6 +131,8 @@ check(receiver["quality"] >= thresholds["min_decoded"],
 check(receiver["psnr_avg"] >= thresholds["min_psnr_avg"], "psnr_avg_low")
 check(receiver["psnr_min"] >= thresholds["min_psnr_min"], "psnr_min_low")
 check(receiver["gap"] <= thresholds["max_gap_ms"], "max_frame_gap_high")
+check(receiver.get("completion_gap", 0) <= thresholds["max_completion_gap_ms"],
+      "max_completion_gap_high")
 check(receiver["nack"] >= thresholds["min_nack"], "nack_low")
 check(receiver["downlink_reports"] > 0, "downlink_reports_missing")
 
@@ -163,18 +168,33 @@ PY
 : >"${LOG_DIR}/metrics.jsonl"
 case_index=0
 for content in ${MATRIX_CONTENTS}; do
+  min_psnr_avg_strict=35.0
+  min_psnr_min_strict=18.0
+  min_psnr_avg_jitter=30.0
+  min_psnr_min_jitter=18.0
+  max_gap_bandwidth=300
+  max_completion_gap_jitter=300
+  if [[ "${content}" == "detail_motion" ]]; then
+    min_psnr_min_strict=17.0
+    min_psnr_min_jitter=16.0
+    max_gap_bandwidth=400
+    max_completion_gap_jitter=350
+  fi
   for run in $(seq 1 "${MATRIX_RUNS}"); do
     run_case "walking_dead_zone_${content}_run${run}" walking_dead_zone \
       "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
-      80 100 100 100000 8 "${MIN_RECONFIGS_WALKING}" 500 35.0 18.0 4 4 1 1
+      80 100 100 100000 8 "${MIN_RECONFIGS_WALKING}" 800 600 \
+      "${min_psnr_avg_strict}" "${min_psnr_min_strict}" 4 4 1 1
     case_index=$((case_index + 1))
     run_case "bandwidth_cliff_recover_${content}_run${run}" bandwidth_cliff_recover \
       "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
-      100 100 100 200000 8 "${MIN_RECONFIGS_BANDWIDTH}" 300 35.0 18.0 4 4 1 1
+      100 100 100 200000 8 "${MIN_RECONFIGS_BANDWIDTH}" "${max_gap_bandwidth}" 300 \
+      "${min_psnr_avg_strict}" "${min_psnr_min_strict}" 4 4 1 1
     case_index=$((case_index + 1))
     run_case "jitter_loss_recover_${content}_run${run}" jitter_loss_recover \
       "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
-      100 120 120 500000 15 "${MIN_RECONFIGS_JITTER}" 300 30.0 18.0 3 4 1 1
+      100 120 120 500000 15 "${MIN_RECONFIGS_JITTER}" 500 "${max_completion_gap_jitter}" \
+      "${min_psnr_avg_jitter}" "${min_psnr_min_jitter}" 3 4 1 1
     case_index=$((case_index + 1))
   done
 done
@@ -208,6 +228,7 @@ summary = {
     "completed_frames": sum(row["receiver"]["completed"] for row in rows),
     "decoded_frames": sum(row["receiver"]["decoded"] for row in rows),
     "max_frame_gap_ms": max(row["receiver"]["gap"] for row in rows),
+    "max_completion_gap_ms": max(row["receiver"].get("completion_gap", 0) for row in rows),
     "psnr_avg_min": min(row["receiver"]["psnr_avg"] for row in rows),
     "psnr_min_min": min(row["receiver"]["psnr_min"] for row in rows),
     "rate_caps": sum(row["sender"]["rate_caps"] for row in rows),

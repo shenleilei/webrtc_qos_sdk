@@ -40,15 +40,22 @@ Status VideoSender::SendAnnexBAccessUnit(const uint8_t* data,
   }
 
   const uint32_t rtp_timestamp = RtpTimestampForCaptureTime(capture_time_us);
+  std::vector<SendPacket> packets;
   for (size_t i = 0; i < nalus.size(); ++i) {
     const bool marker = i + 1 == nalus.size();
     status =
-        EnqueueNalu(nalus[i], marker, frame_type, capture_time_us, rtp_timestamp);
-    if (!status && frame_type != VideoFrameType::kP) {
+        BuildNaluPackets(nalus[i], marker, frame_type, capture_time_us,
+                         rtp_timestamp, &packets);
+    if (!status) {
       return status;
     }
   }
-  return Status::Ok();
+  status = pacer_->EnqueueAccessUnit(packets);
+  if (!status) {
+    next_rtp_sequence_number_ -= static_cast<uint16_t>(packets.size());
+    next_transport_sequence_number_ -= static_cast<uint16_t>(packets.size());
+  }
+  return status;
 }
 
 Status VideoSender::ValidateAccessUnit(
@@ -91,11 +98,16 @@ Status VideoSender::ValidateAccessUnit(
   return Status::Ok();
 }
 
-Status VideoSender::EnqueueNalu(const std::vector<uint8_t>& nalu,
-                                bool marker,
-                                VideoFrameType frame_type,
-                                int64_t capture_time_us,
-                                uint32_t rtp_timestamp) {
+Status VideoSender::BuildNaluPackets(const std::vector<uint8_t>& nalu,
+                                     bool marker,
+                                     VideoFrameType frame_type,
+                                     int64_t capture_time_us,
+                                     uint32_t rtp_timestamp,
+                                     std::vector<SendPacket>* packets) {
+  if (!packets) {
+    return Status::Error(StatusCode::kInvalidArgument,
+                         "null packet output");
+  }
   if (nalu.size() <= kMaxRtpPayloadBytes) {
     RtpPacket packet;
     packet.payload_type = kH264PayloadType;
@@ -106,7 +118,8 @@ Status VideoSender::EnqueueNalu(const std::vector<uint8_t>& nalu,
     packet.transport_sequence_number = next_transport_sequence_number_++;
     packet.capture_time_us = capture_time_us;
     packet.payload = nalu;
-    return pacer_->Enqueue(SendPacket{packet, frame_type, false, 33});
+    packets->push_back(SendPacket{packet, frame_type, false, marker ? 33u : 0u});
+    return Status::Ok();
   }
 
   if (nalu.empty()) {
@@ -136,11 +149,8 @@ Status VideoSender::EnqueueNalu(const std::vector<uint8_t>& nalu,
                                                   (end ? 0x40 : 0x00) | type));
     packet.payload.insert(packet.payload.end(), nalu.begin() + offset,
                           nalu.begin() + offset + chunk);
-    Status status = pacer_->Enqueue(
-        SendPacket{packet, frame_type, false, end ? 33u : 0u});
-    if (!status && frame_type != VideoFrameType::kP) {
-      return status;
-    }
+    packets->push_back(SendPacket{packet, frame_type, false,
+                                  marker && end ? 33u : 0u});
     offset += chunk;
   }
   return Status::Ok();
