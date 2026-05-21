@@ -15,6 +15,8 @@ struct QosSnapshot {
   uint32_t nack_count = 0;
   uint32_t pli_count = 0;
   uint32_t retransmission_count = 0;
+  // QoE-style freeze counters may be left at 0 by minimal transport facades
+  // and instead be computed by higher-level decode/QoE harnesses.
   uint32_t freeze_count = 0;
   uint32_t freeze_duration_ms = 0;
   uint32_t jitter_buffer_delay_ms = 0;

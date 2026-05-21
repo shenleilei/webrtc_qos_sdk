@@ -286,8 +286,8 @@ const auto cap = server->CurrentSenderRateCap(now_us);
 ## 10. 参考入口
 
 - push/play/server 端到端最小参考：
-  [demo/webrtc_first_loopback/main.cc](/root/webrtc_qos_sdk/demo/webrtc_first_loopback/main.cc:1)
+  [demo/webrtc_first_loopback/main.cc](../demo/webrtc_first_loopback/main.cc)
 - UDP 三角色参考：
-  [demo/webrtc_first_udp/main.cc](/root/webrtc_qos_sdk/demo/webrtc_first_udp/main.cc:1)
+  [demo/webrtc_first_udp/main.cc](../demo/webrtc_first_udp/main.cc)
 - 外部工程集成验证：
-  [scripts/verify_cmake_package.sh](/root/webrtc_qos_sdk/scripts/verify_cmake_package.sh:1)
+  [scripts/verify_cmake_package.sh](../scripts/verify_cmake_package.sh)

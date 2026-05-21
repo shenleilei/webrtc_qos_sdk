@@ -2,7 +2,7 @@
 
 这是仓库当前 `dist/linux-x86_64` 的安装产物，默认说明使用中文。
 
-集成 push/play/server facade 的最小接入方式见：[推拉客户端 SDK 集成说明](/root/webrtc_qos_sdk/docs/sdk_push_play_integration.md:1)。
+集成 push/play/server facade 的最小接入方式见：[推拉客户端 SDK 集成说明](../../docs/sdk_push_play_integration.md)。
 
 ## 目录结构
 

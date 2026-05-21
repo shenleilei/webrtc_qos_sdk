@@ -607,8 +607,8 @@ sender 最终发送目标码率计算固定为：
 
 源码入口：
 
-- [api/transport/network_control.h](/root/src/api/transport/network_control.h:1)
-- [api/transport/BUILD.gn](/root/src/api/transport/BUILD.gn:1)
+- `api/transport/network_control.h`
+- `api/transport/BUILD.gn`
 
 源码约束：
 
@@ -668,9 +668,9 @@ rtc_enable_grpc=false
 视频 jitter 的目标能力仍然分两层：
 
 - RTP 包组帧：
-  - [api/video/rtp_video_frame_assembler.h](/root/src/api/video/rtp_video_frame_assembler.h:1)
+  - `api/video/rtp_video_frame_assembler.h`
 - 帧级 jitter / 解码前排序：
-  - [api/video/frame_buffer.h](/root/src/api/video/frame_buffer.h:1)
+  - `api/video/frame_buffer.h`
 
 当前实现采用更小的 Phase-1a 闭包：
 
@@ -727,7 +727,7 @@ Phase-1a 视频接收端固定采用 SDK 轻量 NACK 恢复模块，不直接引
 
 不直接引入 WebRTC `NackRequester` 的原因：
 
-- [modules/video_coding/nack_requester.h](/root/src/modules/video_coding/nack_requester.h:1) 不是纯算法类
+- `modules/video_coding/nack_requester.h` 不是纯算法类
 - 其构造要求 `TaskQueueBase*`、`NackPeriodicProcessor*`、`Clock*`、`NackSender*`、`KeyFrameRequestSender*`、`FieldTrialsView`
 - 官方 target `//modules/video_coding:nack_requester` 会引入：
   - `//api/task_queue:task_queue`
@@ -759,7 +759,7 @@ PATH=/root/py311bin:/root/depot_tools:$PATH \
 
 WebRTC 源码入口：
 
-- [modules/video_coding/nack_requester.h](/root/src/modules/video_coding/nack_requester.h:1)
+- `modules/video_coding/nack_requester.h`
 
 ### 10.4 Pacing
 

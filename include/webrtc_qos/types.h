@@ -77,6 +77,7 @@ struct DownlinkQuality {
   TransportIds ids;
   uint32_t report_seq = 0;
   uint64_t report_time_us = 0;
+  // Different facades may only populate a subset of these fields.
   uint16_t rtt_ms = 0;
   uint16_t fraction_lost_q8 = 0;
   uint16_t reorder_ratio_q8 = 0;

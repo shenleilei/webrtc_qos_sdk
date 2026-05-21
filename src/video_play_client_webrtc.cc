@@ -139,7 +139,6 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     // a real decodable queue depth metric.
     out.downlink_quality.video_decodable_queue_depth = 0;
     out.dropped_frames = static_cast<uint32_t>(stats.packets_rejected);
-    out.freeze_count = decoded_frames_ == 0 ? 1 : 0;
     return out;
   }
 
