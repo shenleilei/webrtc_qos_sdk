@@ -160,7 +160,9 @@ int main() {
       };
   std::unique_ptr<webrtc_qos::VideoPushClient> client =
       webrtc_qos::CreateVideoPushClient(config);
-  if (!client || !client->Start() || !client->Stop()) {
+  if (!client || !client->Start() ||
+      !client->OnNetworkRouteChange(900000, 300000, 900000, 1000) ||
+      !client->Stop()) {
     return 1;
   }
   return 0;
@@ -441,7 +443,8 @@ int main() {
     return 5;
   }
   auto snapshot = play->GetQosSnapshot(2000000);
-  if (snapshot.downlink_quality.video_decodable_queue_depth != 1) {
+  if (snapshot.nack_count != 0 || snapshot.pli_count != 0 ||
+      snapshot.dropped_frames != 0) {
     return 6;
   }
 

@@ -1,5 +1,10 @@
 # WebRTC-first 重构实施方案
 
+> 历史草案说明
+>
+> 本文档保留为 Phase-2 重构过程中的中间方案草案，当前不再作为权威实施文档。
+> 当前应以 [webrtc_first_phase2_master_plan.md](webrtc_first_phase2_master_plan.md) 为准；如果两者表述不一致，以 `webrtc_first_phase2_master_plan.md` 为准。
+
 ## 1. 背景
 
 当前实现已经跑通了 H264 QoS/jitter 原型、弱网矩阵和发布包验证，但架构上偏离了最初目标。

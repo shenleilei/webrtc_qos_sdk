@@ -115,10 +115,13 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
         if (block.media_ssrc != config_.session.ids.sender_ssrc) {
           continue;
         }
+        snapshot_.downlink_quality.fraction_lost_q8 = block.fraction_lost;
         const uint32_t rtt_ms = EstimateRttMsFromReceiverReport(
             block.last_sr, block.delay_since_last_sr, receive_time_us);
         if (rtt_ms > 0) {
           nack_requester_.UpdateRtt(rtt_ms);
+          snapshot_.downlink_quality.rtt_ms =
+              static_cast<uint16_t>(std::min<uint32_t>(rtt_ms, 0xffffu));
         }
       }
     }
@@ -127,12 +130,14 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   }
 
   QosSnapshot GetQosSnapshot(int64_t now_us) const override {
-    QosSnapshot out;
+    QosSnapshot out = snapshot_;
     out.ids = config_.session.ids;
     out.report_time_us = static_cast<uint64_t>(std::max<int64_t>(0, now_us));
     const auto stats = jitter_.stats();
-    out.downlink_quality.video_decodable_queue_depth =
-        static_cast<uint16_t>(stats.frames_completed);
+    // The minimal jitter adapter only exposes cumulative counters, not
+    // instantaneous queue depth. Keep this field at 0 until the adapter exports
+    // a real decodable queue depth metric.
+    out.downlink_quality.video_decodable_queue_depth = 0;
     out.dropped_frames = static_cast<uint32_t>(stats.packets_rejected);
     out.freeze_count = decoded_frames_ == 0 ? 1 : 0;
     return out;

@@ -30,6 +30,10 @@ class VideoPushClient {
   virtual Status OnTransportFeedback(const uint8_t* rtcp_bytes,
                                      size_t rtcp_size,
                                      int64_t receive_time_us) = 0;
+  virtual Status OnNetworkRouteChange(uint32_t start_bitrate_bps,
+                                      uint32_t min_bitrate_bps,
+                                      uint32_t max_bitrate_bps,
+                                      int64_t at_time_us) = 0;
   virtual Status OnSenderRateCap(const SenderRateCap& cap) = 0;
   virtual EncoderAdaptation GetEncoderAdaptation(int64_t now_us) const = 0;
   virtual QosSnapshot GetQosSnapshot(int64_t now_us) const = 0;

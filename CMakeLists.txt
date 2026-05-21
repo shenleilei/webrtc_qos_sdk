@@ -17,8 +17,8 @@ option(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER
 option(WEBRTC_QOS_INSTALL_FFMPEG_ENCODER
   "Install optional FFmpeg/libavcodec H264 encoder/decoder adapters" OFF)
 option(WEBRTC_QOS_ENABLE_WEBRTC_FACADE
-  "Build WebRTC-backed VideoPushClient/VideoPlayClient facade implementation" OFF)
-set(WEBRTC_QOS_WEBRTC_MODULE_PREFIX "" CACHE PATH
+  "Build WebRTC-backed facade implementation; disabling is maintenance-only and not a supported Phase-2 delivery mode" ON)
+set(WEBRTC_QOS_WEBRTC_MODULE_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux-x86_64" CACHE PATH
   "Prefix containing packaged WebRTC QoS module headers/libs")
 
 function(webrtc_qos_object_library target)
@@ -82,6 +82,7 @@ if(WEBRTC_QOS_ENABLE_WEBRTC_FACADE)
   foreach(_header IN ITEMS
       googcc_adapter.h
       h264_rtp_adapter.h
+      nack_requester_adapter.h
       rtcp_adapter.h
       pacing_adapter.h
       rtp_packet_adapter.h

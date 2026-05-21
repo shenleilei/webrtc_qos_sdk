@@ -234,6 +234,7 @@ include/webrtc_qos/control_messages.h
 - 输入 capture timestamp。
 - 输入服务端 `SENDER_RATE_CAP_V1`。
 - 输入 route change。
+  当前 public API 对应 `VideoPushClient::OnNetworkRouteChange(...)`，用于把业务侧网络路由变化映射到 WebRTC GoogCC route change。
 - 接收 SDK 输出的 RTP/RTCP bytes，通过业务传输发送。
 - 读取 encoder bitrate / FPS / keyframe request 建议。
 
@@ -251,7 +252,8 @@ H264 glue 只允许做格式适配：
 - 输入收到的 RTP/RTCP bytes。
 - 接收 SDK 输出的完整 Annex-B access unit。
 - 接收 SDK 输出的 RTCP feedback bytes，通过业务传输回传。
-- 读取 jitter、loss、NACK、PLI、freeze proxy、decode/QoE metrics。
+- 读取接收侧传输/恢复指标：NACK、PLI、loss、RTT、丢包丢弃和基础接收侧统计。
+- decode/QoE metrics、PSNR/SSIM、freeze proxy 和 renderer proxy 仍由上层解码/QoE harness 计算；当前不作为 `VideoPlayClient` 公共接口的原生输出字段承诺。
 
 ### 4.3 ServerQosRouter
 
@@ -275,7 +277,7 @@ H264 glue 只允许做格式适配：
 删除 `transport_feedback.h` 后，业务控制消息归属如下：
 
 - `rate_cap.h`：`SENDER_RATE_CAP_V1`、cap 过期语义、暂停/不限速语义。
-- `qos_metrics.h`：downlink quality、loss、jitter、RTT、freeze proxy、decode/QoE 指标。
+- `qos_metrics.h`：downlink quality、RTT、NACK/PLI/重传、probe/padding 和基础发送/接收侧统计。
 - `control_messages.h`：业务 envelope 内的控制消息类型、版本号、序列号和编解码。
 
 ## 5. 删除清单
@@ -900,6 +902,10 @@ scripts/verify_no_selfmade_media_stack.sh
 ```
 
 构建门禁：
+
+前置条件：当前 source build 默认开启 WebRTC-first facade，并默认从仓库内 `dist/linux-x86_64` 查找 WebRTC modules。首次在新机器执行这些门禁前，应先确认 `dist/linux-x86_64` 已完成一次 `package_webrtc_modules.sh` 打包，或者显式改用其它 `WEBRTC_QOS_WEBRTC_MODULE_PREFIX`。
+
+如果显式关闭 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE`，得到的是 maintenance/support-only 构建，用于排查或局部打包；它不属于 Phase-2 正式交付路径，也不能替代本节门禁。
 
 ```bash
 cmake -S webrtc_qos_sdk -B webrtc_qos_sdk/build -DCMAKE_BUILD_TYPE=Release

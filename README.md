@@ -2,7 +2,7 @@
 
 这是一个 Linux native C/S 架构下的 WebRTC-first QoS SDK 原型。目标不是做完整 WebRTC Client、PeerConnection 或 SFU，而是在业务自定义传输上复用 WebRTC 的 QoS、RTP/RTCP、NACK、pacing 和视频 jitter 能力。
 
-`webrtc_first_phase2_master_plan.md` 是当前 Phase-2 实施规划；[WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md) 记录如何从 WebRTC 源码树拆出当前 SDK 使用的 GoogCC、pacing、RTP/RTCP、video jitter 和 NACKRequester 静态库，并记录拆分过程中遇到的 protobuf/perfetto 闭包、pacing padding、CMake role target 顺序、archive 聚合和 ABI 问题及解决方式。
+`webrtc_first_phase2_master_plan.md` 是当前 Phase-2 实施规划；[WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md) 记录如何从 WebRTC 源码树拆出当前 SDK 使用的 GoogCC、pacing、RTP/RTCP、video jitter 和 NACKRequester 静态库，并记录拆分过程中遇到的 protobuf/perfetto 闭包、pacing padding、CMake role target 顺序、archive 聚合和 ABI 问题及解决方式；[推拉客户端 SDK 集成说明](docs/sdk_push_play_integration.md) 说明业务侧如何集成 `VideoPushClient`、`VideoPlayClient` 和 `ServerQosRouter`。
 
 ## 当前状态
 
@@ -42,7 +42,7 @@ libwebrtc_qos_transport_packet_history.a
 libwebrtc_qos_facade_video.a
 ```
 
-WebRTC 能力库由 `scripts/package_webrtc_modules.sh` 从 WebRTC 源码树单独构建并复制到同一个 prefix。需要编译 `libwebrtc_qos_facade_video.a` 时，使用 `-DWEBRTC_QOS_ENABLE_WEBRTC_FACADE=ON -DWEBRTC_QOS_WEBRTC_MODULE_PREFIX=<prefix>`；缺少 WebRTC modules 会直接配置失败，不会 fallback。
+WebRTC 能力库由 `scripts/package_webrtc_modules.sh` 从 WebRTC 源码树单独构建并复制到同一个 prefix。当前 source build 默认开启 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE=ON`，并默认从仓库内 `dist/linux-x86_64` 查找 WebRTC modules；如需使用其它 prefix，显式传 `-DWEBRTC_QOS_WEBRTC_MODULE_PREFIX=<prefix>`。缺少 WebRTC modules 会直接配置失败，不会 fallback。
 
 默认公开头文件：
 
@@ -63,6 +63,10 @@ video_push_client.h
 ```
 
 ## 构建 SDK
+
+前置条件：当前 source build 默认开启 WebRTC-first facade，并默认从仓库内 `dist/linux-x86_64` 读取 WebRTC modules。首次在新机器构建前，先确认该目录下已经有 `libwebrtc_qos_webrtc_*.a` 和对应 adapter headers；没有的话先执行下面的“打包 WebRTC 模块”步骤。
+
+如果显式传 `-DWEBRTC_QOS_ENABLE_WEBRTC_FACADE=OFF`，得到的是 maintenance/support-only 构建，不是 Phase-2 正式交付边界。
 
 ```bash
 cd /root/webrtc_qos_sdk
@@ -127,7 +131,7 @@ PREFIX=/root/output SDK_ROOT=/root/webrtc_qos_sdk \
 
 ## WebRTC-first Demo
 
-已新增仓库内 demo：`webrtc_qos_webrtc_first_loopback_demo`。它只在 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE=ON` 时构建，直接使用 `VideoPushClient / ServerQosRouter / VideoPlayClient` 三个 role facade，不直接 include WebRTC adapter，也不使用旧自研 RTP/RTCP/pacer/video jitter 入口。
+已新增仓库内 demo：`webrtc_qos_webrtc_first_loopback_demo`。当前默认 source build 就会构建它；如果显式关闭 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE`，该 demo 会随 facade 一起关闭。它直接使用 `VideoPushClient / ServerQosRouter / VideoPlayClient` 三个 role facade，不直接 include WebRTC adapter，也不使用旧自研 RTP/RTCP/pacer/video jitter 入口。
 
 构建和运行：
 

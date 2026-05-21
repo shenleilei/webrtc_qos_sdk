@@ -1,5 +1,10 @@
 # WebRTC QoS SDK 设计说明
 
+> 历史阶段文档说明
+>
+> 本文档描述的是 `Phase-1a` 时代的设计边界和验收目标，保留它是为了追踪方案演进，不再作为当前实现的权威文档。
+> 当前如需判断 WebRTC-first 二期实现边界、默认构建行为、验收门禁和剩余缺口，请以 [webrtc_first_phase2_master_plan.md](webrtc_first_phase2_master_plan.md) 为准。
+
 ## 1. 目标
 
 本项目不是要交付一个完整的 `libwebrtc.a` 全家桶，而是要交付一个适合 Linux native 业务侧集成的 SDK。

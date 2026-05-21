@@ -233,6 +233,25 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     return Status::Ok();
   }
 
+  Status OnNetworkRouteChange(uint32_t start_bitrate_bps,
+                              uint32_t min_bitrate_bps,
+                              uint32_t max_bitrate_bps,
+                              int64_t at_time_us) override {
+    const uint32_t old_final_target_bps = FinalTargetBps();
+    config_.session.start_bitrate_bps = start_bitrate_bps;
+    config_.session.min_bitrate_bps = min_bitrate_bps;
+    config_.session.max_bitrate_bps = max_bitrate_bps;
+    googcc_.OnNetworkRouteChange(start_bitrate_bps, min_bitrate_bps,
+                                 max_bitrate_bps, at_time_us);
+    const uint32_t new_final_target_bps = FinalTargetBps();
+    if (new_final_target_bps < old_final_target_bps) {
+      ResetPacerQueue(at_time_us);
+    }
+    ApplyProbeClusters();
+    ApplyGoogCcRates();
+    return Status::Ok();
+  }
+
   EncoderAdaptation GetEncoderAdaptation(int64_t now_us) const override {
     (void)now_us;
     EncoderAdaptation out;
