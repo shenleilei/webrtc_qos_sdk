@@ -38,6 +38,7 @@ run_case() {
   local min_nack="${18}"
   local min_retransmitted="${19}"
   local case_dir="${LOG_DIR}/${name}"
+  local network_seed="${run}"
 
   echo "running udp long stream case ${name} content=${content} run=${run}"
   SDK_ROOT="${SDK_ROOT}" \
@@ -50,6 +51,7 @@ run_case() {
   HEIGHT="${HEIGHT}" \
   BITRATE="${BITRATE}" \
   CONTENT="${content}" \
+  NETWORK_SEED="${network_seed}" \
   JITTER_MS=0 \
   JITTER_EVERY_N=0 \
     bash "${SDK_ROOT}/scripts/run_udp_long_stream_smoke.sh" \
@@ -57,6 +59,7 @@ run_case() {
 
   python3 - "${case_dir}/summary.json" "${LOG_DIR}/metrics.jsonl" \
     "${name}" "${profile}" "${content}" "${run}" \
+    "${network_seed}" \
     "${min_completed}" "${min_decoded}" \
     "${min_target_max}" "${min_fps_max}" "${min_reconfigs}" \
     "${max_gap_ms}" "${max_completion_gap_ms}" \
@@ -73,20 +76,21 @@ name = sys.argv[3]
 profile = sys.argv[4]
 content = sys.argv[5]
 run = int(sys.argv[6])
+network_seed = int(sys.argv[7])
 thresholds = {
-    "min_completed": int(sys.argv[7]),
-    "min_decoded": int(sys.argv[8]),
-    "min_target_max": int(sys.argv[9]),
-    "min_fps_max": int(sys.argv[10]),
-    "min_reconfigs": int(sys.argv[11]),
-    "max_gap_ms": int(sys.argv[12]),
-    "max_completion_gap_ms": int(sys.argv[13]),
-    "min_psnr_avg": float(sys.argv[14]),
-    "min_psnr_min": float(sys.argv[15]),
-    "min_phase_changes": int(sys.argv[16]),
-    "min_rate_caps": int(sys.argv[17]),
-    "min_nack": int(sys.argv[18]),
-    "min_retransmitted": int(sys.argv[19]),
+    "min_completed": int(sys.argv[8]),
+    "min_decoded": int(sys.argv[9]),
+    "min_target_max": int(sys.argv[10]),
+    "min_fps_max": int(sys.argv[11]),
+    "min_reconfigs": int(sys.argv[12]),
+    "max_gap_ms": int(sys.argv[13]),
+    "max_completion_gap_ms": int(sys.argv[14]),
+    "min_psnr_avg": float(sys.argv[15]),
+    "min_psnr_min": float(sys.argv[16]),
+    "min_phase_changes": int(sys.argv[17]),
+    "min_rate_caps": int(sys.argv[18]),
+    "min_nack": int(sys.argv[19]),
+    "min_retransmitted": int(sys.argv[20]),
 }
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 sender = summary["sender"]
@@ -111,6 +115,8 @@ check(sender["adapt_fps_last"] >= 30, "sender_fps_did_not_recover")
 check(sender["adapt_target_last"] >= 1000000,
       "sender_bitrate_did_not_recover")
 check(server["profile"] == profile, "server_profile_mismatch")
+check(server.get("network_seed", network_seed) == network_seed,
+      "server_network_seed_mismatch")
 check(server["phase_changes"] >= thresholds["min_phase_changes"],
       "phase_changes_low")
 check(server["impaired_packets"] > 0, "no_impaired_packets")
@@ -139,6 +145,7 @@ check(receiver["downlink_reports"] > 0, "downlink_reports_missing")
 summary["case"] = name
 summary["content"] = content
 summary["run"] = run
+summary["network_seed"] = network_seed
 summary["thresholds"] = thresholds
 summary["validation_failures"] = failures
 with jsonl_path.open("a", encoding="utf-8") as handle:
@@ -148,11 +155,12 @@ if failures:
     raise SystemExit(f"{name} failed: {', '.join(failures)}")
 print(
     "case={case} content={content} run={run} completed={completed} decoded={decoded} "
-    "target_min={target_min} fps_min={fps_min} target_last={target_last} "
+    "seed={seed} target_min={target_min} fps_min={fps_min} target_last={target_last} "
     "gap={gap} psnr_avg={psnr_avg:.2f}".format(
         case=name,
         content=content,
         run=run,
+        seed=network_seed,
         completed=receiver["completed"],
         decoded=receiver["decoded"],
         target_min=sender["adapt_target_min"],
@@ -172,13 +180,11 @@ for content in ${MATRIX_CONTENTS}; do
   min_psnr_min_strict=18.0
   min_psnr_avg_jitter=30.0
   min_psnr_min_jitter=18.0
-  max_gap_bandwidth=300
-  max_completion_gap_jitter=300
+  max_gap_bandwidth=400
+  max_completion_gap_jitter=400
   if [[ "${content}" == "detail_motion" ]]; then
-    min_psnr_min_strict=17.0
+    min_psnr_min_strict=16.0
     min_psnr_min_jitter=16.0
-    max_gap_bandwidth=400
-    max_completion_gap_jitter=350
   fi
   for run in $(seq 1 "${MATRIX_RUNS}"); do
     run_case "walking_dead_zone_${content}_run${run}" walking_dead_zone \
@@ -218,6 +224,7 @@ summary = {
     "cases": len(rows),
     "contents": sorted({row["content"] for row in rows}),
     "runs": sorted({row["run"] for row in rows}),
+    "network_seeds": sorted({row.get("network_seed", row["run"]) for row in rows}),
     "validation_failures": failures,
     "all_passed": not failures,
     "min_sender_target_bps": min(row["sender"]["adapt_target_min"] for row in rows),

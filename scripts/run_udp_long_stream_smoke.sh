@@ -19,6 +19,7 @@ DELAY_MS="${DELAY_MS:-0}"
 JITTER_MS="${JITTER_MS:-20}"
 JITTER_EVERY_N="${JITTER_EVERY_N:-17}"
 PROFILE="${PROFILE:-none}"
+NETWORK_SEED="${NETWORK_SEED:-0}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -43,6 +44,7 @@ receiver_pid=$!
   "--delay-ms=${DELAY_MS}" \
   "--jitter-ms=${JITTER_MS}" \
   "--jitter-every-n=${JITTER_EVERY_N}" \
+  "--network-seed=${NETWORK_SEED}" \
   "--profile=${PROFILE}" \
   >"${LOG_DIR}/server.log" 2>&1 &
 server_pid=$!
@@ -118,6 +120,7 @@ server_match = re.search(
     r"twcc_sent=(?P<twcc_sent>\d+) rr_sent=(?P<rr_sent>\d+) "
     r"quality_reports=(?P<quality_reports>\d+) rate_caps=(?P<rate_caps>\d+) "
     r"profile=(?P<profile>[A-Za-z0-9_]+) "
+    r"(?:network_seed=(?P<network_seed>\d+) )?"
     r"phase_changes=(?P<phase_changes>\d+) "
     r"phase_packets=(?P<phase_packets>\d+) "
     r"impaired_packets=(?P<impaired_packets>\d+) "

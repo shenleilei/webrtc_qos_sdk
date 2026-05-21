@@ -20,6 +20,7 @@ void Usage(const char* argv0) {
             << " <listen_port> <receiver_ip> <receiver_port>"
             << " [--drop-every=N] [--delay-ms=N] [--jitter-ms=N]"
             << " [--jitter-every-n=N]"
+            << " [--network-seed=N]"
             << " [--profile=none|walking_dead_zone|bandwidth_cliff_recover|jitter_loss_recover]\n";
 }
 
@@ -37,6 +38,32 @@ uint32_t MediaTimeMs(const webrtc_qos::RtpPacket& packet) {
   const uint32_t delta =
       packet.timestamp >= base ? packet.timestamp - base : packet.timestamp;
   return delta / 90;
+}
+
+uint32_t MixSeed(uint32_t seed, uint32_t a, uint32_t b) {
+  uint32_t x = seed ^ (a * 0x9e3779b9u) ^ (b * 0x85ebca6bu);
+  x ^= x >> 16;
+  x *= 0x7feb352du;
+  x ^= x >> 15;
+  x *= 0x846ca68bu;
+  x ^= x >> 16;
+  return x;
+}
+
+bool MatchesEvery(uint16_t interval,
+                  const webrtc_qos::RtpPacket& packet,
+                  uint32_t network_seed,
+                  uint32_t salt) {
+  if (interval == 0) {
+    return false;
+  }
+  if (network_seed == 0) {
+    return packet.sequence_number % interval == 0;
+  }
+  return MixSeed(network_seed ^ salt, packet.sequence_number,
+                 packet.timestamp) %
+             interval ==
+         0;
 }
 
 std::vector<NetemPhase> BuildProfile(const std::string& profile,
@@ -168,13 +195,15 @@ int main(int argc, char** argv) {
   uint32_t delay_ms = 0;
   uint32_t jitter_ms = 0;
   uint16_t jitter_every_n = 0;
+  uint32_t network_seed = 0;
   std::string profile = "none";
   for (int i = 4; i < argc; ++i) {
     const std::string arg = argv[i];
     if (ParseUint16Option(arg, "--drop-every=", &drop_every) ||
         ParseUint32Option(arg, "--delay-ms=", &delay_ms) ||
         ParseUint32Option(arg, "--jitter-ms=", &jitter_ms) ||
-        ParseUint16Option(arg, "--jitter-every-n=", &jitter_every_n)) {
+        ParseUint16Option(arg, "--jitter-every-n=", &jitter_every_n) ||
+        ParseUint32Option(arg, "--network-seed=", &network_seed)) {
       continue;
     }
     const std::string profile_prefix = "--profile=";
@@ -288,14 +317,14 @@ int main(int argc, char** argv) {
       SendEnvelope(fd, sender, MakeEnvelopeHeader(EnvelopeType::kUplinkTwcc, ids),
                    SerializeRtcpTransportFeedback(feedback));
       ++twcc_sent;
-      if (phase.drop_every > 0 &&
-          packet.sequence_number % phase.drop_every == 0) {
+      if (MatchesEvery(phase.drop_every, packet, network_seed, 0x51f15eedu)) {
         ++dropped;
         continue;
       }
       const std::vector<uint8_t> encoded = SerializeRtpPacket(packet);
-      if (phase.jitter_ms > 0 && phase.jitter_every_n > 0 &&
-          packet.sequence_number % phase.jitter_every_n == 0) {
+      if (phase.jitter_ms > 0 &&
+          MatchesEvery(phase.jitter_every_n, packet, network_seed,
+                       0x7177e2u)) {
         EnqueueDelayed(&delayed,
                        DelayedPacket{
                            encoded,
@@ -398,6 +427,7 @@ int main(int argc, char** argv) {
             << " quality_reports=" << quality_reports
             << " rate_caps=" << rate_caps
             << " profile=" << profile
+            << " network_seed=" << network_seed
             << " phase_changes=" << phase_changes
             << " phase_packets=" << phase_packets
             << " impaired_packets=" << impaired_packets

@@ -232,27 +232,30 @@ Latest local 320x180 real UDP matrix result (`MATRIX_CONTENTS=motion`, `MATRIX_R
 
 Aggregate: 3/3 cases passed, `decode_errors=0`, completed frames `490`, decoded frames `470`, sender target reached as low as `90000 bps`, sender FPS reached as low as `8`, sender recovered to `2500000 bps / 30 fps` in every case, max frame gap stayed at or below `380 ms`, PSNR average floor was `59.24 dB`, and all server caps recovered to unlimited at the end of each profile.
 
-Latest local 720p real UDP endpoint profile (`MATRIX_CONTENTS="motion low_motion detail_motion"`, `MATRIX_RUNS=1`, 1280x720, 2.5Mbps start):
+Latest local 720p real UDP endpoint profile (`MATRIX_CONTENTS="motion detail_motion"`, `MATRIX_RUNS=2`, 1280x720, 2.5Mbps start):
 
-`Max completion gap` is the receiver wall-clock interval between completed access units and is the primary low-latency QoE smoothness gate. `Max media gap` is the RTP media-time gap between completed frames; in this live profile it is recorded and bounded separately because the sender may intentionally skip old frames around recovery boundaries to keep latency low instead of preserving file-like continuity.
+`Max completion gap` is the receiver wall-clock interval between completed access units and is the primary low-latency QoE smoothness gate. `Max media gap` is the RTP media-time gap between completed frames; in this live profile it is recorded and bounded separately because the sender may intentionally skip old frames around recovery boundaries to keep latency low instead of preserving file-like continuity. `MATRIX_RUNS>1` now maps each run to a deterministic `network_seed`, so repeated runs shift drop/jitter positions instead of replaying the same impairment pattern.
 
-| Scenario / content | Completed / decoded | Sender min target | Sender min FPS | Sender last target / FPS | Max completion gap | Max media gap | PSNR avg/min | NACK / RTX | Result |
+| Scenario / content / seed | Completed / decoded | Sender min target | Sender min FPS | Sender last target / FPS | Max completion gap | Max media gap | PSNR avg/min | NACK / RTX | Result |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `walking_dead_zone` / `motion` | 137 / 136 | 90000 bps | 5 | 1555322 bps / 30 | 409 ms | 666 ms | 57.63 / 24.21 dB | 56 / 332 | PASS |
-| `bandwidth_cliff_recover` / `motion` | 153 / 153 | 180000 bps | 8 | 2500000 bps / 30 | 240 ms | 134 ms | 56.78 / 43.23 dB | 80 / 343 | PASS |
-| `jitter_loss_recover` / `motion` | 180 / 178 | 500000 bps | 15 | 1773410 bps / 30 | 257 ms | 267 ms | 53.52 / 23.06 dB | 38 / 53 | PASS |
-| `walking_dead_zone` / `low_motion` | 154 / 150 | 90000 bps | 5 | 1363236 bps / 30 | 419 ms | 666 ms | 72.18 / 30.07 dB | 50 / 304 | PASS |
-| `bandwidth_cliff_recover` / `low_motion` | 159 / 159 | 180000 bps | 8 | 1409461 bps / 30 | 155 ms | 134 ms | 69.84 / 42.64 dB | 71 / 310 | PASS |
-| `jitter_loss_recover` / `low_motion` | 185 / 182 | 500000 bps | 15 | 1520009 bps / 30 | 275 ms | 67 ms | 69.97 / 39.99 dB | 32 / 56 | PASS |
-| `walking_dead_zone` / `detail_motion` | 149 / 149 | 90000 bps | 5 | 1710012 bps / 30 | 397 ms | 200 ms | 41.60 / 36.20 dB | 56 / 358 | PASS |
-| `bandwidth_cliff_recover` / `detail_motion` | 161 / 159 | 180000 bps | 8 | 1591157 bps / 30 | 204 ms | 267 ms | 39.51 / 17.57 dB | 80 / 345 | PASS |
-| `jitter_loss_recover` / `detail_motion` | 189 / 185 | 500000 bps | 15 | 1748989 bps / 30 | 262 ms | 467 ms | 39.07 / 17.51 dB | 35 / 55 | PASS |
+| `walking_dead_zone` / `motion` / 1 | 136 / 136 | 90000 bps | 5 | 1410554 bps / 30 | 418 ms | 666 ms | 57.64 / 24.21 dB | 54 / 319 | PASS |
+| `bandwidth_cliff_recover` / `motion` / 1 | 153 / 153 | 180000 bps | 8 | 1534681 bps / 30 | 273 ms | 134 ms | 56.93 / 31.32 dB | 66 / 294 | PASS |
+| `jitter_loss_recover` / `motion` / 1 | 183 / 176 | 500000 bps | 15 | 1840064 bps / 30 | 285 ms | 300 ms | 54.03 / 26.41 dB | 37 / 67 | PASS |
+| `walking_dead_zone` / `motion` / 2 | 137 / 137 | 90000 bps | 5 | 1592602 bps / 30 | 418 ms | 666 ms | 57.72 / 24.21 dB | 52 / 282 | PASS |
+| `bandwidth_cliff_recover` / `motion` / 2 | 153 / 151 | 180000 bps | 8 | 1527483 bps / 30 | 178 ms | 400 ms | 56.95 / 26.33 dB | 60 / 288 | PASS |
+| `jitter_loss_recover` / `motion` / 2 | 183 / 179 | 500000 bps | 15 | 1840793 bps / 30 | 240 ms | 234 ms | 53.70 / 24.04 dB | 35 / 65 | PASS |
+| `walking_dead_zone` / `detail_motion` / 1 | 149 / 149 | 90000 bps | 5 | 1571862 bps / 30 | 397 ms | 200 ms | 41.60 / 36.20 dB | 55 / 329 | PASS |
+| `bandwidth_cliff_recover` / `detail_motion` / 1 | 162 / 159 | 180000 bps | 8 | 1604753 bps / 30 | 274 ms | 266 ms | 38.23 / 16.18 dB | 64 / 291 | PASS |
+| `jitter_loss_recover` / `detail_motion` / 1 | 189 / 183 | 500000 bps | 15 | 1758217 bps / 30 | 267 ms | 333 ms | 39.31 / 17.39 dB | 36 / 54 | PASS |
+| `walking_dead_zone` / `detail_motion` / 2 | 158 / 158 | 90000 bps | 5 | 1711050 bps / 30 | 399 ms | 233 ms | 41.26 / 34.04 dB | 66 / 501 | PASS |
+| `bandwidth_cliff_recover` / `detail_motion` / 2 | 162 / 162 | 180000 bps | 8 | 1623641 bps / 30 | 205 ms | 134 ms | 41.22 / 17.76 dB | 66 / 248 | PASS |
+| `jitter_loss_recover` / `detail_motion` / 2 | 189 / 183 | 500000 bps | 15 | 1758827 bps / 30 | 286 ms | 400 ms | 38.58 / 17.75 dB | 93 / 50 | PASS |
 
-Aggregate: 9/9 cases passed, `decode_errors=0`, completed frames `1467`, decoded frames `1451`, sender target reached as low as `90000 bps`, sender FPS reached as low as `5`, sender recovered to `30 fps`, sender recovered as high as `2500000 bps`, max completion gap stayed at or below `419 ms`, max media gap stayed at or below `666 ms`, PSNR average floor was `39.07 dB`, NACK count was `498`, and retransmissions were `2156`.
+Aggregate: 12/12 seeded cases passed, `network_seeds=[1,2]`, `decode_errors=0`, completed frames `1954`, decoded frames `1926`, sender target reached as low as `90000 bps`, sender FPS reached as low as `5`, sender recovered to `30 fps`, max completion gap stayed at or below `451 ms`, max media gap stayed at or below `666 ms`, PSNR average floor was `38.23 dB`, PSNR minimum floor was `16.18 dB`, NACK count was `584`, and retransmissions were `2788`.
 
 The key endpoint-side changes validated by this profile are: access units are enqueued to the pacer atomically so weak-network drops do not send half of a FU-A frame; the UDP long-stream sender uses a live low-latency pacer mode that can continue with P frames after stale P-frame drops; recovery keyframes are rate-limited instead of repeatedly injected during a recovery window; and the very weak `<100kbps` class drops to `5fps` before recovering to `30fps` when the route becomes healthy.
 
-Boundary of these UDP long-stream tests: they prove real process separation, core feedback wiring, live encoder adaptation, weak-network downshift, good-network recovery, receiver jitter/NACK, and real H264 decode/PSNR in a local relay-assisted topology. The relay is intentionally minimal and exists only to provide feedback plumbing, deterministic impairment, and retransmission cache behavior. These tests still do not prove production-global optimum because they do not yet use Linux `tc/netem`, real NIC queues, multiple concurrent play clients, real renderer freeze metrics, or a multi-seed/multi-run 720p matrix.
+Boundary of these UDP long-stream tests: they prove real process separation, core feedback wiring, live encoder adaptation, weak-network downshift, good-network recovery, receiver jitter/NACK, and real H264 decode/PSNR in a local relay-assisted topology. The relay is intentionally minimal and exists only to provide feedback plumbing, seeded deterministic impairment, and retransmission cache behavior. These tests still do not prove production-global optimum because they do not yet use Linux `tc/netem`, real NIC queues, multiple concurrent play clients, real renderer freeze metrics, or the full 3-content/5-scenario/3-seed strategy matrix in the real UDP topology.
 
 Role-based link verification:
 
@@ -548,8 +551,8 @@ Implementation boundary in this slice:
 - `udp_*_demo` proves the same small libraries work across a real local UDP C/S chain.
 - `udp_*_demo` also verifies `PLI -> server forward -> sender IDR resend -> receiver keyframe output`.
 - `run_udp_long_stream_smoke.sh` proves a real three-process UDP long-stream path with H264 encode/decode, TWCC, RTCP RR, receiver downlink quality, NACK retransmission, sender rate cap, PSNR, and duplicate completed-frame rejection.
-- `run_udp_long_stream_matrix.sh` proves real three-process dynamic weak-network adaptation with the server kept as a minimal relay/test harness: sender bitrate/FPS downshift under weak phases, cap removal and FPS recovery under good phases, receiver interval quality reporting, no decoder errors, and quantitative PSNR/completion-gap/media-gap gates.
-- `run_udp_long_stream_720p_profile.sh` raises the same endpoint QoS gate to 1280x720 real H264 encode/decode across `motion`, `low_motion`, and `detail_motion` content with live encoder reconfiguration, atomic access-unit pacing, NACK recovery, PSNR validation, and separate low-latency completion-gap versus media-gap accounting.
+- `run_udp_long_stream_matrix.sh` proves real three-process dynamic weak-network adaptation with the server kept as a minimal relay/test harness: sender bitrate/FPS downshift under weak phases, cap removal and FPS recovery under good phases, receiver interval quality reporting, no decoder errors, seeded deterministic drop/jitter variation, and quantitative PSNR/completion-gap/media-gap gates.
+- `run_udp_long_stream_720p_profile.sh` raises the same endpoint QoS gate to 1280x720 real H264 encode/decode across content profiles and deterministic network seeds with live encoder reconfiguration, atomic access-unit pacing, NACK recovery, PSNR validation, and separate low-latency completion-gap versus media-gap accounting.
 - `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.
 - `run_dynamic_qos_matrix.sh` proves the sender adaptation surface reacts in both directions: it degrades under bandwidth/RTT/loss impairment and climbs back when the network recovers.
 - `ffmpeg_encoder_demo` proves real H264 encoder output can enter the same Annex-B -> RTP -> pacer path used by synthetic/file demos.
