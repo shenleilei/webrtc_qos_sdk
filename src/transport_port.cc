@@ -5,6 +5,12 @@ namespace webrtc_qos {
 TransportPort::TransportPort(TransportSendCallback send_callback)
     : send_callback_(std::move(send_callback)) {}
 
+TransportPort::~TransportPort() = default;
+
+TransportPort::TransportPort(TransportPort&&) noexcept = default;
+
+TransportPort& TransportPort::operator=(TransportPort&&) noexcept = default;
+
 Status TransportPort::Send(TransportMessageType type,
                            const TransportIds& ids,
                            const std::vector<uint8_t>& payload,

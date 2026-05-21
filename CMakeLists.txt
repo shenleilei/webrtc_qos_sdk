@@ -211,9 +211,13 @@ install(TARGETS
   webrtc_qos_nack
   webrtc_qos_pacer
   webrtc_qos_video
-  ${WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS}
   EXPORT WebRtcQosSdkTargets
   ARCHIVE DESTINATION lib)
+if(WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS)
+  install(TARGETS
+    ${WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS}
+    ARCHIVE DESTINATION lib)
+endif()
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS
   qos_loopback_demo

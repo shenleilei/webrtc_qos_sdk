@@ -211,7 +211,7 @@ for content in ${MATRIX_CONTENTS}; do
     case_index=$((case_index + 1))
     run_case "jitter_loss_recover_${content}_run${run}" jitter_loss_recover \
       "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
-      200 200 200 500000 15 "${MIN_RECONFIGS_JITTER}" 1200 500 \
+      200 200 200 500000 15 "${MIN_RECONFIGS_JITTER}" 1400 500 \
       "${min_psnr_avg_jitter}" "${min_psnr_min_jitter}" 3 4 1 1
     case_index=$((case_index + 1))
   done

@@ -14,6 +14,13 @@ VideoJitterPlayer::VideoJitterPlayer(
     std::unique_ptr<VideoJitterBackend> backend)
     : config_(config), backend_(std::move(backend)) {}
 
+VideoJitterPlayer::~VideoJitterPlayer() = default;
+
+VideoJitterPlayer::VideoJitterPlayer(VideoJitterPlayer&&) noexcept = default;
+
+VideoJitterPlayer& VideoJitterPlayer::operator=(
+    VideoJitterPlayer&&) noexcept = default;
+
 Status VideoJitterPlayer::InsertPacket(const RtpPacket& packet) {
   return InsertPacket(packet, packet.receive_time_us);
 }

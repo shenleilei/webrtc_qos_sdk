@@ -18,6 +18,14 @@ SenderQosController::SenderQosController(
       pacing_bps_(config.start_bitrate_bps),
       backend_(std::move(backend)) {}
 
+SenderQosController::~SenderQosController() = default;
+
+SenderQosController::SenderQosController(
+    SenderQosController&&) noexcept = default;
+
+SenderQosController& SenderQosController::operator=(
+    SenderQosController&&) noexcept = default;
+
 Status SenderQosController::OnPacketSent(uint16_t transport_sequence_number,
                                          size_t packet_size,
                                          int64_t send_time_us) {

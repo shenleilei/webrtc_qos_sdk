@@ -13,6 +13,23 @@ The current scope is intentionally narrow:
 - Receiver-side jitter and downlink quality facade.
 - No audio, NetEq, Opus, capture device, renderer, ICE, DTLS, SRTP, SDP, or PeerConnection.
 
+Code map:
+
+- `include/webrtc_qos/`: public SDK headers that applications include.
+- `src/h264_annexb.cc`: Annex-B NALU split/join, H264 AU classification, SPS/PPS/IDR/B-frame checks.
+- `src/rtp_packet.cc`: lightweight RTP parse/serialize and transport-wide sequence number header extension.
+- `src/rtcp_packets.cc`: RTCP SR, RR, TWCC transport feedback, Generic NACK, and PLI packet helpers.
+- `src/transport_feedback.cc`: SDK binary helpers for downlink quality and sender rate cap messages.
+- `src/sender_qos_controller.cc`: sender QoS facade, lightweight fallback estimator, encoder bitrate/FPS adaptation, rate-cap handling, and backend hook for WebRTC GoogCC.
+- `src/sender_pacer.cc`: SDK lightweight token-bucket sender pacer with retransmission priority and bounded queue behavior.
+- `src/video_sender.cc`: H264 Annex-B AU to RTP packetization, Single NALU/FU-A output, RTP timestamp and transport sequence assignment.
+- `src/video_receiver.cc` and `src/video_jitter_player.cc`: H264 RTP depacketization, jitter assembly facade, and complete Annex-B AU output.
+- `src/receiver_qos_observer.cc` and `src/retransmission_cache.cc`: receiver gap detection, NACK candidates, downlink reports, and sender/server retransmission cache.
+- `src/production_transport_adapter.cc` and `include/webrtc_qos/transport_port.h`: business transport boundary and owned async message adapter.
+- `src/sender_qos_googcc_bridge.cc`: optional bridge from the SDK sender QoS facade to the WebRTC `network_control/goog_cc` adapter.
+- `src/video_jitter_bridge.cc`: optional bridge from the SDK video jitter facade to the WebRTC-backed H264 PacketBuffer adapter.
+- `src/ffmpeg_h264_encoder.cc` and `src/ffmpeg_h264_decoder.cc`: optional real H264 encode/decode adapters used by demos and QoE validation, not required by the core QoS/jitter SDK.
+
 Build:
 
 ```bash
@@ -55,6 +72,79 @@ output/
     libwebrtc_qos_ffmpeg_encoder.a  # optional, when FFmpeg/libx264 is present
     libwebrtc_qos_ffmpeg_decoder.a  # optional, when FFmpeg/libavcodec is present
   demo/
+```
+
+Repository release bundle:
+
+```text
+dist/linux-x86_64/
+  include/webrtc_qos/
+  lib/
+    libwebrtc_qos*.a
+    cmake/WebRtcQosSdk/
+  README.md
+```
+
+The source-tree `include/webrtc_qos/` directory is the editable public API. The
+`dist/linux-x86_64/` directory is the checked-in Linux x86_64 SDK bundle for
+direct application integration: it contains the exported headers, static
+archives, and CMake package files produced from `/root/output`. Build outputs
+under `build/` remain ignored; only this explicit `dist/` bundle is intended to
+carry `.a` files in Git.
+
+The checked-in bundle currently contains 19 public headers and 15 static
+archives. The WebRTC-built archives are included:
+`libwebrtc_qos_googcc_adapter.a` for `network_control/goog_cc` and
+`libwebrtc_qos_video_jitter_adapter.a` for the H264 PacketBuffer-based video
+jitter path.
+
+Release bundle portability:
+
+- Supported binary target: Linux x86_64, ELF64, System V ABI.
+- The CMake package uses relative paths through `_IMPORT_PREFIX`; it must not contain `/root/output`, `/root/webrtc_qos_sdk`, `/root/src`, or `/usr/lib64` as fixed SDK paths.
+- Core SDK, WebRTC GoogCC, and WebRTC H264 jitter adapter consumers need `pthread`, `dl`, `rt`, and `atomic` in addition to the selected SDK archives.
+- FFmpeg encoder/decoder archives are optional demo/QoE validation pieces. Their CMake targets are created only when the target server can find `avcodec`, `avutil`, and `swscale`; the core QoS/jitter role targets do not require FFmpeg.
+- This package is not guaranteed to be independent of every Linux version. Static `.a` archives still depend on the target machine's libc/libstdc++ ABI at final link/runtime. For production, build the bundle on the oldest supported distro/toolchain or ship a container/toolchain profile.
+- A server can consume the bundle without the source tree by pointing CMake at `dist/linux-x86_64` and linking role targets such as `WebRtcQosSdk::role_push` and `WebRtcQosSdk::role_play`.
+
+Public C++ ABI rule for split static libraries:
+
+- Public stateful classes that own STL containers, `std::function`, `std::unique_ptr`, pimpl objects, or backend interfaces must not rely on header-generated lifecycle code when they are consumed from split `.a` libraries.
+- `SenderQosController`, `TransportPort`, and `VideoJitterPlayer` provide out-of-line destructor/move definitions in the SDK archives so external applications do not generate incompatible lifecycle code from headers.
+- `scripts/verify_cmake_package.sh` is the release gate for this class of issue: it builds an external project against only `dist/linux-x86_64`, links role targets, then constructs, moves, calls, and destroys push/play/transport/prototype objects.
+- If a new public stateful class is added, add it to the external CMake consumer test before shipping the dist bundle.
+
+Regenerate the source install and checked-in release bundle:
+
+```bash
+cd /root
+cmake -S webrtc_qos_sdk -B webrtc_qos_sdk/build -DCMAKE_BUILD_TYPE=Release
+cmake --build webrtc_qos_sdk/build -j"$(nproc)"
+cmake --install webrtc_qos_sdk/build --prefix /root/output
+bash webrtc_qos_sdk/scripts/package_webrtc_googcc.sh
+bash webrtc_qos_sdk/scripts/build_googcc_bridge.sh
+bash webrtc_qos_sdk/scripts/build_video_jitter_bridge.sh
+cd /root/webrtc_qos_sdk
+rm -rf dist/linux-x86_64/include dist/linux-x86_64/lib dist/linux-x86_64/README.md
+mkdir -p dist/linux-x86_64
+cp -a /root/output/include dist/linux-x86_64/
+cp -a /root/output/lib dist/linux-x86_64/
+cp -a /root/output/README.md dist/linux-x86_64/README.md
+find dist/linux-x86_64/include/webrtc_qos -maxdepth 1 -type f | wc -l
+find dist/linux-x86_64/lib -maxdepth 1 -name '*.a' -type f | wc -l
+```
+
+Verify the release bundle before committing it:
+
+```bash
+cd /root/webrtc_qos_sdk
+if rg -n "/root/output|/root/webrtc_qos_sdk|/root/src|/usr/lib64" \
+  dist/linux-x86_64/lib/cmake/WebRtcQosSdk; then
+  echo "unexpected absolute path in release CMake package"
+  exit 1
+fi
+find dist/linux-x86_64/lib -maxdepth 1 -name '*.a' -type f -print | sort | xargs file
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 bash scripts/verify_cmake_package.sh
 ```
 
 Library boundaries:
@@ -242,24 +332,24 @@ Latest local two-process direct result:
 | Receiver max completion / media gap | 50 / 67 ms |
 | Receiver NACK / downlink reports | 17 / 7 |
 
-Latest local two-process direct dynamic matrix result (`MATRIX_CONTENTS="motion low_motion detail_motion"`, `MATRIX_RUNS=1`, default `FRAMES=300`):
+Latest local two-process direct dynamic matrix result (`MATRIX_CONTENTS="motion low_motion detail_motion"`, `MATRIX_RUNS=3`, default `FRAMES=300`):
 
 | Metric | Value |
 | --- | ---: |
-| Cases | 9 / 9 passed |
-| Completed / decoded frames | 2130 / 2130 |
+| Cases | 27 / 27 passed |
+| Completed / decoded frames | 6300 / 6300 |
 | Decode errors | 0 |
 | Sender target min / recovered max | 80000 / 2500000 bps |
 | Sender FPS min / recovered max | 5 / 30 |
-| Receiver direct drop / delay / jitter events | 143 / 714 / 270 |
-| Receiver max completion gap | 785 ms |
-| Receiver max media gap | 1300 ms |
-| Receiver PSNR avg/min floor | 50.62 / 32.64 dB |
-| NACK / PLI / sender retransmissions | 162 / 14 / 1175 |
-| Sender rate caps | 100 |
+| Receiver direct drop / delay / jitter events | 372 / 1878 / 743 |
+| Receiver max completion gap | 943 ms |
+| Receiver max media gap | 1600 ms |
+| Receiver PSNR avg/min floor | 50.11 / 32.37 dB |
+| NACK / PLI / sender retransmissions | 399 / 45 / 3480 |
+| Sender rate caps | 304 |
 | Sender max encode gap | 200 ms |
-| Sender pacer dropped AUs / enqueue dropped AUs | 44 / 0 |
-| Sender source frame skips | 386 |
+| Sender pacer dropped AUs / enqueue dropped AUs | 137 / 0 |
+| Sender source frame skips | 1257 |
 
 Per-case direct matrix samples:
 
@@ -276,6 +366,16 @@ Per-case direct matrix samples:
 | `jitter_loss_recover` / `detail_motion` | 242 / 242 | 500000 bps | 10 | 2500000 bps / 30 | 733 / 257 ms | 50.65 / 42.34 dB | 17 / 133 / 1 |
 
 Direct matrix interpretation: the endpoint-only path proves downshift, recovery, real H264 decode, direct receiver feedback, and sender-side retransmission without server relay behavior. The test explicitly verifies both directions of adaptation: the sender drops to `80kbps/5fps` in the hardest outage phases and returns to `2500000bps/30fps` after the receiver removes the rate cap. `max_completion_gap_ms` remains the primary low-latency smoothness gate, while `max_frame_gap_ms`, `source_frame_skips`, and `pacer_drop_aus` record the continuity cost of intentionally discarding old media to avoid queue buildup. The current direct profile still uses a local synthetic link emulator, not Linux `tc/netem` and not a production SFU.
+
+The direct matrix now treats `completion_gap` and media-time `frame_gap`
+separately. `completion_gap` is the wall-clock interval between successfully
+decoded receiver frames and is the low-latency smoothness gate. `frame_gap`
+records continuity cost from FPS reduction, stale-frame dropping, and keyframe
+recovery; it is allowed to be larger during severe synthetic jitter/loss as long
+as decode errors remain zero, completion gaps stay bounded, and the sender
+recovers bitrate/FPS after the route becomes healthy. Receiver PLI now forces an
+immediate sender keyframe instead of being throttled by the normal 2s periodic
+keyframe interval.
 
 Real UDP long-stream dynamic weak-network matrix:
 

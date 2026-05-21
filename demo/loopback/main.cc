@@ -59,6 +59,7 @@ int main() {
 
   size_t frames = 0;
   size_t recovery = 0;
+  std::vector<uint16_t> pending_retransmissions;
   VideoReceiver receiver(
       VideoReceiverConfig{ids},
       VideoReceiverCallbacks{
@@ -79,13 +80,28 @@ int main() {
                       << static_cast<int>(request.type)
                       << " missing=" << request.missing_rtp_sequence_numbers.size()
                       << "\n";
+            pending_retransmissions.insert(
+                pending_retransmissions.end(),
+                request.missing_rtp_sequence_numbers.begin(),
+                request.missing_rtp_sequence_numbers.end());
           }});
   receiver.SetDownlinkRttMs(12);
+  const auto drain_retransmissions = [&]() {
+    std::vector<uint16_t> missing;
+    missing.swap(pending_retransmissions);
+    for (uint16_t sequence_number : missing) {
+      auto retransmission = server_cache.Find(sequence_number, 500);
+      if (retransmission) {
+        receiver.OnRtpPacket(*retransmission, NowUs());
+      }
+    }
+  };
 
   const auto idr = SyntheticIdrAu();
   const auto p = SyntheticPAu();
-  sender.SendAnnexBAccessUnit(idr.data(), idr.size(), NowUs());
-  sender.SendAnnexBAccessUnit(p.data(), p.size(), NowUs());
+  const int64_t first_capture_us = NowUs();
+  sender.SendAnnexBAccessUnit(idr.data(), idr.size(), first_capture_us);
+  sender.SendAnnexBAccessUnit(p.data(), p.size(), first_capture_us + 33333);
 
   for (int i = 0; i < 20; ++i) {
     pacer.Tick(NowUs() + i * 5000);
@@ -100,13 +116,9 @@ int main() {
   }
   for (const auto& packet : network_packets) {
     receiver.OnRtpPacket(packet, NowUs());
+    drain_retransmissions();
   }
-  if (sent_packets.size() > 1) {
-    auto retransmission = server_cache.Find(sent_packets[1].sequence_number, 500);
-    if (retransmission) {
-      receiver.OnRtpPacket(*retransmission, NowUs());
-    }
-  }
+  drain_retransmissions();
   receiver.MaybeReport(NowUs() + 250000);
 
   const SenderPacerStats stats = pacer.GetStats();

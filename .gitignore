@@ -2,6 +2,7 @@ build/
 build_*/
 *.o
 *.a
+!dist/**/*.a
 *.log
 __pycache__/
 compile_commands.json

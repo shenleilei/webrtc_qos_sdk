@@ -82,9 +82,14 @@ int main() {
                     1000000)) {
     return 2;
   }
+  webrtc_qos::TransportPort moved_port(std::move(port));
+  if (!moved_port.Send(webrtc_qos::TransportMessageType::kRtcpPli, ids,
+                       payload, 1000100)) {
+    return 3;
+  }
   return queued.lane == webrtc_qos::ProductionTransportLane::kUnreliableControl
              ? 0
-             : 3;
+             : 4;
 }
 EOF
 
@@ -125,40 +130,73 @@ int main() {
   webrtc_qos::SenderQosControllerConfig qos_config;
   qos_config.ids = ids;
   auto qos = webrtc_qos::CreateGoogCcSenderQosController(qos_config, 1000000);
+  auto moved_qos = std::move(qos);
   webrtc_qos::SenderPacer pacer(
       webrtc_qos::SenderPacerConfig{},
       [&](const webrtc_qos::RtpPacket& packet) {
-        return qos.OnPacketSent(packet.transport_sequence_number,
-                                packet.payload.size() + 20, 1000000);
+        return moved_qos.OnPacketSent(packet.transport_sequence_number,
+                                      packet.payload.size() + 20, 1000000);
       });
   webrtc_qos::VideoSender sender(webrtc_qos::VideoSenderConfig{ids}, &pacer);
   const uint8_t au[] = {0, 0, 0, 1, 0x67, 0x42, 0xe0, 0x1f,
                         0, 0, 0, 1, 0x68, 0xce, 0x3c, 0x80,
                         0, 0, 0, 1, 0x65, 1,    2,    3};
-  return sender.SendAnnexBAccessUnit(au, sizeof(au), 1000000) ? 0 : 1;
+  if (!sender.SendAnnexBAccessUnit(au, sizeof(au), 1000000)) {
+    return 1;
+  }
+  return moved_qos.GetTargetRates(1000000).final_target_bps > 0 ? 0 : 2;
 }
 EOF
 
 cat > "${WORK_DIR}/play_role.cc" <<'EOF'
-#include "webrtc_qos/receiver_qos_observer.h"
 #include "webrtc_qos/rtp_packet.h"
 #include "webrtc_qos/video_jitter_bridge.h"
 
 int main() {
   webrtc_qos::TransportIds ids{1, 1, 1, 0x12345678, 2};
-  webrtc_qos::ReceiverQosObserver observer(
-      webrtc_qos::ReceiverQosObserverConfig{ids, 200});
   auto jitter = webrtc_qos::CreateWebRtcVideoJitterPlayer(
       webrtc_qos::VideoJitterPlayerConfig{ids.sender_ssrc});
-  webrtc_qos::RtpPacket packet;
-  packet.marker = true;
-  packet.sequence_number = 1;
-  packet.timestamp = 90000;
-  packet.ssrc = ids.sender_ssrc;
-  packet.transport_sequence_number = 1;
-  packet.payload = {0x65, 1, 2, 3};
-  observer.OnRtpPacketReceived(packet, 1000000);
-  return jitter.InsertPacket(packet, 1000000) ? 0 : 1;
+  auto moved_jitter = std::move(jitter);
+  const uint8_t sps[] = {0x67, 0x42, 0xe0, 0x1f, 0x8c, 0x68, 0x14, 0x19,
+                         0x79, 0xe0, 0x1e, 0x11, 0x08, 0xd4, 0x00, 0x04};
+  const uint8_t pps[] = {0x68, 0xce, 0x3c, 0x80, 0x00, 0x2e};
+  const uint8_t idr[] = {0x65, 0xb8, 0x00, 0x04, 0x08, 0x79,
+                         0x31, 0x40, 0x00, 0x42, 0xae, 0x4d};
+
+  auto make_packet = [&](uint16_t seq, bool marker, const uint8_t* payload,
+                         size_t size) {
+    webrtc_qos::RtpPacket packet;
+    packet.payload_type = webrtc_qos::kH264PayloadType;
+    packet.marker = marker;
+    packet.sequence_number = seq;
+    packet.timestamp = 90000;
+    packet.ssrc = ids.sender_ssrc;
+    packet.transport_sequence_number = seq;
+    packet.payload.assign(payload, payload + size);
+    return packet;
+  };
+
+  auto status =
+      moved_jitter.InsertPacket(make_packet(100, false, sps, sizeof(sps)),
+                                1000000);
+  if (!status) {
+    return 1;
+  }
+  status = moved_jitter.InsertPacket(make_packet(101, false, pps, sizeof(pps)),
+                                     1001000);
+  if (!status) {
+    return 2;
+  }
+  status = moved_jitter.InsertPacket(make_packet(102, true, idr, sizeof(idr)),
+                                     1002000);
+  if (!status) {
+    return 3;
+  }
+  webrtc_qos::EncodedVideoFrame frame;
+  return moved_jitter.HasFrame() && moved_jitter.PopFrame(&frame) &&
+                 frame.keyframe
+             ? 0
+             : 4;
 }
 EOF
 
@@ -173,8 +211,10 @@ int main() {
   auto qos = webrtc_qos::CreateGoogCcSenderQosController(qos_config, 1000000);
   auto jitter = webrtc_qos::CreateWebRtcVideoJitterPlayer(
       webrtc_qos::VideoJitterPlayerConfig{ids.sender_ssrc});
-  return qos.GetTargetRates(1000000).googcc_target_bps > 0 &&
-                 !jitter.HasFrame()
+  auto moved_qos = std::move(qos);
+  auto moved_jitter = std::move(jitter);
+  return moved_qos.GetTargetRates(1000000).googcc_target_bps > 0 &&
+                 !moved_jitter.HasFrame()
              ? 0
              : 1;
 }

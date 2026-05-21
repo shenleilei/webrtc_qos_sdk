@@ -146,6 +146,7 @@ int main(int argc, char** argv) {
   uint32_t applied_bitrate_bps = bitrate_bps;
   uint32_t applied_fps = 30;
   bool force_keyframe_next = true;
+  bool force_keyframe_immediate = true;
   int64_t last_keyframe_encode_us = -10000000;
   int64_t route_recovery_until_us = 0;
   uint32_t route_recovery_bps = 0;
@@ -207,6 +208,7 @@ int main(int argc, char** argv) {
   };
   const auto request_keyframe_now = [&]() {
     force_keyframe_next = true;
+    force_keyframe_immediate = true;
   };
   const auto route_recovery_limit_bps = [&]() -> uint32_t {
     if (route_recovery_until_us <= 0 || pacer_time_us >= route_recovery_until_us) {
@@ -417,6 +419,7 @@ int main(int argc, char** argv) {
                                       pacer_recovery_keyframe;
       const bool interval_ok =
           encoded_frames == 0 ||
+          force_keyframe_immediate ||
           pacer_recovery_keyframe ||
           pacer_time_us - last_keyframe_encode_us >=
               (pacer_recovery_keyframe ? kPacerRecoveryKeyframeIntervalUs
@@ -431,6 +434,7 @@ int main(int argc, char** argv) {
       }
       if (force_keyframe) {
         force_keyframe_next = false;
+        force_keyframe_immediate = false;
         last_keyframe_encode_us = pacer_time_us;
         ++forced_keyframes;
       }
