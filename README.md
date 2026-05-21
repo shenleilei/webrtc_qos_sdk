@@ -79,7 +79,7 @@ Library boundaries:
 Optional integration sets:
 
 - Push client: `core`, `rtp`, `rtcp`, `feedback`, `nack`, `pacer`, `video`, `googcc_bridge`, `googcc_adapter`.
-- Server relay: `rtp`, `rtcp`, `feedback`, `transport`, `nack`.
+- Optional relay harness: `rtp`, `rtcp`, `feedback`, `transport`, `nack`.
 - Play client: `core`, `rtp`, `rtcp`, `feedback`, `nack`, `video`, `video_jitter_bridge`, `video_jitter_adapter`.
 - Simple single-library prototype: `libwebrtc_qos.a` plus `libwebrtc_qos_googcc_bridge.a`, `libwebrtc_qos_googcc_adapter.a`, `libwebrtc_qos_video_jitter_bridge.a`, and `libwebrtc_qos_video_jitter_adapter.a` as needed.
 
@@ -167,92 +167,101 @@ DROP_RTP_SEQ=2 REORDER_RTP_SEQ=4 DELAY_MS=30 \
   bash webrtc_qos_sdk/scripts/run_udp_loopback_demo.sh
 ```
 
-Real UDP long-stream QoE smoke:
+Real UDP endpoint QoE smoke:
 
 ```bash
-bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
 bash webrtc_qos_sdk/scripts/run_udp_direct_long_stream_smoke.sh
 bash webrtc_qos_sdk/scripts/run_udp_direct_long_stream_matrix.sh
+bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
 ```
 
-This starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. The server process is intentionally minimal: it is a local UDP relay/test harness for forwarding RTP, producing sender-side TWCC/RR feedback, injecting deterministic weak-network phases, and retransmitting from a cache after receiver NACK. It is not a production SFU, not a long-term server SDK target, and not a Linux `tc/netem` deployment. The optimization focus is endpoint SDK behavior on the sender and receiver.
-
-`run_udp_direct_long_stream_smoke.sh` removes the relay from the path and runs only `udp_long_sender_demo <-> udp_long_receiver_demo`. In this direct mode, the receiver sends standard TWCC, RTCP RR, RTCP NACK, downlink quality, and `SENDER_RATE_CAP_V1` directly back to the sender; the sender retransmits from its own RTP cache. This verifies the endpoint SDK QoS loop itself instead of relying on server-side retransmission or SFU behavior.
+The primary Phase-1a topology is two endpoint processes only: `udp_long_sender_demo <-> udp_long_receiver_demo`. In this direct mode, the receiver sends standard TWCC, RTCP RR, RTCP NACK, downlink quality, and `SENDER_RATE_CAP_V1` directly back to the sender; the sender retransmits from its own RTP cache. This verifies the endpoint SDK QoS loop itself instead of relying on server-side retransmission or SFU behavior.
 
 `run_udp_direct_long_stream_matrix.sh` keeps the same two-process direct topology and moves the weak-network profile into the receiver endpoint. It runs `walking_dead_zone`, `bandwidth_cliff_recover`, and `jitter_loss_recover` with receiver-side drop/delay/jitter/rate-cap generation, so the sender adaptation and receiver jitter/NACK behavior are validated without any relay process.
 
-The feedback topology in this smoke is:
+`run_udp_long_stream_smoke.sh` starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. The server process is intentionally minimal: it is a local UDP relay/test harness for forwarding RTP, producing sender-side TWCC/RR feedback, injecting deterministic weak-network phases, and retransmitting from a cache after receiver NACK. It is not a production SFU, not a long-term server SDK target, and not a Linux `tc/netem` deployment. The optimization focus remains endpoint SDK behavior on the sender and receiver.
+
+The direct endpoint feedback topology is:
+
+- `sender -> receiver`: H264 RTP plus periodic RTCP SR.
+- `receiver -> sender`: standard RTCP TWCC generated from received RTP arrivals, RTCP RR generated from sender SR, RTCP NACK/PLI, downlink quality, and `SENDER_RATE_CAP_V1`.
+- Retransmission cache: sender-side, with original RTP sequence number and new transport-wide sequence number on resend.
+
+The optional relay harness feedback topology is:
 
 - `sender -> server`: H264 RTP plus periodic RTCP SR.
 - `server -> sender`: standard RTCP TWCC generated from sender uplink RTP arrivals, RTCP RR generated from sender SR, and `SENDER_RATE_CAP_V1` when receiver downlink quality indicates impairment.
 - `server -> receiver`: RTP forwarding with optional drop/delay/jitter and server-side retransmission from cache.
 - `receiver -> server`: `DOWNLINK_QUALITY_V1` reports, RTCP NACK for missing RTP sequence numbers, and BYE.
 
-The default smoke uses real FFmpeg/libx264 encoding, live encoder bitrate/FPS reconfiguration from `SenderQosController::GetEncoderAdaptation`, RTP packetization, SDK pacer, real UDP sockets, server retransmission cache, receiver jitter assembly, FFmpeg H264 decode, source-aligned PSNR, max frame gap, and hard checks that TWCC/RR/downlink-quality feedback crossed process boundaries. It intentionally exercises periodic downlink jitter by default:
+The optional relay harness smoke uses real FFmpeg/libx264 encoding, live encoder bitrate/FPS reconfiguration from `SenderQosController::GetEncoderAdaptation`, RTP packetization, SDK pacer, real UDP sockets, server retransmission cache, receiver jitter assembly, FFmpeg H264 decode, source-aligned PSNR, max frame gap, and hard checks that TWCC/RR/downlink-quality feedback crossed process boundaries. It intentionally exercises periodic downlink jitter by default:
 
 ```bash
 LOG_DIR=/tmp/webrtc_qos_udp_long_stream_smoke \
   bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
 ```
 
-Latest local result:
+Latest local relay-harness result:
 
 | Metric | Value |
 | --- | ---: |
 | Source frames | 90 |
 | Sender encoded frames | 90 |
-| Sender RTP packets | 296 |
-| Sender TWCC feedback packets | 296 |
+| Sender RTP packets | 295 |
+| Sender TWCC feedback packets | 295 |
 | Sender RTCP RR packets | 3 |
 | Sender rate caps | 1 |
 | Sender adaptation target min/max | 1200000 / 2500000 bps |
 | Sender adaptation FPS min/max | 30 / 30 |
-| Server RTP in / forwarded | 296 / 296 |
+| Server RTP in / forwarded | 295 / 295 |
 | Server retransmissions | 17 |
-| Server downlink quality reports received | 5 |
-| Receiver RTP packets | 313 |
-| Receiver completed / decoded frames | 90 / 88 |
+| Server downlink quality reports received | 6 |
+| Receiver RTP packets | 312 |
+| Receiver completed / decoded frames | 90 / 85 |
 | Receiver decode errors | 0 |
-| Receiver PSNR avg / min | 42.68 / 27.18 dB |
-| Receiver max frame gap | 30 ms |
-| Receiver NACK / downlink reports | 17 / 6 |
+| Receiver PSNR avg / min | 47.46 / 26.84 dB |
+| Receiver max completion / media gap | 28 / 67 ms |
+| Receiver NACK / downlink reports | 17 / 7 |
 
 Latest local two-process direct result:
 
 | Metric | Value |
 | --- | ---: |
-| Sender encoded frames | 83 |
-| Sender RTP packets | 309 |
+| Sender encoded frames | 82 |
+| Sender RTP packets | 313 |
 | Sender TWCC / RR / rate-cap feedback | 60 / 3 / 2 |
 | Sender NACK feedback / retransmissions | 17 / 17 |
 | Sender adaptation target min/max | 500000 / 2500000 bps |
 | Sender adaptation FPS min/max | 15 / 30 |
-| Receiver RTP packets | 309 |
+| Receiver RTP packets | 313 |
 | Receiver intentional direct drops | 17 |
 | Receiver direct TWCC / RR / rate-caps | 61 / 3 / 2 |
-| Receiver completed / decoded frames | 83 / 78 |
+| Receiver completed / decoded frames | 82 / 79 |
 | Receiver decode errors | 0 |
-| Receiver PSNR avg / min | 44.41 / 26.48 dB |
-| Receiver max completion / media gap | 29 / 67 ms |
-| Receiver NACK / downlink reports | 17 / 6 |
+| Receiver PSNR avg / min | 43.73 / 24.67 dB |
+| Receiver max completion / media gap | 50 / 67 ms |
+| Receiver NACK / downlink reports | 17 / 7 |
 
 Latest local two-process direct dynamic matrix result (`MATRIX_CONTENTS=motion`, `MATRIX_RUNS=1`):
 
 | Metric | Value |
 | --- | ---: |
 | Cases | 3 / 3 passed |
-| Completed / decoded frames | 420 / 400 |
+| Completed / decoded frames | 419 / 402 |
 | Decode errors | 0 |
 | Sender target min / recovered max | 80000 / 2500000 bps |
 | Sender FPS min / recovered max | 5 / 30 |
-| Receiver direct drop / delay / jitter events | 47 / 325 / 99 |
-| Receiver max completion gap | 646 ms |
+| Receiver direct drop / delay / jitter events | 47 / 299 / 97 |
+| Receiver max completion gap | 652 ms |
 | Receiver max media gap | 1200 ms |
-| Receiver PSNR avg/min floor | 57.08 / 20.24 dB |
-| NACK / sender retransmissions | 42 / 185 |
-| Sender rate caps | 33 |
+| Receiver PSNR avg/min floor | 56.73 / 20.24 dB |
+| NACK / sender retransmissions | 41 / 160 |
+| Sender rate caps | 32 |
+| Sender max encode gap | 200 ms |
+| Sender pacer dropped AUs / enqueue dropped AUs | 9 / 0 |
+| Sender source frame skips | 179 |
 
-Direct matrix interpretation: the endpoint-only path proves downshift, recovery, real H264 decode, direct receiver feedback, and sender-side retransmission without server relay behavior. The current low-latency policy intentionally allows media-time gaps when recovering from severe impairment; therefore `max_completion_gap_ms` is the primary smoothness gate, while `max_frame_gap_ms` records the continuity cost that still needs a later continuity/renderer optimization pass.
+Direct matrix interpretation: the endpoint-only path proves downshift, recovery, real H264 decode, direct receiver feedback, and sender-side retransmission without server relay behavior. The current low-latency policy intentionally allows media-time gaps when recovering from severe impairment; therefore `max_completion_gap_ms` is the primary smoothness gate, while `max_frame_gap_ms`, `source_frame_skips`, and `pacer_drop_aus` record the continuity cost. The pacer now expires queued P-frame media at access-unit granularity rather than packet granularity, so the receiver is not left with half of a FU-A frame. In the hardest walking-dead-zone case, the remaining media gap is mainly caused by deliberate FPS downshift/source-frame skipping at 5 fps, not by enqueue failure.
 
 Real UDP long-stream dynamic weak-network matrix:
 

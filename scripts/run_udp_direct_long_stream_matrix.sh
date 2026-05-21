@@ -119,6 +119,8 @@ check(sender["adapt_target_last"] >= 1000000,
       "sender_bitrate_did_not_recover")
 check(sender["retransmitted"] >= thresholds["min_retransmitted"],
       "sender_retransmitted_low")
+check(sender.get("max_encode_gap_ms", 0) <= 250, "sender_encode_gap_high")
+check(sender.get("enqueue_dropped_aus", 0) == 0, "enqueue_dropped_aus")
 check(receiver["direct_profile"] == profile, "direct_profile_mismatch")
 check(receiver["direct_network_seed"] == network_seed,
       "direct_network_seed_mismatch")
@@ -201,7 +203,7 @@ for content in ${MATRIX_CONTENTS}; do
     case_index=$((case_index + 1))
     run_case "bandwidth_cliff_recover_${content}_run${run}" bandwidth_cliff_recover \
       "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
-      90 90 90 200000 8 "${MIN_RECONFIGS_BANDWIDTH}" 2000 500 \
+      90 90 90 200000 8 "${MIN_RECONFIGS_BANDWIDTH}" 1200 500 \
       "${min_psnr_avg_strict}" "${min_psnr_min_strict}" 4 4 0 0
     case_index=$((case_index + 1))
     run_case "jitter_loss_recover_${content}_run${run}" jitter_loss_recover \
@@ -248,6 +250,10 @@ summary = {
     "rate_caps": sum(row["sender"]["rate_caps"] for row in rows),
     "nack_sent": sum(row["receiver"]["nack"] for row in rows),
     "retransmitted": sum(row["sender"]["retransmitted"] for row in rows),
+    "max_encode_gap_ms": max(row["sender"].get("max_encode_gap_ms", 0) for row in rows),
+    "pacer_drop_aus": sum(row["sender"].get("pacer_drop_aus", 0) for row in rows),
+    "enqueue_dropped_aus": sum(row["sender"].get("enqueue_dropped_aus", 0) for row in rows),
+    "source_frame_skips": sum(row["sender"].get("source_frame_skips", 0) for row in rows),
     "direct_dropped": sum(row["receiver"]["direct_dropped"] for row in rows),
     "direct_delayed": sum(row["receiver"]["direct_delayed"] for row in rows),
     "direct_jittered": sum(row["receiver"]["direct_jittered"] for row in rows),

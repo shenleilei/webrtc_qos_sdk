@@ -99,6 +99,7 @@ sender_match = re.search(
     r"udp_long_sender frames=(?P<frames>\d+) "
     r"encoded_frames=(?P<encoded_frames>\d+) sent_packets=(?P<sent>\d+) "
     r"sent_bytes=(?P<bytes>\d+) pacer_drops=(?P<pacer_drops>\d+) "
+    r"(?:pacer_drop_aus=(?P<pacer_drop_aus>\d+) )?"
     r"(?:forced_keyframes=(?P<forced_keyframes>\d+) )?"
     r"twcc_feedback=(?P<twcc>\d+) rr=(?P<rr>\d+) "
     r"rate_caps=(?P<rate_caps>\d+) final_target_bps=(?P<target>\d+) "
@@ -113,7 +114,10 @@ sender_match = re.search(
     r"applied_bitrate_bps=(?P<applied_bitrate_bps>\d+) "
     r"applied_fps=(?P<applied_fps>\d+) "
     r"nack_feedback=(?P<nack_feedback>\d+) "
-    r"retransmitted=(?P<retransmitted>\d+)",
+    r"retransmitted=(?P<retransmitted>\d+)"
+    r"(?: max_encode_gap_ms=(?P<max_encode_gap_ms>\d+) "
+    r"enqueue_dropped_aus=(?P<enqueue_dropped_aus>\d+) "
+    r"source_frame_skips=(?P<source_frame_skips>\d+))?",
     sender_text,
 )
 receiver_match = re.search(

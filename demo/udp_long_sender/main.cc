@@ -128,8 +128,12 @@ int main(int argc, char** argv) {
   uint64_t rate_caps = 0;
   uint64_t nack_feedback = 0;
   uint64_t retransmitted_packets = 0;
+  uint64_t enqueue_dropped_aus = 0;
+  uint64_t source_frame_skips = 0;
   uint64_t encoder_reconfigs = 0;
   uint64_t forced_keyframes = 0;
+  int64_t last_encoded_capture_time_us = -1;
+  int64_t max_encode_gap_ms = 0;
   uint32_t adapt_target_min = std::numeric_limits<uint32_t>::max();
   uint32_t adapt_target_max = 0;
   uint32_t adapt_target_last = bitrate_bps;
@@ -388,8 +392,18 @@ int main(int argc, char** argv) {
         last_keyframe_encode_us = pacer_time_us;
         ++forced_keyframes;
       }
+      if (last_encoded_capture_time_us >= 0) {
+        max_encode_gap_ms =
+            std::max<int64_t>(max_encode_gap_ms,
+                              (capture_time_us - last_encoded_capture_time_us) /
+                                  1000);
+      }
+      last_encoded_capture_time_us = capture_time_us;
       status = sender.SendAnnexBAccessUnit(annexb.data(), annexb.size(),
                                            capture_time_us);
+      if (!status && status.code == StatusCode::kQueueFull) {
+        ++enqueue_dropped_aus;
+      }
       if (!status && status.code != StatusCode::kQueueFull) {
         std::cerr << "udp_long_sender: send AU failed: " << status.message
                   << "\n";
@@ -398,6 +412,9 @@ int main(int argc, char** argv) {
       ++encoded_frames;
       const uint32_t source_frames_per_encode =
           std::max<uint32_t>(1, (30 + applied_fps - 1) / applied_fps);
+      if (source_frames_per_encode > 1) {
+        source_frame_skips += source_frames_per_encode - 1;
+      }
       next_encode_source_index = i + source_frames_per_encode;
     }
     if (i == 0 || i % 30 == 0) {
@@ -491,6 +508,7 @@ int main(int argc, char** argv) {
             << " sent_packets=" << sent_packets
             << " sent_bytes=" << sent_bytes
             << " pacer_drops=" << pacer.GetStats().dropped_packets
+            << " pacer_drop_aus=" << pacer.GetStats().dropped_access_units
             << " forced_keyframes=" << forced_keyframes
             << " twcc_feedback=" << twcc_feedback
             << " rr=" << rr_feedback
@@ -508,7 +526,10 @@ int main(int argc, char** argv) {
             << " applied_bitrate_bps=" << applied_bitrate_bps
             << " applied_fps=" << applied_fps
             << " nack_feedback=" << nack_feedback
-            << " retransmitted=" << retransmitted_packets << "\n";
+            << " retransmitted=" << retransmitted_packets
+            << " max_encode_gap_ms=" << max_encode_gap_ms
+            << " enqueue_dropped_aus=" << enqueue_dropped_aus
+            << " source_frame_skips=" << source_frame_skips << "\n";
   close(fd);
   return sent_packets > encoded_frames && encoded_frames > 0 &&
                  twcc_feedback > 0 && rr_feedback > 0

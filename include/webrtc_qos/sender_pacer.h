@@ -21,6 +21,7 @@ struct SenderPacerStats {
   size_t queued_bytes = 0;
   uint64_t sent_packets = 0;
   uint64_t dropped_packets = 0;
+  uint64_t dropped_access_units = 0;
   bool waiting_for_idr = false;
 };
 

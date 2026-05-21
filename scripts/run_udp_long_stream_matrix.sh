@@ -241,6 +241,10 @@ summary = {
     "rate_caps": sum(row["sender"]["rate_caps"] for row in rows),
     "nack_sent": sum(row["receiver"]["nack"] for row in rows),
     "retransmitted": sum(row["server"]["retransmitted"] for row in rows),
+    "max_encode_gap_ms": max(row["sender"].get("max_encode_gap_ms", 0) for row in rows),
+    "pacer_drop_aus": sum(row["sender"].get("pacer_drop_aus", 0) for row in rows),
+    "enqueue_dropped_aus": sum(row["sender"].get("enqueue_dropped_aus", 0) for row in rows),
+    "source_frame_skips": sum(row["sender"].get("source_frame_skips", 0) for row in rows),
 }
 Path(sys.argv[2]).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
 print(json.dumps(summary, indent=2, sort_keys=True))

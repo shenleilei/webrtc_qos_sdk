@@ -22,6 +22,7 @@ Status SenderPacer::Enqueue(const SendPacket& packet) {
   if (ShouldDropForQueueLimit(queued)) {
     if (packet.frame_type == VideoFrameType::kP && !packet.retransmission) {
       ++stats_.dropped_packets;
+      ++stats_.dropped_access_units;
       if (config_.wait_for_idr_after_p_drop) {
         stats_.waiting_for_idr = true;
       }
@@ -44,6 +45,7 @@ Status SenderPacer::Enqueue(const SendPacket& packet) {
     } else if (config_.wait_for_idr_after_p_drop && stats_.waiting_for_idr &&
                packet.frame_type == VideoFrameType::kP) {
       ++stats_.dropped_packets;
+      ++stats_.dropped_access_units;
       return Status::Error(StatusCode::kQueueFull,
                            "waiting for IDR after P frame drop");
     }
@@ -92,6 +94,7 @@ Status SenderPacer::EnqueueAccessUnit(const std::vector<SendPacket>& packets) {
     } else if (config_.wait_for_idr_after_p_drop && stats_.waiting_for_idr &&
                is_p_frame) {
       stats_.dropped_packets += packets.size();
+      ++stats_.dropped_access_units;
       return Status::Error(StatusCode::kQueueFull,
                            "waiting for IDR after P frame drop");
     }
@@ -106,6 +109,7 @@ Status SenderPacer::EnqueueAccessUnit(const std::vector<SendPacket>& packets) {
       queued_ms > static_cast<uint32_t>(config_.max_queue_ms)) {
     if (is_p_frame) {
       stats_.dropped_packets += packets.size();
+      ++stats_.dropped_access_units;
       if (config_.wait_for_idr_after_p_drop) {
         stats_.waiting_for_idr = true;
       }
@@ -214,15 +218,25 @@ void SenderPacer::DropExpiredMediaPackets(int64_t now_us) {
       static_cast<int64_t>(config_.max_media_packet_age_ms) * 1000;
   size_t removed_bytes = 0;
   size_t removed_packets = 0;
-  for (auto it = media_queue_.begin(); it != media_queue_.end();) {
+  uint64_t removed_access_units = 0;
+  while (!media_queue_.empty()) {
+    const QueuedPacket& front = media_queue_.front();
     const bool expired =
-        it->enqueue_time_us > 0 && now_us - it->enqueue_time_us > max_age_us;
-    if (expired && it->packet.frame_type == VideoFrameType::kP) {
-      removed_bytes += it->bytes;
+        front.enqueue_time_us > 0 && now_us - front.enqueue_time_us > max_age_us;
+    if (!expired || front.packet.frame_type != VideoFrameType::kP) {
+      break;
+    }
+    const uint32_t timestamp = front.packet.packet.timestamp;
+    bool removed_any = false;
+    while (!media_queue_.empty() &&
+           media_queue_.front().packet.packet.timestamp == timestamp) {
+      removed_bytes += media_queue_.front().bytes;
       ++removed_packets;
-      it = media_queue_.erase(it);
-    } else {
-      ++it;
+      removed_any = true;
+      media_queue_.pop_front();
+    }
+    if (removed_any) {
+      ++removed_access_units;
     }
   }
   if (removed_packets == 0) {
@@ -232,6 +246,7 @@ void SenderPacer::DropExpiredMediaPackets(int64_t now_us) {
       stats_.queued_bytes > removed_bytes ? stats_.queued_bytes - removed_bytes
                                           : 0;
   stats_.dropped_packets += removed_packets;
+  stats_.dropped_access_units += removed_access_units;
   if (config_.wait_for_idr_after_p_drop) {
     stats_.waiting_for_idr = true;
   }
@@ -241,8 +256,17 @@ void SenderPacer::DropExpiredMediaPackets(int64_t now_us) {
 Status SenderPacer::DropQueuedPFrames() {
   size_t removed_bytes = 0;
   size_t removed_packets = 0;
+  uint64_t removed_access_units = 0;
+  uint32_t last_removed_timestamp = 0;
+  bool has_last_removed_timestamp = false;
   for (auto it = media_queue_.begin(); it != media_queue_.end();) {
     if (it->packet.frame_type == VideoFrameType::kP) {
+      const uint32_t timestamp = it->packet.packet.timestamp;
+      if (!has_last_removed_timestamp || timestamp != last_removed_timestamp) {
+        ++removed_access_units;
+        last_removed_timestamp = timestamp;
+        has_last_removed_timestamp = true;
+      }
       removed_bytes += it->bytes;
       ++removed_packets;
       it = media_queue_.erase(it);
@@ -257,6 +281,7 @@ Status SenderPacer::DropQueuedPFrames() {
       stats_.queued_bytes > removed_bytes ? stats_.queued_bytes - removed_bytes
                                           : 0;
   stats_.dropped_packets += removed_packets;
+  stats_.dropped_access_units += removed_access_units;
   if (config_.wait_for_idr_after_p_drop) {
     stats_.waiting_for_idr = true;
   }
