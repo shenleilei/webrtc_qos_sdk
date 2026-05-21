@@ -172,11 +172,14 @@ Real UDP long-stream QoE smoke:
 ```bash
 bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
 bash webrtc_qos_sdk/scripts/run_udp_direct_long_stream_smoke.sh
+bash webrtc_qos_sdk/scripts/run_udp_direct_long_stream_matrix.sh
 ```
 
 This starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. The server process is intentionally minimal: it is a local UDP relay/test harness for forwarding RTP, producing sender-side TWCC/RR feedback, injecting deterministic weak-network phases, and retransmitting from a cache after receiver NACK. It is not a production SFU, not a long-term server SDK target, and not a Linux `tc/netem` deployment. The optimization focus is endpoint SDK behavior on the sender and receiver.
 
 `run_udp_direct_long_stream_smoke.sh` removes the relay from the path and runs only `udp_long_sender_demo <-> udp_long_receiver_demo`. In this direct mode, the receiver sends standard TWCC, RTCP RR, RTCP NACK, downlink quality, and `SENDER_RATE_CAP_V1` directly back to the sender; the sender retransmits from its own RTP cache. This verifies the endpoint SDK QoS loop itself instead of relying on server-side retransmission or SFU behavior.
+
+`run_udp_direct_long_stream_matrix.sh` keeps the same two-process direct topology and moves the weak-network profile into the receiver endpoint. It runs `walking_dead_zone`, `bandwidth_cliff_recover`, and `jitter_loss_recover` with receiver-side drop/delay/jitter/rate-cap generation, so the sender adaptation and receiver jitter/NACK behavior are validated without any relay process.
 
 The feedback topology in this smoke is:
 
@@ -232,6 +235,24 @@ Latest local two-process direct result:
 | Receiver PSNR avg / min | 44.41 / 26.48 dB |
 | Receiver max completion / media gap | 29 / 67 ms |
 | Receiver NACK / downlink reports | 17 / 6 |
+
+Latest local two-process direct dynamic matrix result (`MATRIX_CONTENTS=motion`, `MATRIX_RUNS=1`):
+
+| Metric | Value |
+| --- | ---: |
+| Cases | 3 / 3 passed |
+| Completed / decoded frames | 420 / 400 |
+| Decode errors | 0 |
+| Sender target min / recovered max | 80000 / 2500000 bps |
+| Sender FPS min / recovered max | 5 / 30 |
+| Receiver direct drop / delay / jitter events | 47 / 325 / 99 |
+| Receiver max completion gap | 646 ms |
+| Receiver max media gap | 1200 ms |
+| Receiver PSNR avg/min floor | 57.08 / 20.24 dB |
+| NACK / sender retransmissions | 42 / 185 |
+| Sender rate caps | 33 |
+
+Direct matrix interpretation: the endpoint-only path proves downshift, recovery, real H264 decode, direct receiver feedback, and sender-side retransmission without server relay behavior. The current low-latency policy intentionally allows media-time gaps when recovering from severe impairment; therefore `max_completion_gap_ms` is the primary smoothness gate, while `max_frame_gap_ms` records the continuity cost that still needs a later continuity/renderer optimization pass.
 
 Real UDP long-stream dynamic weak-network matrix:
 
@@ -572,6 +593,7 @@ Implementation boundary in this slice:
 - `udp_*_demo` also verifies `PLI -> server forward -> sender IDR resend -> receiver keyframe output`.
 - `run_udp_long_stream_smoke.sh` proves a real three-process UDP long-stream path with H264 encode/decode, TWCC, RTCP RR, receiver downlink quality, NACK retransmission, sender rate cap, PSNR, and duplicate completed-frame rejection.
 - `run_udp_direct_long_stream_smoke.sh` proves the same endpoint QoS loop without the relay: receiver-generated TWCC/RR/NACK/rate-cap feedback goes directly to the sender, and sender-side RTP cache retransmission recovers intentionally dropped packets.
+- `run_udp_direct_long_stream_matrix.sh` proves the relay-free endpoint path across dynamic weak-network profiles, with receiver-side drop/delay/jitter/rate-cap generation and explicit completion-gap, media-gap, PSNR, NACK, retransmission, and adaptation gates.
 - `run_udp_long_stream_matrix.sh` proves real three-process dynamic weak-network adaptation with the server kept as a minimal relay/test harness: sender bitrate/FPS downshift under weak phases, cap removal and FPS recovery under good phases, receiver interval quality reporting, no decoder errors, seeded deterministic drop/jitter variation, and quantitative PSNR/completion-gap/media-gap gates.
 - `run_udp_long_stream_720p_profile.sh` provides the faster 1280x720 endpoint QoS gate, while `run_udp_long_stream_720p_stability.sh` repeats it across 3 content profiles and 3 deterministic network seeds with live encoder reconfiguration, atomic access-unit pacing, NACK recovery, PSNR validation, and separate low-latency completion-gap versus media-gap accounting.
 - `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.

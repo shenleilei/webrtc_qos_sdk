@@ -37,7 +37,8 @@ if [[ -x "${BUILD_DIR}/long_stream_qoe_demo" ]]; then
   BUILD_DIR="${BUILD_DIR}" "${SDK_ROOT}/scripts/run_long_stream_qoe_matrix.sh"
 fi
 BUILD_DEMOS=0 RUNS=1 "${SDK_ROOT}/scripts/run_udp_netem_matrix.sh"
-BUILD_DIR="${BUILD_DIR}" "${SDK_ROOT}/scripts/run_udp_direct_long_stream_smoke.sh"
+BUILD_DIR="${BUILD_DIR}" MATRIX_CONTENTS=motion MATRIX_RUNS=1 \
+  "${SDK_ROOT}/scripts/run_udp_direct_long_stream_matrix.sh"
 BUILD_DEMOS=0 DURATION_SEC="${SOAK_DURATION_SEC}" MATRIX_RUNS="${SOAK_MATRIX_RUNS}" \
   "${SDK_ROOT}/scripts/run_udp_soak.sh"
 "${SDK_ROOT}/scripts/verify_role_linking.sh"

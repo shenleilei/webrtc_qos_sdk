@@ -16,6 +16,13 @@ CONTENT="${CONTENT:-motion}"
 DROP_EVERY="${DROP_EVERY:-17}"
 RATE_CAP_BPS="${RATE_CAP_BPS:-500000}"
 RATE_CAP_AT_PACKET="${RATE_CAP_AT_PACKET:-20}"
+DELAY_MS="${DELAY_MS:-0}"
+JITTER_MS="${JITTER_MS:-0}"
+JITTER_EVERY_N="${JITTER_EVERY_N:-0}"
+NETWORK_SEED="${NETWORK_SEED:-0}"
+PROFILE="${PROFILE:-none}"
+MAX_FRAME_GAP_MS="${MAX_FRAME_GAP_MS:-1000}"
+MIN_PSNR_AVG="${MIN_PSNR_AVG:-25}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -32,6 +39,13 @@ cmake --build "${BUILD_DIR}" --target \
   "--expect-frames=${EXPECT_FRAMES}" \
   --direct-feedback \
   "--drop-every=${DROP_EVERY}" \
+  "--delay-ms=${DELAY_MS}" \
+  "--jitter-ms=${JITTER_MS}" \
+  "--jitter-every-n=${JITTER_EVERY_N}" \
+  "--network-seed=${NETWORK_SEED}" \
+  "--profile=${PROFILE}" \
+  "--max-frame-gap-ms=${MAX_FRAME_GAP_MS}" \
+  "--min-psnr-avg=${MIN_PSNR_AVG}" \
   "--rate-cap-bps=${RATE_CAP_BPS}" \
   "--rate-cap-at-packet=${RATE_CAP_AT_PACKET}" \
   >"${LOG_DIR}/receiver.log" 2>&1 &
@@ -69,7 +83,7 @@ if [[ "${sender_rc}" -ne 0 || "${receiver_rc}" -ne 0 ]]; then
 fi
 
 python3 - "${LOG_DIR}/sender.log" "${LOG_DIR}/receiver.log" \
-  "${LOG_DIR}/summary.json" <<'PY'
+  "${LOG_DIR}/summary.json" "${PROFILE}" "${DROP_EVERY}" <<'PY'
 import json
 import re
 import sys
@@ -78,6 +92,8 @@ from pathlib import Path
 sender_text = Path(sys.argv[1]).read_text(encoding="utf-8")
 receiver_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 summary_path = Path(sys.argv[3])
+profile = sys.argv[4]
+drop_every = int(sys.argv[5])
 
 sender_match = re.search(
     r"udp_long_sender frames=(?P<frames>\d+) "
@@ -113,7 +129,18 @@ receiver_match = re.search(
     r"direct_twcc_sent=(?P<direct_twcc>\d+) "
     r"direct_rr_sent=(?P<direct_rr>\d+) "
     r"direct_rate_caps=(?P<direct_rate_caps>\d+) "
-    r"direct_dropped=(?P<direct_dropped>\d+)",
+    r"direct_dropped=(?P<direct_dropped>\d+) "
+    r"direct_delayed=(?P<direct_delayed>\d+) "
+    r"direct_jittered=(?P<direct_jittered>\d+) "
+    r"direct_released=(?P<direct_released>\d+) "
+    r"direct_profile=(?P<direct_profile>[A-Za-z0-9_]+) "
+    r"direct_network_seed=(?P<direct_network_seed>\d+) "
+    r"direct_phase_changes=(?P<direct_phase_changes>\d+) "
+    r"direct_phase_packets=(?P<direct_phase_packets>\d+) "
+    r"direct_impaired_packets=(?P<direct_impaired_packets>\d+) "
+    r"direct_min_cap_bps=(?P<direct_min_cap_bps>\d+) "
+    r"direct_max_limited_cap_bps=(?P<direct_max_limited_cap_bps>\d+) "
+    r"direct_last_cap_bps=(?P<direct_last_cap_bps>\d+)",
     receiver_text,
 )
 if not sender_match:
@@ -126,7 +153,9 @@ def parse(match):
     for key, value in match.groupdict().items():
         if value is None:
             continue
-        out[key] = float(value) if key.startswith("psnr") else int(value)
+        out[key] = value if key == "direct_profile" else (
+            float(value) if key.startswith("psnr") else int(value)
+        )
     return out
 
 summary = {
@@ -146,7 +175,7 @@ if receiver["direct_twcc"] <= 0 or receiver["direct_rr"] <= 0:
     failures.append("receiver_direct_feedback_missing")
 if receiver["direct_rate_caps"] <= 0:
     failures.append("receiver_direct_rate_cap_missing")
-if receiver["direct_dropped"] <= 0:
+if (profile == "none" and drop_every > 0) and receiver["direct_dropped"] <= 0:
     failures.append("receiver_direct_drop_missing")
 if receiver["nack"] <= 0 or sender["nack_feedback"] <= 0:
     failures.append("nack_feedback_missing")
