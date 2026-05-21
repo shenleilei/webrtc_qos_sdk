@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -9,6 +10,7 @@
 #include "demo/qoe_common.h"
 #include "demo/udp_common.h"
 #include "webrtc_qos/ffmpeg_h264_encoder.h"
+#include "webrtc_qos/retransmission_cache.h"
 #include "webrtc_qos/rtcp_packets.h"
 #include "webrtc_qos/rtp_packet.h"
 #include "webrtc_qos/sender_pacer.h"
@@ -124,6 +126,8 @@ int main(int argc, char** argv) {
   uint64_t twcc_feedback = 0;
   uint64_t rr_feedback = 0;
   uint64_t rate_caps = 0;
+  uint64_t nack_feedback = 0;
+  uint64_t retransmitted_packets = 0;
   uint64_t encoder_reconfigs = 0;
   uint64_t forced_keyframes = 0;
   uint32_t adapt_target_min = std::numeric_limits<uint32_t>::max();
@@ -139,6 +143,8 @@ int main(int argc, char** argv) {
   int64_t route_recovery_until_us = 0;
   uint32_t route_recovery_bps = 0;
   std::unordered_map<uint16_t, PacketFeedback> sent_packet_feedback;
+  RetransmissionCache retransmission_cache;
+  uint16_t retransmission_transport_sequence_number = 50000;
   int64_t pacer_time_us = 0;
   SenderPacer pacer(
       SenderPacerConfig{bitrate_bps, kPacerTickMs, kPacerMaxQueueMs,
@@ -152,6 +158,8 @@ int main(int argc, char** argv) {
         }
         ++sent_packets;
         sent_bytes += encoded.size();
+        retransmission_cache.Store(packet, pacer_time_us);
+        retransmission_cache.Prune(pacer_time_us, qos.GetTargetRates(pacer_time_us).rtt_ms);
         sent_packet_feedback[packet.transport_sequence_number] =
             PacketFeedback{packet.transport_sequence_number, pacer_time_us, -1,
                            packet.payload.size() + 20};
@@ -313,6 +321,26 @@ int main(int argc, char** argv) {
         }
       }
       ++rate_caps;
+    } else if (header.type == EnvelopeType::kNack) {
+      RtcpNack nack;
+      Status status = ParseRtcpNack(payload.data(), payload.size(), &nack);
+      if (!status) {
+        return status;
+      }
+      for (uint16_t seq : nack.lost_rtp_sequence_numbers) {
+        std::optional<RtpPacket> packet =
+            retransmission_cache.Find(seq, retransmission_transport_sequence_number++);
+        if (!packet) {
+          continue;
+        }
+        status = pacer.Enqueue(
+            SendPacket{*packet, VideoFrameType::kUnknown, true, 0});
+        if (!status) {
+          return status;
+        }
+        ++retransmitted_packets;
+      }
+      ++nack_feedback;
     }
     return apply_adaptation();
   };
@@ -478,7 +506,9 @@ int main(int argc, char** argv) {
             << " adapt_fps_last=" << adapt_fps_last
             << " encoder_reconfigs=" << encoder_reconfigs
             << " applied_bitrate_bps=" << applied_bitrate_bps
-            << " applied_fps=" << applied_fps << "\n";
+            << " applied_fps=" << applied_fps
+            << " nack_feedback=" << nack_feedback
+            << " retransmitted=" << retransmitted_packets << "\n";
   close(fd);
   return sent_packets > encoded_frames && encoded_frames > 0 &&
                  twcc_feedback > 0 && rr_feedback > 0

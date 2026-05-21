@@ -1,6 +1,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,7 +22,9 @@ void Usage(const char* argv0) {
   std::cerr << "usage: " << argv0
             << " <local_port> <server_ip> <server_port>"
             << " [--width=N] [--height=N] [--content=motion|low_motion|detail_motion]"
-            << " [--expect-frames=N]\n";
+            << " [--expect-frames=N] [--direct-feedback]"
+            << " [--rate-cap-bps=N] [--rate-cap-at-packet=N]"
+            << " [--drop-every=N]\n";
 }
 
 bool ParseUint32Arg(const std::string& arg,
@@ -50,6 +54,10 @@ int main(int argc, char** argv) {
   uint32_t width = 320;
   uint32_t height = 180;
   uint32_t expected_frames = 60;
+  bool direct_feedback = false;
+  uint32_t rate_cap_bps = kUnlimitedRateCapBps;
+  uint32_t rate_cap_at_packet = 0;
+  uint32_t drop_every = 0;
   std::string content = "motion";
   for (int i = 4; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -61,6 +69,15 @@ int main(int argc, char** argv) {
     const std::string content_prefix = "--content=";
     if (arg.rfind(content_prefix, 0) == 0) {
       content = arg.substr(content_prefix.size());
+      continue;
+    }
+    if (arg == "--direct-feedback") {
+      direct_feedback = true;
+      continue;
+    }
+    if (ParseUint32Arg(arg, "--rate-cap-bps=", &rate_cap_bps) ||
+        ParseUint32Arg(arg, "--rate-cap-at-packet=", &rate_cap_at_packet) ||
+        ParseUint32Arg(arg, "--drop-every=", &drop_every)) {
       continue;
     }
     Usage(argv[0]);
@@ -90,6 +107,51 @@ int main(int argc, char** argv) {
   uint64_t downlink_reports = 0;
   double psnr_sum = 0.0;
   double psnr_min = std::numeric_limits<double>::infinity();
+  std::map<uint16_t, PacketFeedback> uplink_feedback;
+  uint16_t feedback_seq = 1;
+  uint32_t cap_seq = 1;
+  bool limited_cap_sent = false;
+  bool unlimited_cap_sent = false;
+  bool have_direct_feedback_seq = false;
+  uint16_t next_direct_feedback_seq = 0;
+  uint64_t direct_twcc_sent = 0;
+  uint64_t direct_rr_sent = 0;
+  uint64_t direct_rate_caps = 0;
+  uint64_t direct_dropped = 0;
+  std::set<uint16_t> direct_dropped_once;
+  const auto send_direct_twcc = [&](int64_t now_us) {
+    if (!direct_feedback || uplink_feedback.empty()) {
+      return;
+    }
+    UplinkTransportFeedback feedback;
+    feedback.ids = ids;
+    feedback.feedback_seq = feedback_seq++;
+    feedback.reference_time_us = uplink_feedback.begin()->second.receive_time_us;
+    for (const auto& [unused, item] : uplink_feedback) {
+      (void)unused;
+      feedback.packets.push_back(item);
+    }
+    SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kUplinkTwcc, ids),
+                 SerializeRtcpTransportFeedback(feedback));
+    ++direct_twcc_sent;
+    uplink_feedback.clear();
+    (void)now_us;
+  };
+  const auto send_direct_rate_cap = [&](uint32_t cap_bps,
+                                        uint16_t reason_code) {
+    if (!direct_feedback) {
+      return;
+    }
+    SenderRateCap cap;
+    cap.ids = ids;
+    cap.controller_seq = cap_seq++;
+    cap.cap_bps = cap_bps;
+    cap.expire_ms = cap_bps == kUnlimitedRateCapBps ? 0 : 500;
+    cap.reason_code = reason_code;
+    SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kSenderRateCap, ids),
+                 SerializeSenderRateCap(cap));
+    ++direct_rate_caps;
+  };
   int64_t last_frame_time_us = -1;
   int64_t max_completion_gap_ms = 0;
   int64_t last_frame_media_ms = -1;
@@ -119,6 +181,69 @@ int main(int argc, char** argv) {
       }
       ++rtp_packets;
       const int64_t now_us = NowUs();
+      const bool should_direct_drop =
+          direct_feedback && drop_every > 0 &&
+          packet.transport_sequence_number < 50000 &&
+          packet.sequence_number % drop_every == 0 &&
+          direct_dropped_once.insert(packet.sequence_number).second;
+      if (should_direct_drop) {
+        ++direct_dropped;
+        continue;
+      }
+      if (direct_feedback) {
+        if (packet.transport_sequence_number >= 50000) {
+          send_direct_twcc(now_us);
+          UplinkTransportFeedback feedback;
+          feedback.ids = ids;
+          feedback.feedback_seq = feedback_seq++;
+          feedback.reference_time_us = now_us;
+          feedback.packets.push_back(PacketFeedback{
+              packet.transport_sequence_number,
+              packet.capture_time_us,
+              now_us,
+              packet.payload.size() + 20,
+          });
+          SendEnvelope(fd, server,
+                       MakeEnvelopeHeader(EnvelopeType::kUplinkTwcc, ids),
+                       SerializeRtcpTransportFeedback(feedback));
+          ++direct_twcc_sent;
+        } else {
+          if (!have_direct_feedback_seq) {
+            next_direct_feedback_seq = packet.transport_sequence_number;
+            have_direct_feedback_seq = true;
+          }
+          while (next_direct_feedback_seq != packet.transport_sequence_number) {
+            uplink_feedback[next_direct_feedback_seq] = PacketFeedback{
+                next_direct_feedback_seq,
+                packet.capture_time_us,
+                -1,
+                0,
+            };
+            ++next_direct_feedback_seq;
+          }
+          ++next_direct_feedback_seq;
+          uplink_feedback[packet.transport_sequence_number] = PacketFeedback{
+              packet.transport_sequence_number,
+              packet.capture_time_us,
+              now_us,
+              packet.payload.size() + 20,
+          };
+          if (uplink_feedback.size() >= 8) {
+            send_direct_twcc(now_us);
+          }
+        }
+        if (rate_cap_at_packet > 0 && !limited_cap_sent &&
+            rtp_packets >= rate_cap_at_packet && rate_cap_bps > 0 &&
+            rate_cap_bps != kUnlimitedRateCapBps) {
+          send_direct_rate_cap(rate_cap_bps, 10);
+          limited_cap_sent = true;
+        }
+        if (limited_cap_sent && !unlimited_cap_sent &&
+            rtp_packets >= rate_cap_at_packet + 120) {
+          send_direct_rate_cap(kUnlimitedRateCapBps, 11);
+          unlimited_cap_sent = true;
+        }
+      }
       observer.OnRtpPacketReceived(packet, now_us);
       status = jitter.InsertPacket(packet, now_us);
       if (!status) {
@@ -203,8 +328,25 @@ int main(int argc, char** argv) {
       }
     } else if (header.type == EnvelopeType::kBye) {
       bye = true;
+    } else if (header.type == EnvelopeType::kRtcpSr && direct_feedback) {
+      RtcpSenderReport sr;
+      status = ParseRtcpSenderReport(payload.data(), payload.size(), &sr);
+      if (!status) {
+        std::cerr << "udp_long_receiver: parse SR failed: " << status.message
+                  << "\n";
+        return 1;
+      }
+      RtcpReceiverReport rr;
+      rr.sender_ssrc = sr.sender_ssrc;
+      rr.last_sender_report =
+          static_cast<uint32_t>((sr.ntp_timestamp >> 16) & 0xffffffffu);
+      rr.delay_since_last_sender_report = 0x00010000;
+      SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kRtcpRr, ids),
+                   SerializeRtcpReceiverReport(rr));
+      ++direct_rr_sent;
     }
   }
+  send_direct_twcc(NowUs());
   DownlinkQuality final_report = observer.BuildReport(NowUs());
   const VideoJitterStats final_stats = jitter.GetStats();
   final_report.video_jitter_frames = final_stats.jitter_frames;
@@ -230,7 +372,11 @@ int main(int argc, char** argv) {
             << " max_frame_gap_from_ms=" << max_frame_gap_from_ms
             << " max_frame_gap_to_ms=" << max_frame_gap_to_ms
             << " nack_sent=" << nack_sent
-            << " downlink_reports=" << downlink_reports << "\n";
+            << " downlink_reports=" << downlink_reports
+            << " direct_twcc_sent=" << direct_twcc_sent
+            << " direct_rr_sent=" << direct_rr_sent
+            << " direct_rate_caps=" << direct_rate_caps
+            << " direct_dropped=" << direct_dropped << "\n";
   close(fd);
   return completed_frames >= expected_frames && decoded_frames >= expected_frames &&
                  decode_errors == 0 && quality_samples >= expected_frames &&
