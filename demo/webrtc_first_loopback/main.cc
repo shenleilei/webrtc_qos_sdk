@@ -254,6 +254,7 @@ Metrics RunScenario(const Scenario& scenario) {
         break;
       }
     }
+    RequireStatus(play->Process(now_us), "play process");
   };
 
   auto drain_push_output = [&](int frame, int64_t now_us) {
@@ -347,6 +348,10 @@ Metrics RunScenario(const Scenario& scenario) {
 
   const int64_t final_time_us =
       1000000 + static_cast<int64_t>(scenario.frames) * 33333 + 1000000;
+  if (scenario.inject_rate_cap) {
+    RequireStatus(push->OnSenderRateCap(server->CurrentSenderRateCap(final_time_us)),
+                  "final push sender rate cap");
+  }
   RequireStatus(push->Process(final_time_us), "final push process");
   drain_push_output(scenario.frames, final_time_us);
   pump(scenario.frames, final_time_us);

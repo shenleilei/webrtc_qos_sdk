@@ -374,6 +374,10 @@ Metrics RunScenario(const Scenario& scenario) {
         break;
       }
     }
+    if (!play->Process(now_us)) {
+      std::cerr << "play process failed\n";
+      std::exit(7);
+    }
   };
 
   auto drain_push_output = [&](int frame_index, int64_t now_us) {
@@ -540,11 +544,29 @@ Metrics RunScenario(const Scenario& scenario) {
 
   pump(scenario.frames, 1000000 + static_cast<int64_t>(scenario.frames) *
                                        33333 + 1000000);
-  const auto snapshot = push->GetQosSnapshot(1000000 +
-                                            static_cast<int64_t>(
-                                                scenario.frames) *
-                                                33333 +
-                                            1000000);
+  const int64_t final_time_us =
+      1000000 + static_cast<int64_t>(scenario.frames) * 33333 + 1000000;
+  if (scenario.inject_rate_cap) {
+    webrtc_qos::DownlinkQuality final_quality;
+    final_quality.ids = session.ids;
+    final_quality.report_seq = static_cast<uint32_t>(scenario.frames + 1);
+    final_quality.report_time_us = static_cast<uint64_t>(final_time_us);
+    if (scenario.expect_final_low) {
+      final_quality.fraction_lost_q8 = 192;
+      final_quality.video_drop_frames = 1;
+      final_quality.recv_bitrate_bps = session.min_bitrate_bps;
+    }
+    if (!server->OnDownlinkQuality(final_quality)) {
+      std::cerr << "server rejected final downlink quality\n";
+      std::exit(12);
+    }
+    const auto final_cap = server->CurrentSenderRateCap(final_time_us);
+    if (!push->OnSenderRateCap(final_cap)) {
+      std::cerr << "push rejected final sender rate cap\n";
+      std::exit(13);
+    }
+  }
+  const auto snapshot = push->GetQosSnapshot(final_time_us);
   metrics.final_target_bps = snapshot.sender_rates.final_target_bps;
   metrics.max_rtt_ms = std::max(metrics.max_rtt_ms,
                                 snapshot.sender_rates.rtt_ms);

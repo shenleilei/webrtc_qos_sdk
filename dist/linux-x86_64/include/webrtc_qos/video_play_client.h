@@ -27,6 +27,8 @@ class VideoPlayClient {
 
   virtual Status Start() = 0;
   virtual Status Stop() = 0;
+  // Drive NACK/PLI retry timers even during no-packet windows.
+  virtual Status Process(int64_t now_us) = 0;
   virtual Status OnRtpPacket(const uint8_t* rtp_bytes,
                              size_t rtp_size,
                              int64_t receive_time_us) = 0;

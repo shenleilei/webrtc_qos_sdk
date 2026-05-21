@@ -1023,6 +1023,7 @@ int main(int argc, char** argv) {
         break;
       }
     }
+    (void)play->Process(now_us);
   };
 
   auto drain_push_output = [&](int frame_index, int64_t now_us) {

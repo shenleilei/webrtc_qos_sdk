@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "compound_rtcp.h"
 #include "webrtc_qos/rate_cap.h"
 #include "webrtc_qos/rtcp_adapter.h"
 #include "webrtc_qos/rtp_packet_adapter.h"
@@ -42,6 +43,12 @@ TransportPacketView MakePacketView(const std::vector<uint8_t>& bytes,
 
 bool HasRtpPadding(const uint8_t* rtp_bytes, size_t rtp_size) {
   return rtp_bytes != nullptr && rtp_size > 0 && (rtp_bytes[0] & 0x20) != 0;
+}
+
+TransportIds IdsForReceiver(const TransportIds& base_ids, uint32_t receiver_id) {
+  TransportIds ids = base_ids;
+  ids.receiver_id = receiver_id;
+  return ids;
 }
 
 }  // namespace
@@ -85,6 +92,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
           TransportPacketHistoryKey{kServerRelayHopId, parsed.ssrc,
                                     parsed.sequence_number},
           copy.data(), copy.size(), receive_time_us, false);
+      packet_history_.Prune(receive_time_us, last_downlink_quality_.rtt_ms);
     }
     if (parsed.transport_sequence_number.has_value()) {
       RecordTwccPacket(*parsed.transport_sequence_number, receive_time_us);
@@ -108,10 +116,16 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     if (rtcp_bytes == nullptr || rtcp_size == 0) {
       return InvalidArgument("empty sender RTCP");
     }
-    RtcpAdapterParsedPacket parsed;
-    if (ParseRtcpPacket(rtcp_bytes, rtcp_size, &parsed) &&
-        parsed.type == RtcpAdapterPacketType::kSenderReport) {
-      RecordSenderReport(parsed.sender_report, receive_time_us);
+    Status parse_status = ForEachSupportedRtcpPacket(
+        rtcp_bytes, rtcp_size,
+        [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed) {
+          if (parsed.type == RtcpAdapterPacketType::kSenderReport) {
+            RecordSenderReport(parsed.sender_report, receive_time_us);
+          }
+          return Status::Ok();
+        });
+    if (!parse_status) {
+      return parse_status;
     }
     std::vector<uint8_t> copy(rtcp_bytes, rtcp_bytes + rtcp_size);
     Status relay_status = config_.receiver_output(
@@ -135,28 +149,23 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       return InvalidArgument("empty receiver RTCP");
     }
 
-    RtcpAdapterParsedPacket parsed;
-    if (!ParseRtcpPacket(rtcp_bytes, rtcp_size, &parsed)) {
-      return Status::Error(StatusCode::kMalformedPacket,
-                           "failed to parse receiver RTCP");
-    }
-
-    if (parsed.type == RtcpAdapterPacketType::kNack) {
-      return HandleNack(receiver_id, parsed.nack, rtcp_bytes, rtcp_size,
-                        receive_time_us);
-    }
-    if (parsed.type == RtcpAdapterPacketType::kPli) {
-      ++snapshot_.pli_count;
-      std::vector<uint8_t> copy(rtcp_bytes, rtcp_bytes + rtcp_size);
-      return config_.sender_output(
-          MakePacketView(copy, config_.session.ids, TransportPacketKind::kRtcp,
-                         receive_time_us, false));
-    }
-
-    std::vector<uint8_t> copy(rtcp_bytes, rtcp_bytes + rtcp_size);
-    return config_.sender_output(
-        MakePacketView(copy, config_.session.ids, TransportPacketKind::kRtcp,
-                       receive_time_us, false));
+    return ForEachSupportedRtcpPacket(
+        rtcp_bytes, rtcp_size,
+        [&](const uint8_t* packet_bytes, size_t packet_size,
+            const RtcpAdapterParsedPacket& parsed) -> Status {
+          if (parsed.type == RtcpAdapterPacketType::kNack) {
+            return HandleNack(receiver_id, parsed.nack, receive_time_us);
+          }
+          if (parsed.type == RtcpAdapterPacketType::kPli) {
+            ++snapshot_.pli_count;
+          }
+          std::vector<uint8_t> copy(packet_bytes, packet_bytes + packet_size);
+          return config_.sender_output(
+              MakePacketView(copy,
+                             IdsForReceiver(config_.session.ids, receiver_id),
+                             TransportPacketKind::kRtcp, receive_time_us,
+                             false));
+        });
   }
 
   Status OnDownlinkQuality(const DownlinkQuality& quality) override {
@@ -272,36 +281,39 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
   Status HandleNack(uint32_t receiver_id,
                     const RtcpAdapterNack& nack,
-                    const uint8_t* original_rtcp,
-                    size_t original_rtcp_size,
                     int64_t receive_time_us) {
-    (void)receiver_id;
-    bool all_recovered_locally = true;
+    std::vector<uint16_t> missing_packet_ids;
     for (uint16_t packet_id : nack.packet_ids) {
       ++snapshot_.nack_count;
       auto found = packet_history_.Find(TransportPacketHistoryKey{
           kServerRelayHopId, nack.media_ssrc, packet_id});
       if (!found.has_value()) {
-        all_recovered_locally = false;
+        missing_packet_ids.push_back(packet_id);
         continue;
       }
       ++snapshot_.retransmission_count;
       Status status = config_.receiver_output(MakePacketView(
-          found->rtp_bytes, config_.session.ids, TransportPacketKind::kRtp,
-          receive_time_us, true));
+          found->rtp_bytes, IdsForReceiver(config_.session.ids, receiver_id),
+          TransportPacketKind::kRtp, receive_time_us, true));
       if (!status) {
         return status;
       }
     }
+    packet_history_.Prune(receive_time_us, last_downlink_quality_.rtt_ms);
 
-    if (all_recovered_locally) {
+    if (missing_packet_ids.empty()) {
       return Status::Ok();
     }
-    std::vector<uint8_t> copy(original_rtcp,
-                              original_rtcp + original_rtcp_size);
+    RtcpAdapterNack forwarded_nack = nack;
+    forwarded_nack.packet_ids = std::move(missing_packet_ids);
+    std::vector<uint8_t> copy;
+    if (!BuildRtcpNack(forwarded_nack, &copy)) {
+      return Status::Error(StatusCode::kInternalError,
+                           "failed to rebuild forwarded RTCP NACK");
+    }
     return config_.sender_output(
-        MakePacketView(copy, config_.session.ids, TransportPacketKind::kRtcp,
-                       receive_time_us, false));
+        MakePacketView(copy, IdsForReceiver(config_.session.ids, receiver_id),
+                       TransportPacketKind::kRtcp, receive_time_us, false));
   }
 
   void RecordTwccPacket(uint16_t transport_sequence_number,

@@ -44,6 +44,8 @@ libwebrtc_qos_facade_video.a
 
 WebRTC 能力库由 `scripts/package_webrtc_modules.sh` 从 WebRTC 源码树单独构建并复制到同一个 prefix。当前 source build 默认开启 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE=ON`，并默认从仓库内 `dist/linux-x86_64` 查找 WebRTC modules；如需使用其它 prefix，显式传 `-DWEBRTC_QOS_WEBRTC_MODULE_PREFIX=<prefix>`。缺少 WebRTC modules 会直接配置失败，不会 fallback。
 
+当 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE=ON` 时，`cmake --install` 现在也会把所依赖的 `libwebrtc_qos_webrtc_*.a` 和 adapter headers 一并复制到安装 prefix，确保外部工程用安装后的 prefix 仍能拿到 `role_push / role_play / role_server`。
+
 默认公开头文件：
 
 ```text
@@ -126,6 +128,13 @@ PREFIX=/root/output SDK_ROOT=/root/webrtc_qos_sdk \
 `verify_webrtc_first_pacing_probe.sh` 会创建只链接 `WebRtcQosSdk::role_push` 的外部 consumer，验证 push facade 启动时从 GoogCC 取 probe cluster，传给 pacing adapter，并在 `QosSnapshot` 中输出 `emitted_probe_packets / emitted_probe_bytes / last_probe_cluster_id`。当前本地结果为 `rtp_packets=6`、`probe_packets=6`、`probe_bytes=745`、`probe_cluster=1`。
 
 `verify_cmake_package.sh` 会创建临时外部 CMake consumer，验证 `role_push`、`role_play`、`role_server` 都能单独链接并真实调用对应 `Create*()` 工厂函数；`role_server` 会额外验证基础 rate cap runtime。
+
+当前 `verify_cmake_package.sh` 还覆盖了几条关键恢复语义：
+
+- sender 收到 `PLI` 后会把 `request_keyframe` 反映到 `GetEncoderAdaptation()`
+- sender 收到 `NACK` 后会执行 sender packet history 查找和 sender 侧重传
+- play 侧 `Process(now_us)` 会推进 NackRequester 的无包窗口重试
+- server 对部分命中 NACK 会本地重传命中包，并只把 miss 的 packet ids 转发给 sender
 
 `verify_webrtc_first_roles.sh` 会继续调用 `verify_no_selfmade_media_stack.sh` 和 `verify_webrtc_first_loopback.sh`，确认旧自研媒体栈没有回到 public API、CMake 或发布包，并确认基础 WebRTC-first media bytes 链路可外部消费。它也会构建 `webrtc_qos_webrtc_first_udp_demo`，跑 UDP selftest，并 smoke 检查独立 `sender/server/receiver` 三个角色入口都使用 `backend=webrtc_first_facade transport=udp peer_connection=false`。
 

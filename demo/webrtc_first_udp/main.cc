@@ -759,6 +759,7 @@ int RunUdpReceiver(uint16_t local_port,
                       "receiver RTP");
       }
     }
+    RequireStatus(play->Process(now_us), "receiver process");
   }
 
   std::cout << "udp_receiver backend=webrtc_first_facade"
@@ -986,6 +987,7 @@ int RunUdpSelftest(int frames) {
         break;
       }
     }
+    RequireStatus(play->Process(now_us), "play UDP process");
   };
 
   for (int frame = 0; frame < frames; ++frame) {
@@ -1052,6 +1054,8 @@ int RunUdpSelftest(int frames) {
 
   const int64_t final_time_us =
       1000000 + static_cast<int64_t>(frames) * 33333 + 1000000;
+  RequireStatus(push->OnSenderRateCap(server->CurrentSenderRateCap(final_time_us)),
+                "final push UDP sender cap");
   RequireStatus(push->Process(final_time_us), "final push process");
   pump_all(frames, final_time_us);
   const auto server_snapshot = server->GetQosSnapshot(final_time_us);

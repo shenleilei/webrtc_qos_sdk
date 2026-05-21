@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "compound_rtcp.h"
 #include "webrtc_qos/nack_requester_adapter.h"
 #include "webrtc_qos/rtcp_adapter.h"
 #include "webrtc_qos/rtp_packet_adapter.h"
@@ -45,6 +46,14 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   Status Stop() override {
     started_ = false;
     return Status::Ok();
+  }
+
+  Status Process(int64_t now_us) override {
+    if (!started_) {
+      return Status::Error(StatusCode::kUnsupported,
+                           "VideoPlayClient is not started");
+    }
+    return EmitNackRequesterFeedback(now_us);
   }
 
   Status OnRtpPacket(const uint8_t* rtp_bytes,
@@ -102,31 +111,27 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   Status OnRtcpPacket(const uint8_t* rtcp_bytes,
                       size_t rtcp_size,
                       int64_t receive_time_us) override {
-    if (rtcp_bytes == nullptr || rtcp_size == 0) {
-      return InvalidArgument("empty RTCP packet");
-    }
-    RtcpAdapterParsedPacket parsed;
-    if (!ParseRtcpPacket(rtcp_bytes, rtcp_size, &parsed)) {
-      return Status::Error(StatusCode::kMalformedPacket,
-                           "failed to parse RTCP packet");
-    }
-    if (parsed.type == RtcpAdapterPacketType::kReceiverReport) {
-      for (const auto& block : parsed.receiver_report.report_blocks) {
-        if (block.media_ssrc != config_.session.ids.sender_ssrc) {
-          continue;
-        }
-        snapshot_.downlink_quality.fraction_lost_q8 = block.fraction_lost;
-        const uint32_t rtt_ms = EstimateRttMsFromReceiverReport(
-            block.last_sr, block.delay_since_last_sr, receive_time_us);
-        if (rtt_ms > 0) {
-          nack_requester_.UpdateRtt(rtt_ms);
-          snapshot_.downlink_quality.rtt_ms =
-              static_cast<uint16_t>(std::min<uint32_t>(rtt_ms, 0xffffu));
-        }
-      }
-    }
-    (void)receive_time_us;
-    return Status::Ok();
+    return ForEachSupportedRtcpPacket(
+        rtcp_bytes, rtcp_size,
+        [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed) {
+          if (parsed.type != RtcpAdapterPacketType::kReceiverReport) {
+            return Status::Ok();
+          }
+          for (const auto& block : parsed.receiver_report.report_blocks) {
+            if (block.media_ssrc != config_.session.ids.sender_ssrc) {
+              continue;
+            }
+            snapshot_.downlink_quality.fraction_lost_q8 = block.fraction_lost;
+            const uint32_t rtt_ms = EstimateRttMsFromReceiverReport(
+                block.last_sr, block.delay_since_last_sr, receive_time_us);
+            if (rtt_ms > 0) {
+              nack_requester_.UpdateRtt(rtt_ms);
+              snapshot_.downlink_quality.rtt_ms =
+                  static_cast<uint16_t>(std::min<uint32_t>(rtt_ms, 0xffffu));
+            }
+          }
+          return Status::Ok();
+        });
   }
 
   QosSnapshot GetQosSnapshot(int64_t now_us) const override {
@@ -163,7 +168,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   }
 
   Status EmitNackRequesterFeedback(int64_t now_us) {
-    nack_requester_.ProcessNacks();
+    nack_requester_.ProcessNacks(now_us);
     for (const auto& event : nack_requester_.DrainEvents()) {
       std::vector<uint8_t> rtcp_bytes;
       if (event.type == NackRequesterAdapterEventType::kNack) {

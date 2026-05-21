@@ -7,11 +7,13 @@
 #include <utility>
 #include <vector>
 
+#include "compound_rtcp.h"
 #include "webrtc_qos/googcc_adapter.h"
 #include "webrtc_qos/h264_rtp_adapter.h"
 #include "webrtc_qos/pacing_adapter.h"
 #include "webrtc_qos/rtcp_adapter.h"
 #include "webrtc_qos/rtp_packet_adapter.h"
+#include "webrtc_qos/transport_packet_history.h"
 
 namespace webrtc_qos {
 namespace {
@@ -21,6 +23,10 @@ constexpr uint32_t kPacingMultiplierNumerator = 5;
 constexpr uint32_t kPacingMultiplierDenominator = 2;
 constexpr uint32_t kMaxPacingQueueBytes = 2 * 1024 * 1024;
 constexpr uint32_t kMaxPacingQueueTimeMs = 1500;
+constexpr uint32_t kSenderPacketHistoryHopId = 0;
+constexpr int64_t kSentPacketStateMinHoldUs = 5 * 1000 * 1000;
+constexpr uint32_t kSenderHistoryHoldMs = 3000;
+constexpr uint32_t kSenderHistoryMaxHoldMs = 10000;
 
 Status InvalidArgument(const char* message) {
   return Status::Error(StatusCode::kInvalidArgument, message);
@@ -41,7 +47,11 @@ class WebRtcVideoPushClient final : public VideoPushClient {
             PacingAdapterConfig{config_.session.start_bitrate_bps, 0,
                                 kMaxPacingQueueBytes,
                                 kMaxPacingQueueTimeMs,
-                                config_.session.twcc.extension_id})) {}
+                                config_.session.twcc.extension_id})),
+        packet_history_(TransportPacketHistoryConfig{kSenderHistoryHoldMs,
+                                                     kSenderHistoryMaxHoldMs,
+                                                     4096}),
+        sender_rate_cap_(UnlimitedSenderRateCap(config_.session.ids, 0, 0)) {}
 
   Status Start() override {
     if (!config_.transport_output) {
@@ -54,7 +64,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                                  config_.session.max_bitrate_bps, 0);
     pacer_->Process(0);
     ApplyProbeClusters();
-    ApplyGoogCcRates();
+    ApplyGoogCcRates(0);
     return Status::Ok();
   }
 
@@ -68,13 +78,14 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       return Status::Error(StatusCode::kUnsupported,
                            "VideoPushClient is not started");
     }
+    PruneState(now_us);
     Status drain_status = DrainPacer(now_us);
     if (!drain_status) {
       return drain_status;
     }
     googcc_.OnProcessInterval(now_us);
     ApplyProbeClusters();
-    ApplyGoogCcRates();
+    ApplyGoogCcRates(now_us);
     return MaybeSendSenderReport(now_us);
   }
 
@@ -166,70 +177,82 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   Status OnTransportFeedback(const uint8_t* rtcp_bytes,
                              size_t rtcp_size,
                              int64_t receive_time_us) override {
-    if (rtcp_bytes == nullptr || rtcp_size == 0) {
-      return InvalidArgument("empty RTCP feedback");
-    }
-    RtcpAdapterParsedPacket parsed;
-    if (!ParseRtcpPacket(rtcp_bytes, rtcp_size, &parsed)) {
-      return Status::Error(StatusCode::kMalformedPacket,
-                           "failed to parse RTCP feedback");
-    }
-    if (parsed.type == RtcpAdapterPacketType::kTransportFeedback) {
-      std::vector<GoogCcPacketFeedback> feedback;
-      for (const auto& packet : parsed.transport_feedback.packets) {
-        auto sent = sent_packets_.find(packet.sequence_number);
-        GoogCcPacketFeedback item;
-        item.transport_sequence_number = packet.sequence_number;
-        if (sent != sent_packets_.end()) {
-          item.send_time_us = sent->second.send_time_us;
-          item.packet_size_bytes = sent->second.packet_size_bytes;
-        }
-        if (packet.delta_since_base_us >= 0) {
-          item.receive_time_us =
-              parsed.transport_feedback.base_time_us +
-              packet.delta_since_base_us;
-        }
-        feedback.push_back(item);
-      }
-      googcc_.OnTransportFeedback(feedback, receive_time_us);
-      googcc_.OnProcessInterval(receive_time_us);
-      ApplyProbeClusters();
-      for (const auto& packet : parsed.transport_feedback.packets) {
-        if (packet.delta_since_base_us >= 0) {
-          sent_packets_.erase(packet.sequence_number);
-        }
-      }
-      ApplyGoogCcRates();
-      return Status::Ok();
-    }
-    if (parsed.type == RtcpAdapterPacketType::kReceiverReport) {
-      for (const auto& block : parsed.receiver_report.report_blocks) {
-        if (block.media_ssrc != config_.session.ids.sender_ssrc) {
-          continue;
-        }
-        const uint32_t rtt_ms = EstimateRttMsFromReceiverReport(
-            block.last_sr, block.delay_since_last_sr, receive_time_us);
-        if (rtt_ms > 0) {
-          latest_rtt_ms_ = rtt_ms;
-          googcc_.OnRoundTripTime(rtt_ms, receive_time_us);
-          googcc_.OnProcessInterval(receive_time_us);
-          ApplyProbeClusters();
-          ApplyGoogCcRates();
-        }
-      }
-      return Status::Ok();
-    }
-    return Status::Ok();
+    PruneState(receive_time_us);
+    return ForEachSupportedRtcpPacket(
+        rtcp_bytes, rtcp_size,
+        [&](const uint8_t* packet_bytes, size_t packet_size,
+            const RtcpAdapterParsedPacket& parsed) -> Status {
+          if (parsed.type == RtcpAdapterPacketType::kTransportFeedback) {
+            std::vector<GoogCcPacketFeedback> feedback;
+            feedback.reserve(parsed.transport_feedback.packets.size());
+            for (const auto& packet : parsed.transport_feedback.packets) {
+              auto sent = sent_packets_.find(packet.sequence_number);
+              if (sent == sent_packets_.end()) {
+                continue;
+              }
+              GoogCcPacketFeedback item;
+              item.transport_sequence_number = packet.sequence_number;
+              item.send_time_us = sent->second.send_time_us;
+              item.packet_size_bytes = sent->second.packet_size_bytes;
+              if (packet.delta_since_base_us >= 0) {
+                item.receive_time_us =
+                    parsed.transport_feedback.base_time_us +
+                    packet.delta_since_base_us;
+              }
+              feedback.push_back(item);
+            }
+            if (!feedback.empty()) {
+              googcc_.OnTransportFeedback(feedback, receive_time_us);
+              googcc_.OnProcessInterval(receive_time_us);
+              ApplyProbeClusters();
+              ApplyGoogCcRates(receive_time_us);
+            }
+            for (const auto& packet : parsed.transport_feedback.packets) {
+              if (packet.delta_since_base_us >= 0) {
+                sent_packets_.erase(packet.sequence_number);
+              }
+            }
+            return Status::Ok();
+          }
+          if (parsed.type == RtcpAdapterPacketType::kReceiverReport) {
+            for (const auto& block : parsed.receiver_report.report_blocks) {
+              if (block.media_ssrc != config_.session.ids.sender_ssrc) {
+                continue;
+              }
+              const uint32_t rtt_ms = EstimateRttMsFromReceiverReport(
+                  block.last_sr, block.delay_since_last_sr, receive_time_us);
+              if (rtt_ms > 0) {
+                latest_rtt_ms_ = rtt_ms;
+                googcc_.OnRoundTripTime(rtt_ms, receive_time_us);
+                googcc_.OnProcessInterval(receive_time_us);
+                ApplyProbeClusters();
+                ApplyGoogCcRates(receive_time_us);
+              }
+            }
+            return Status::Ok();
+          }
+          if (parsed.type == RtcpAdapterPacketType::kNack) {
+            return HandleNack(parsed.nack, receive_time_us);
+          }
+          if (parsed.type == RtcpAdapterPacketType::kPli) {
+            (void)packet_bytes;
+            (void)packet_size;
+            ++snapshot_.pli_count;
+            keyframe_request_pending_ = true;
+            return Status::Ok();
+          }
+          return Status::Ok();
+        });
   }
 
   Status OnSenderRateCap(const SenderRateCap& cap) override {
-    const uint32_t old_final_target_bps = FinalTargetBps();
-    sender_rate_cap_bps_ = cap.cap_bps;
-    const uint32_t new_final_target_bps = FinalTargetBps();
+    const uint32_t old_final_target_bps = FinalTargetBps(cap.receive_time_us);
+    sender_rate_cap_ = cap;
+    const uint32_t new_final_target_bps = FinalTargetBps(cap.receive_time_us);
     if (new_final_target_bps < old_final_target_bps) {
       ResetPacerQueue(cap.receive_time_us);
     }
-    ApplyGoogCcRates();
+    ApplyGoogCcRates(cap.receive_time_us);
     return Status::Ok();
   }
 
@@ -237,25 +260,25 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                               uint32_t min_bitrate_bps,
                               uint32_t max_bitrate_bps,
                               int64_t at_time_us) override {
-    const uint32_t old_final_target_bps = FinalTargetBps();
+    const uint32_t old_final_target_bps = FinalTargetBps(at_time_us);
     config_.session.start_bitrate_bps = start_bitrate_bps;
     config_.session.min_bitrate_bps = min_bitrate_bps;
     config_.session.max_bitrate_bps = max_bitrate_bps;
     googcc_.OnNetworkRouteChange(start_bitrate_bps, min_bitrate_bps,
                                  max_bitrate_bps, at_time_us);
-    const uint32_t new_final_target_bps = FinalTargetBps();
+    const uint32_t new_final_target_bps = FinalTargetBps(at_time_us);
     if (new_final_target_bps < old_final_target_bps) {
       ResetPacerQueue(at_time_us);
     }
     ApplyProbeClusters();
-    ApplyGoogCcRates();
+    ApplyGoogCcRates(at_time_us);
     return Status::Ok();
   }
 
   EncoderAdaptation GetEncoderAdaptation(int64_t now_us) const override {
     (void)now_us;
     EncoderAdaptation out;
-    out.target_bitrate_bps = FinalTargetBps();
+    out.target_bitrate_bps = FinalTargetBps(now_us);
     out.max_fps = SuggestedMaxFps(out.target_bitrate_bps);
     out.request_keyframe = keyframe_request_pending_;
     return out;
@@ -266,8 +289,8 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     out.ids = config_.session.ids;
     out.report_time_us = static_cast<uint64_t>(std::max<int64_t>(0, now_us));
     out.sender_rates.googcc_target_bps = googcc_.rates().target_bitrate_bps;
-    out.sender_rates.sender_rate_cap_bps = sender_rate_cap_bps_;
-    out.sender_rates.final_target_bps = FinalTargetBps();
+    out.sender_rates.sender_rate_cap_bps = EffectiveSenderRateCapBps(now_us);
+    out.sender_rates.final_target_bps = FinalTargetBps(now_us);
     out.sender_rates.pacing_bps = pacer_->stats().pacing_bitrate_bps;
     out.sender_rates.rtt_ms = latest_rtt_ms_;
     out.jitter_buffer_delay_ms = pacer_->stats().expected_queue_time_ms;
@@ -299,74 +322,23 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   Status DrainPacer(int64_t now_us) {
     std::vector<PacingAdapterPacket> emitted;
     for (int i = 0; i < 200 && emitted_packets_ < queued_packets_; ++i) {
-      auto batch = pacer_->Process(now_us + i * 5000);
-      emitted.insert(emitted.end(), std::make_move_iterator(batch.begin()),
-                     std::make_move_iterator(batch.end()));
-      if (!emitted.empty()) {
+      auto batch = pacer_->Process(now_us);
+      if (batch.empty()) {
         break;
       }
+      emitted.insert(emitted.end(), std::make_move_iterator(batch.begin()),
+                     std::make_move_iterator(batch.end()));
     }
 
     for (const auto& packet : emitted) {
-      TransportPacketView view;
-      view.bytes = packet.bytes.data();
-      view.size = packet.bytes.size();
-      view.metadata.ids = config_.session.ids;
-      view.metadata.kind = TransportPacketKind::kRtp;
-      view.metadata.send_time_us = now_us;
-      view.metadata.retransmission = packet.retransmission;
-      view.metadata.padding = packet.padding;
-      Status status = config_.transport_output(view);
+      Status status = EmitPacketNow(packet, now_us);
       if (!status) {
         return status;
-      }
-      if (packet.transport_sequence_number >= 0) {
-        const auto transport_sequence_number =
-            static_cast<uint16_t>(packet.transport_sequence_number);
-        sent_packets_[transport_sequence_number] =
-            SentPacketInfo{now_us, static_cast<uint32_t>(packet.bytes.size())};
-        if (packet.probe_cluster_id >= 0) {
-          GoogCcProbeCluster cluster;
-          const auto cluster_it = active_probe_clusters_.find(
-              static_cast<int32_t>(packet.probe_cluster_id));
-          if (cluster_it != active_probe_clusters_.end()) {
-            cluster = cluster_it->second;
-          }
-          googcc_.OnProbePacketSent(
-              transport_sequence_number,
-              static_cast<uint32_t>(packet.bytes.size()), now_us, cluster);
-          ++snapshot_.emitted_probe_packets;
-          snapshot_.emitted_probe_bytes += packet.bytes.size();
-          snapshot_.last_probe_cluster_id = packet.probe_cluster_id;
-        } else {
-          googcc_.OnSentPacket(transport_sequence_number,
-                               static_cast<uint32_t>(packet.bytes.size()),
-                               now_us);
-        }
-      }
-      ++emitted_packets_;
-      last_emitted_rtp_sequence_number_ = packet.rtp_sequence_number;
-      if (packet.padding) {
-        next_rtp_sequence_number_ =
-            static_cast<uint16_t>(packet.rtp_sequence_number + 1);
-      }
-      if (packet.transport_sequence_number >= 0) {
-        last_emitted_transport_sequence_number_ =
-            static_cast<uint16_t>(packet.transport_sequence_number);
-        if (packet.padding) {
-          next_transport_sequence_number_ =
-              static_cast<uint16_t>(packet.transport_sequence_number + 1);
-        }
-      }
-      has_last_emitted_packet_ = true;
-      if (!packet.padding) {
-        ++sent_rtp_packet_count_;
-        sent_rtp_octet_count_ += packet.bytes.size();
       }
     }
     if (!emitted.empty()) {
       googcc_.OnProcessInterval(now_us);
-      ApplyGoogCcRates();
+      ApplyGoogCcRates(now_us);
       Status sr_status = MaybeSendSenderReport(now_us);
       if (!sr_status) {
         return sr_status;
@@ -375,17 +347,29 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     return Status::Ok();
   }
 
-  uint32_t FinalTargetBps() const {
+  uint32_t EffectiveSenderRateCapBps(int64_t now_us) const {
+    if (IsUnlimitedRateCap(sender_rate_cap_)) {
+      return kUnlimitedRateCapBps;
+    }
+    if (sender_rate_cap_.expire_ms != 0 &&
+        now_us - sender_rate_cap_.receive_time_us >
+            static_cast<int64_t>(sender_rate_cap_.expire_ms) * 1000) {
+      return kUnlimitedRateCapBps;
+    }
+    return std::max<uint32_t>(config_.session.min_bitrate_bps,
+                              sender_rate_cap_.cap_bps);
+  }
+
+  uint32_t FinalTargetBps(int64_t now_us) const {
     const uint32_t googcc_target =
         std::max<uint32_t>(config_.session.min_bitrate_bps,
                            googcc_.rates().target_bitrate_bps);
-    if (sender_rate_cap_bps_ == kUnlimitedRateCapBps) {
+    const uint32_t sender_rate_cap_bps = EffectiveSenderRateCapBps(now_us);
+    if (sender_rate_cap_bps == kUnlimitedRateCapBps) {
       return googcc_target;
     }
     return std::min<uint32_t>(
-        googcc_target,
-        std::max<uint32_t>(config_.session.min_bitrate_bps,
-                           sender_rate_cap_bps_));
+        googcc_target, sender_rate_cap_bps);
   }
 
   uint32_t SuggestedMaxFps(uint32_t target_bps) const {
@@ -402,8 +386,8 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     return max_fps;
   }
 
-  void ApplyGoogCcRates() {
-    pacer_->SetRates(EffectivePacingBps(), 0);
+  void ApplyGoogCcRates(int64_t now_us) {
+    pacer_->SetRates(EffectivePacingBps(now_us), 0);
   }
 
   void ApplyProbeClusters() {
@@ -426,7 +410,8 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   void ResetPacerQueue(int64_t now_us) {
     keyframe_request_pending_ = true;
     pacer_ = std::make_unique<PacingAdapter>(
-        PacingAdapterConfig{EffectivePacingBps(), 0, kMaxPacingQueueBytes,
+        PacingAdapterConfig{EffectivePacingBps(now_us), 0,
+                            kMaxPacingQueueBytes,
                             kMaxPacingQueueTimeMs,
                             config_.session.twcc.extension_id});
     if (now_us >= 0) {
@@ -446,8 +431,8 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     }
   }
 
-  uint32_t EffectivePacingBps() const {
-    const uint32_t final_target_bps = FinalTargetBps();
+  uint32_t EffectivePacingBps(int64_t now_us) const {
+    const uint32_t final_target_bps = FinalTargetBps(now_us);
     const uint64_t min_pacing_bps =
         (static_cast<uint64_t>(final_target_bps) * kPacingMultiplierNumerator) /
         kPacingMultiplierDenominator;
@@ -460,10 +445,10 @@ class WebRtcVideoPushClient final : public VideoPushClient {
         pacing_bps,
         static_cast<uint32_t>(
             std::min<uint64_t>(min_pacing_bps, config_.session.max_bitrate_bps)));
-    if (sender_rate_cap_bps_ != kUnlimitedRateCapBps) {
+    const uint32_t sender_rate_cap_bps = EffectiveSenderRateCapBps(now_us);
+    if (sender_rate_cap_bps != kUnlimitedRateCapBps) {
       const uint64_t capped_pacing_bps =
-          (static_cast<uint64_t>(std::max<uint32_t>(
-               config_.session.min_bitrate_bps, sender_rate_cap_bps_)) *
+          (static_cast<uint64_t>(sender_rate_cap_bps) *
            kPacingMultiplierNumerator) /
           kPacingMultiplierDenominator;
       pacing_bps = std::min<uint32_t>(
@@ -537,9 +522,130 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     uint32_t packet_size_bytes = 0;
   };
 
+  Status HandleNack(const RtcpAdapterNack& nack, int64_t receive_time_us) {
+    for (uint16_t packet_id : nack.packet_ids) {
+      auto found = packet_history_.Find(TransportPacketHistoryKey{
+          kSenderPacketHistoryHopId, config_.session.ids.sender_ssrc,
+          packet_id});
+      if (!found.has_value()) {
+        continue;
+      }
+      RtpPacketAdapterParsedPacket parsed;
+      if (!ParseRtpPacket(found->rtp_bytes.data(), found->rtp_bytes.size(),
+                          RtpConfig(), &parsed)) {
+        continue;
+      }
+      std::vector<uint8_t> rebuilt_bytes;
+      RtpPacketAdapterBuildInput rtp_input;
+      rtp_input.payload_type = parsed.payload_type;
+      rtp_input.marker = parsed.marker;
+      rtp_input.sequence_number = parsed.sequence_number;
+      rtp_input.timestamp = parsed.timestamp;
+      rtp_input.ssrc = parsed.ssrc;
+      rtp_input.transport_sequence_number = next_transport_sequence_number_++;
+      rtp_input.payload = parsed.payload.data();
+      rtp_input.payload_size = parsed.payload.size();
+      if (!BuildRtpPacket(rtp_input, RtpConfig(), &rebuilt_bytes)) {
+        return InternalError("failed to rebuild retransmission RTP packet");
+      }
+      PacingAdapterPacket packet;
+      packet.ssrc = parsed.ssrc;
+      packet.rtp_sequence_number = parsed.sequence_number;
+      packet.transport_sequence_number = *rtp_input.transport_sequence_number;
+      packet.enqueue_time_us = receive_time_us;
+      packet.retransmission = true;
+      packet.bytes = std::move(rebuilt_bytes);
+      Status status = EmitPacketNow(packet, receive_time_us);
+      if (!status) {
+        return status;
+      }
+    }
+    return Status::Ok();
+  }
+
+  Status EmitPacketNow(const PacingAdapterPacket& packet, int64_t now_us) {
+    TransportPacketView view;
+    view.bytes = packet.bytes.data();
+    view.size = packet.bytes.size();
+    view.metadata.ids = config_.session.ids;
+    view.metadata.kind = TransportPacketKind::kRtp;
+    view.metadata.send_time_us = now_us;
+    view.metadata.retransmission = packet.retransmission;
+    view.metadata.padding = packet.padding;
+    Status status = config_.transport_output(view);
+    if (!status) {
+      return status;
+    }
+    if (packet.transport_sequence_number >= 0) {
+      const auto transport_sequence_number =
+          static_cast<uint16_t>(packet.transport_sequence_number);
+      sent_packets_[transport_sequence_number] =
+          SentPacketInfo{now_us, static_cast<uint32_t>(packet.bytes.size())};
+      if (packet.probe_cluster_id >= 0) {
+        GoogCcProbeCluster cluster;
+        const auto cluster_it = active_probe_clusters_.find(
+            static_cast<int32_t>(packet.probe_cluster_id));
+        if (cluster_it != active_probe_clusters_.end()) {
+          cluster = cluster_it->second;
+        }
+        googcc_.OnProbePacketSent(
+            transport_sequence_number,
+            static_cast<uint32_t>(packet.bytes.size()), now_us, cluster);
+        ++snapshot_.emitted_probe_packets;
+        snapshot_.emitted_probe_bytes += packet.bytes.size();
+        snapshot_.last_probe_cluster_id = packet.probe_cluster_id;
+      } else {
+        googcc_.OnSentPacket(transport_sequence_number,
+                             static_cast<uint32_t>(packet.bytes.size()),
+                             now_us);
+      }
+    }
+    ++emitted_packets_;
+    last_emitted_rtp_sequence_number_ = packet.rtp_sequence_number;
+    if (packet.padding) {
+      next_rtp_sequence_number_ =
+          static_cast<uint16_t>(packet.rtp_sequence_number + 1);
+    }
+    if (packet.transport_sequence_number >= 0) {
+      last_emitted_transport_sequence_number_ =
+          static_cast<uint16_t>(packet.transport_sequence_number);
+      if (packet.padding) {
+        next_transport_sequence_number_ =
+            static_cast<uint16_t>(packet.transport_sequence_number + 1);
+      }
+    }
+    has_last_emitted_packet_ = true;
+    if (!packet.padding) {
+      ++sent_rtp_packet_count_;
+      sent_rtp_octet_count_ += packet.bytes.size();
+      packet_history_.Store(
+          TransportPacketHistoryKey{kSenderPacketHistoryHopId,
+                                    config_.session.ids.sender_ssrc,
+                                    packet.rtp_sequence_number},
+          packet.bytes.data(), packet.bytes.size(), now_us,
+          packet.retransmission);
+    }
+    return Status::Ok();
+  }
+
+  void PruneState(int64_t now_us) {
+    packet_history_.Prune(now_us, latest_rtt_ms_);
+    const int64_t hold_us = std::max<int64_t>(
+        kSentPacketStateMinHoldUs,
+        static_cast<int64_t>(std::max<uint32_t>(latest_rtt_ms_, 1u)) * 3000);
+    for (auto it = sent_packets_.begin(); it != sent_packets_.end();) {
+      if (now_us - it->second.send_time_us > hold_us) {
+        it = sent_packets_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
   VideoPushClientConfig config_;
   GoogCcAdapter googcc_;
   std::unique_ptr<PacingAdapter> pacer_;
+  TransportPacketHistory packet_history_;
   QosSnapshot snapshot_;
   std::unordered_map<uint16_t, SentPacketInfo> sent_packets_;
   std::unordered_map<int32_t, GoogCcProbeCluster> active_probe_clusters_;
@@ -548,7 +654,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   uint16_t next_transport_sequence_number_ = 1;
   uint32_t first_rtp_timestamp_ = 90000;
   int64_t first_capture_time_us_ = -1;
-  uint32_t sender_rate_cap_bps_ = kUnlimitedRateCapBps;
+  SenderRateCap sender_rate_cap_;
   uint32_t latest_rtt_ms_ = 0;
   uint64_t queued_packets_ = 0;
   uint64_t emitted_packets_ = 0;

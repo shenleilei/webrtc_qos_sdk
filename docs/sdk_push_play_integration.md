@@ -113,6 +113,13 @@ push->Process(now_us);
 push->OnTransportFeedback(rtcp_bytes, rtcp_size, receive_time_us);
 ```
 
+当前 push 侧会处理以下 RTCP：
+
+- `Transport Feedback`：喂给 GoogCC
+- `Receiver Report`：更新 RTT
+- `NACK`：查 sender packet history 后执行 sender 侧重传
+- `PLI`：转成 `request_keyframe`
+
 接收 server 生成的 sender cap：
 
 ```cpp
@@ -144,6 +151,7 @@ const auto adaptation = push->GetEncoderAdaptation(now_us);
 - 收到的 RTCP bytes
 - 一个业务发送回调，把 SDK 生成的 RTCP feedback 回传给 server
 - 一个 AU 回调，消费 SDK 输出的 Annex-B access unit
+- 一个周期性 worker，持续调用 `Process(now_us)`，即使暂时没有新 RTP 到达
 
 ### 5.2 最小流程
 
@@ -170,6 +178,7 @@ play->Start();
 ```cpp
 play->OnRtpPacket(rtp_bytes, rtp_size, receive_time_us);
 play->OnRtcpPacket(rtcp_bytes, rtcp_size, receive_time_us);
+play->Process(now_us);
 ```
 
 ### 5.3 当前 play 侧公共指标边界
@@ -277,6 +286,8 @@ const auto cap = server->CurrentSenderRateCap(now_us);
 
 - `PushAnnexBAccessUnit()` 之后不能只在“有新帧时”才调 `Process()`。
   push worker 必须周期性调 `Process(now_us)`，否则 pacer 和 GoogCC 不会正常推进。
+- `VideoPlayClient` 也不是纯事件驱动对象。
+  即使暂时没有新 RTP，到接收 worker tick 时也要调 `Process(now_us)`，否则 NACK/PLI 重试计时不会推进。
 - `VideoPlayClient` 输出的是完整 Annex-B AU，不是裸 NALU。
 - 不要把 QoE harness 里的 PSNR/SSIM/freeze proxy 当成 `VideoPlayClient` 公共接口字段。
 - `SenderRateCap` 和 RTCP feedback 不是一回事。

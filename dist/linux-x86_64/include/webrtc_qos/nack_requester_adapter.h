@@ -33,7 +33,7 @@ class NackRequesterAdapter {
   int OnReceivedPacket(uint16_t rtp_sequence_number, bool is_recovered);
   void ClearUpTo(uint16_t rtp_sequence_number);
   void UpdateRtt(int64_t rtt_ms);
-  void ProcessNacks();
+  void ProcessNacks(int64_t now_us);
   std::vector<NackRequesterAdapterEvent> DrainEvents();
 
  private:

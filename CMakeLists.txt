@@ -59,6 +59,8 @@ webrtc_qos_static_library(webrtc_qos_transport_packet_history
 set(WEBRTC_QOS_WEBRTC_FACADE_INSTALL_TARGETS)
 set(WEBRTC_QOS_FFMPEG_INSTALL_TARGETS)
 set(WEBRTC_QOS_OPTIONAL_DEMO_TARGETS)
+set(WEBRTC_QOS_WEBRTC_MODULE_ARCHIVES)
+set(WEBRTC_QOS_WEBRTC_MODULE_HEADERS)
 if(WEBRTC_QOS_ENABLE_WEBRTC_FACADE)
   if(NOT WEBRTC_QOS_WEBRTC_MODULE_PREFIX)
     message(FATAL_ERROR
@@ -78,6 +80,8 @@ if(WEBRTC_QOS_ENABLE_WEBRTC_FACADE)
       message(FATAL_ERROR
         "missing required WebRTC module archive: ${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/${_archive}")
     endif()
+    list(APPEND WEBRTC_QOS_WEBRTC_MODULE_ARCHIVES
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/${_archive}")
   endforeach()
   foreach(_header IN ITEMS
       googcc_adapter.h
@@ -91,6 +95,8 @@ if(WEBRTC_QOS_ENABLE_WEBRTC_FACADE)
       message(FATAL_ERROR
         "missing required WebRTC module header: ${WEBRTC_QOS_WEBRTC_MODULE_INCLUDE_DIR}/webrtc_qos/${_header}")
     endif()
+    list(APPEND WEBRTC_QOS_WEBRTC_MODULE_HEADERS
+      "${WEBRTC_QOS_WEBRTC_MODULE_INCLUDE_DIR}/webrtc_qos/${_header}")
   endforeach()
 
   add_library(webrtc_qos_facade_video STATIC
@@ -231,6 +237,12 @@ if(WEBRTC_QOS_WEBRTC_FACADE_INSTALL_TARGETS)
     ${WEBRTC_QOS_WEBRTC_FACADE_INSTALL_TARGETS}
     EXPORT WebRtcQosSdkTargets
     ARCHIVE DESTINATION lib)
+  install(FILES
+    ${WEBRTC_QOS_WEBRTC_MODULE_ARCHIVES}
+    DESTINATION lib)
+  install(FILES
+    ${WEBRTC_QOS_WEBRTC_MODULE_HEADERS}
+    DESTINATION include/webrtc_qos)
 endif()
 if(WEBRTC_QOS_INSTALL_FFMPEG_ENCODER AND WEBRTC_QOS_FFMPEG_INSTALL_TARGETS)
   install(TARGETS

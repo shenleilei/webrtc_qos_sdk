@@ -235,6 +235,8 @@ include/webrtc_qos/control_messages.h
 - 输入服务端 `SENDER_RATE_CAP_V1`。
 - 输入 route change。
   当前 public API 对应 `VideoPushClient::OnNetworkRouteChange(...)`，用于把业务侧网络路由变化映射到 WebRTC GoogCC route change。
+- 输入来自 server 的 RTCP：
+  当前 `VideoPushClient::OnTransportFeedback(...)` 会处理 `TWCC / RR / NACK / PLI`。其中 `NACK` 会查 sender packet history 后执行 sender 侧重传，`PLI` 会转成 `request_keyframe`。
 - 接收 SDK 输出的 RTP/RTCP bytes，通过业务传输发送。
 - 读取 encoder bitrate / FPS / keyframe request 建议。
 
@@ -250,6 +252,8 @@ H264 glue 只允许做格式适配：
 业务只需要：
 
 - 输入收到的 RTP/RTCP bytes。
+- 周期性输入当前时间：
+  当前 public API 对应 `VideoPlayClient::Process(now_us)`，用于在完全无包窗口里继续推进 NackRequester 的 NACK/PLI 计时和重试。
 - 接收 SDK 输出的完整 Annex-B access unit。
 - 接收 SDK 输出的 RTCP feedback bytes，通过业务传输回传。
 - 读取接收侧传输/恢复指标：NACK、PLI、loss、RTT、丢包丢弃和基础接收侧统计。
@@ -906,6 +910,8 @@ scripts/verify_no_selfmade_media_stack.sh
 前置条件：当前 source build 默认开启 WebRTC-first facade，并默认从仓库内 `dist/linux-x86_64` 查找 WebRTC modules。首次在新机器执行这些门禁前，应先确认 `dist/linux-x86_64` 已完成一次 `package_webrtc_modules.sh` 打包，或者显式改用其它 `WEBRTC_QOS_WEBRTC_MODULE_PREFIX`。
 
 如果显式关闭 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE`，得到的是 maintenance/support-only 构建，用于排查或局部打包；它不属于 Phase-2 正式交付路径，也不能替代本节门禁。
+
+当前 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE=ON` 时，源码 `cmake --install` 也会把依赖的 `libwebrtc_qos_webrtc_*.a` 和 adapter headers 安装到目标 prefix，避免出现“安装后的 prefix 缺少 role target 依赖”的半可用发布包。
 
 ```bash
 cmake -S webrtc_qos_sdk -B webrtc_qos_sdk/build -DCMAKE_BUILD_TYPE=Release

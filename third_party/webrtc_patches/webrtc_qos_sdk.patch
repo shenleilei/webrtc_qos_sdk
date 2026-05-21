@@ -763,10 +763,10 @@ index 0000000..ee2f082
 +}
 diff --git a/sdk_qos/nack_requester_adapter.cc b/sdk_qos/nack_requester_adapter.cc
 new file mode 100644
-index 0000000..17a7790
+index 0000000..1202b40
 --- /dev/null
 +++ b/sdk_qos/nack_requester_adapter.cc
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,172 @@
 +#include "sdk_qos/nack_requester_adapter.h"
 +
 +#include <cstdint>
@@ -880,7 +880,13 @@ index 0000000..17a7790
 +
 +  void UpdateRtt(int64_t rtt_ms) { requester_.UpdateRtt(rtt_ms); }
 +
-+  void ProcessNacks() { requester_.ProcessNacks(); }
++  void ProcessNacks(int64_t now_us) {
++    const int64_t current_us = clock_.CurrentTime().us();
++    if (now_us > current_us) {
++      clock_.AdvanceTimeMicroseconds(now_us - current_us);
++    }
++    requester_.ProcessNacks();
++  }
 +
 +  std::vector<NackRequesterAdapterEvent> DrainEvents() {
 +    return event_sink_.DrainEvents();
@@ -915,8 +921,8 @@ index 0000000..17a7790
 +  impl_->UpdateRtt(rtt_ms);
 +}
 +
-+void NackRequesterAdapter::ProcessNacks() {
-+  impl_->ProcessNacks();
++void NackRequesterAdapter::ProcessNacks(int64_t now_us) {
++  impl_->ProcessNacks(now_us);
 +}
 +
 +std::vector<NackRequesterAdapterEvent> NackRequesterAdapter::DrainEvents() {
@@ -935,7 +941,7 @@ index 0000000..17a7790
 +}  // namespace webrtc_qos
 diff --git a/sdk_qos/nack_requester_adapter.h b/sdk_qos/nack_requester_adapter.h
 new file mode 100644
-index 0000000..56adb05
+index 0000000..2cb8274
 --- /dev/null
 +++ b/sdk_qos/nack_requester_adapter.h
 @@ -0,0 +1,50 @@
@@ -974,7 +980,7 @@ index 0000000..56adb05
 +  int OnReceivedPacket(uint16_t rtp_sequence_number, bool is_recovered);
 +  void ClearUpTo(uint16_t rtp_sequence_number);
 +  void UpdateRtt(int64_t rtt_ms);
-+  void ProcessNacks();
++  void ProcessNacks(int64_t now_us);
 +  std::vector<NackRequesterAdapterEvent> DrainEvents();
 +
 + private:
@@ -991,7 +997,7 @@ index 0000000..56adb05
 +#endif  // SDK_QOS_NACK_REQUESTER_ADAPTER_H_
 diff --git a/sdk_qos/nack_requester_adapter_smoke.cc b/sdk_qos/nack_requester_adapter_smoke.cc
 new file mode 100644
-index 0000000..a092152
+index 0000000..8ec1bbc
 --- /dev/null
 +++ b/sdk_qos/nack_requester_adapter_smoke.cc
 @@ -0,0 +1,53 @@
@@ -1037,7 +1043,7 @@ index 0000000..a092152
 +              "batched nack sequence numbers");
 +
 +  adapter.ClearUpTo(6);
-+  adapter.ProcessNacks();
++  adapter.ProcessNacks(100000);
 +  events = adapter.DrainEvents();
 +  ok &= Check(events.empty(), "clear removes pending NACKs");
 +
