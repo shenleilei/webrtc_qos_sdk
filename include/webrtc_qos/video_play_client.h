@@ -33,6 +33,9 @@ class VideoPlayClient {
   virtual Status OnRtcpPacket(const uint8_t* rtcp_bytes,
                               size_t rtcp_size,
                               int64_t receive_time_us) = 0;
+  // Returns transport/recovery-side receiver stats such as NACK/PLI/loss/RTT.
+  // QoE metrics like PSNR/SSIM/playable ratio are produced by upper decode/QoE
+  // harnesses, not by the public VideoPlayClient API.
   virtual QosSnapshot GetQosSnapshot(int64_t now_us) const = 0;
 };
 

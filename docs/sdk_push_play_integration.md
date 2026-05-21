@@ -264,7 +264,16 @@ const auto cap = server->CurrentSenderRateCap(now_us);
   回传 uplink TWCC / RR / 必要 RTCP 到 push
 - 业务控制通道额外传 `SenderRateCap`
 
-## 8. 业务侧常见坑
+## 8. SenderRateCap 语义
+
+当前 Phase-2 public API 只定义两种 sender cap 语义：
+
+- 有限上限：`cap_bps` 是一个明确的码率上限
+- 不限速：`cap_bps == kUnlimitedRateCapBps`
+
+当前 SDK 不把 `cap_bps == 0` 作为公共“暂停发送”协议语义承诺。业务如果需要暂停/恢复，应通过更高层的业务控制策略实现，而不是假定 `SenderRateCap.cap_bps=0` 会让 push 端停发。
+
+## 9. 业务侧常见坑
 
 - `PushAnnexBAccessUnit()` 之后不能只在“有新帧时”才调 `Process()`。
   push worker 必须周期性调 `Process(now_us)`，否则 pacer 和 GoogCC 不会正常推进。
@@ -274,7 +283,7 @@ const auto cap = server->CurrentSenderRateCap(now_us);
   sender cap 走业务控制消息；TWCC/RR/NACK/PLI 走 RTP/RTCP bytes。
 - `WEBRTC_QOS_ENABLE_WEBRTC_FACADE=OFF` 不是 Phase-2 正式交付模式，只用于维护/排查。
 
-## 9. 参考入口
+## 10. 参考入口
 
 - push/play/server 端到端最小参考：
   [demo/webrtc_first_loopback/main.cc](/root/webrtc_qos_sdk/demo/webrtc_first_loopback/main.cc:1)

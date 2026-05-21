@@ -276,7 +276,7 @@ H264 glue 只允许做格式适配：
 
 删除 `transport_feedback.h` 后，业务控制消息归属如下：
 
-- `rate_cap.h`：`SENDER_RATE_CAP_V1`、cap 过期语义、暂停/不限速语义。
+- `rate_cap.h`：`SENDER_RATE_CAP_V1`、cap 过期语义、有限上限/不限速语义。当前 Phase-2 public API 不把 `cap_bps=0` 定义为暂停。
 - `qos_metrics.h`：downlink quality、RTT、NACK/PLI/重传、probe/padding 和基础发送/接收侧统计。
 - `control_messages.h`：业务 envelope 内的控制消息类型、版本号、序列号和编解码。
 

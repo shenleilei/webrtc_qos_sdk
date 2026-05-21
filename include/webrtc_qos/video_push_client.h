@@ -24,12 +24,16 @@ class VideoPushClient {
 
   virtual Status Start() = 0;
   virtual Status Stop() = 0;
+  // Drive pacer, GoogCC and periodic RTCP on a sender worker thread.
+  // Call this continuously even when there is no new access unit to push.
   virtual Status Process(int64_t now_us) = 0;
   virtual Status PushAnnexBAccessUnit(
       const AnnexBAccessUnitView& access_unit) = 0;
   virtual Status OnTransportFeedback(const uint8_t* rtcp_bytes,
                                      size_t rtcp_size,
                                      int64_t receive_time_us) = 0;
+  // Inform the sender that the business-side network route or bitrate envelope
+  // changed, so the facade can forward a WebRTC route change into GoogCC.
   virtual Status OnNetworkRouteChange(uint32_t start_bitrate_bps,
                                       uint32_t min_bitrate_bps,
                                       uint32_t max_bitrate_bps,

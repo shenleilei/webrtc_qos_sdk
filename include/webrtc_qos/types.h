@@ -16,6 +16,11 @@ constexpr uint8_t kTransportWideCcExtensionId = 1;
 constexpr const char* kTransportWideCcUri =
     "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
 
+// Public Phase-2 semantics only define two sender cap states:
+// 1. a finite bitrate ceiling in bps
+// 2. unlimited, represented by kUnlimitedRateCapBps
+//
+// cap_bps == 0 is not a public "pause" contract in the current SDK.
 constexpr uint32_t kUnlimitedRateCapBps = 0xffffffffu;
 
 enum class StatusCode {
