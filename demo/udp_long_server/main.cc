@@ -1,7 +1,9 @@
 #include <cstdlib>
+#include <algorithm>
 #include <deque>
 #include <iostream>
 #include <map>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -17,7 +19,75 @@ void Usage(const char* argv0) {
   std::cerr << "usage: " << argv0
             << " <listen_port> <receiver_ip> <receiver_port>"
             << " [--drop-every=N] [--delay-ms=N] [--jitter-ms=N]"
-            << " [--jitter-every-n=N]\n";
+            << " [--jitter-every-n=N]"
+            << " [--profile=none|walking_dead_zone|bandwidth_cliff_recover|jitter_loss_recover]\n";
+}
+
+struct NetemPhase {
+  uint32_t start_ms = 0;
+  uint32_t cap_bps = webrtc_qos::kUnlimitedRateCapBps;
+  uint16_t drop_every = 0;
+  uint32_t delay_ms = 0;
+  uint32_t jitter_ms = 0;
+  uint16_t jitter_every_n = 0;
+};
+
+uint32_t MediaTimeMs(const webrtc_qos::RtpPacket& packet) {
+  const uint32_t base = 90000;
+  const uint32_t delta =
+      packet.timestamp >= base ? packet.timestamp - base : packet.timestamp;
+  return delta / 90;
+}
+
+std::vector<NetemPhase> BuildProfile(const std::string& profile,
+                                     uint16_t drop_every,
+                                     uint32_t delay_ms,
+                                     uint32_t jitter_ms,
+                                     uint16_t jitter_every_n) {
+  if (profile == "none" || profile.empty()) {
+    return {NetemPhase{0, webrtc_qos::kUnlimitedRateCapBps, drop_every,
+                       delay_ms, jitter_ms, jitter_every_n}};
+  }
+  if (profile == "walking_dead_zone") {
+    return {
+        NetemPhase{0, webrtc_qos::kUnlimitedRateCapBps, 0, 0, 0, 0},
+        NetemPhase{1200, 90000, 3, 700, 350, 5},
+        NetemPhase{2600, 180000, 7, 350, 160, 4},
+        NetemPhase{4200, webrtc_qos::kUnlimitedRateCapBps, 0, 0, 0, 0},
+    };
+  }
+  if (profile == "bandwidth_cliff_recover") {
+    return {
+        NetemPhase{0, webrtc_qos::kUnlimitedRateCapBps, 0, 0, 0, 0},
+        NetemPhase{1500, 180000, 0, 180, 80, 5},
+        NetemPhase{3200, 500000, 0, 120, 50, 6},
+        NetemPhase{4800, webrtc_qos::kUnlimitedRateCapBps, 0, 0, 0, 0},
+    };
+  }
+  if (profile == "jitter_loss_recover") {
+    return {
+        NetemPhase{0, webrtc_qos::kUnlimitedRateCapBps, 0, 0, 0, 0},
+        NetemPhase{1400, 500000, 11, 220, 220, 3},
+        NetemPhase{3800, webrtc_qos::kUnlimitedRateCapBps, 0, 0, 0, 0},
+    };
+  }
+  std::cerr << "unknown profile: " << profile << "\n";
+  std::exit(2);
+}
+
+const NetemPhase& SelectPhase(const std::vector<NetemPhase>& phases,
+                              uint32_t media_ms,
+                              size_t* phase_index) {
+  size_t selected = 0;
+  for (size_t i = 0; i < phases.size(); ++i) {
+    if (media_ms >= phases[i].start_ms) {
+      selected = i;
+    }
+  }
+  if (phase_index) {
+    *phase_index = selected;
+  }
+  return phases[selected];
 }
 
 void EnqueueDelayed(std::deque<webrtc_qos::demo::DelayedPacket>* delayed,
@@ -98,6 +168,7 @@ int main(int argc, char** argv) {
   uint32_t delay_ms = 0;
   uint32_t jitter_ms = 0;
   uint16_t jitter_every_n = 0;
+  std::string profile = "none";
   for (int i = 4; i < argc; ++i) {
     const std::string arg = argv[i];
     if (ParseUint16Option(arg, "--drop-every=", &drop_every) ||
@@ -106,9 +177,16 @@ int main(int argc, char** argv) {
         ParseUint16Option(arg, "--jitter-every-n=", &jitter_every_n)) {
       continue;
     }
+    const std::string profile_prefix = "--profile=";
+    if (arg.rfind(profile_prefix, 0) == 0) {
+      profile = arg.substr(profile_prefix.size());
+      continue;
+    }
     Usage(argv[0]);
     return 2;
   }
+  const std::vector<NetemPhase> phases =
+      BuildProfile(profile, drop_every, delay_ms, jitter_ms, jitter_every_n);
 
   const int fd = CreateUdpSocket(listen_port);
   const sockaddr_in receiver = MakeIpv4Address(receiver_ip, receiver_port);
@@ -126,6 +204,15 @@ int main(int argc, char** argv) {
   uint64_t rr_sent = 0;
   uint64_t quality_reports = 0;
   uint64_t rate_caps = 0;
+  uint64_t phase_changes = 0;
+  uint64_t phase_packets = 0;
+  uint64_t impaired_packets = 0;
+  uint32_t min_cap_bps = std::numeric_limits<uint32_t>::max();
+  uint32_t max_limited_cap_bps = 0;
+  uint32_t last_cap_bps = kUnlimitedRateCapBps;
+  size_t last_phase_index = std::numeric_limits<size_t>::max();
+  uint32_t last_sent_cap_bps = 0;
+  uint32_t last_cap_media_ms = 0;
   uint16_t feedback_seq = 1;
   uint32_t cap_seq = 1;
   bool bye = false;
@@ -153,6 +240,36 @@ int main(int argc, char** argv) {
       sender = from;
       sender_known = true;
       ++rtp_in;
+      size_t phase_index = 0;
+      const uint32_t media_ms = MediaTimeMs(packet);
+      const NetemPhase& phase = SelectPhase(phases, media_ms, &phase_index);
+      if (phase_index != last_phase_index) {
+        last_phase_index = phase_index;
+        ++phase_changes;
+      }
+      ++phase_packets;
+      const bool impaired = phase.drop_every > 0 || phase.delay_ms > 0 ||
+                            (phase.jitter_ms > 0 && phase.jitter_every_n > 0) ||
+                            phase.cap_bps != kUnlimitedRateCapBps;
+      if (impaired) {
+        ++impaired_packets;
+      }
+      const bool should_send_cap =
+          phase.cap_bps != last_sent_cap_bps ||
+          (phase.cap_bps != kUnlimitedRateCapBps &&
+           media_ms >= last_cap_media_ms + 300);
+      if (should_send_cap) {
+        if (SendSenderRateCap(fd, sender, ids, phase.cap_bps, cap_seq++, 3)) {
+          ++rate_caps;
+          last_sent_cap_bps = phase.cap_bps;
+          last_cap_bps = phase.cap_bps;
+          last_cap_media_ms = media_ms;
+          if (phase.cap_bps != kUnlimitedRateCapBps) {
+            min_cap_bps = std::min(min_cap_bps, phase.cap_bps);
+            max_limited_cap_bps = std::max(max_limited_cap_bps, phase.cap_bps);
+          }
+        }
+      }
       cache.Store(packet, NowUs());
       uplink_feedback[packet.transport_sequence_number] = PacketFeedback{
           packet.transport_sequence_number,
@@ -171,25 +288,26 @@ int main(int argc, char** argv) {
       SendEnvelope(fd, sender, MakeEnvelopeHeader(EnvelopeType::kUplinkTwcc, ids),
                    SerializeRtcpTransportFeedback(feedback));
       ++twcc_sent;
-      if (drop_every > 0 && packet.sequence_number % drop_every == 0) {
+      if (phase.drop_every > 0 &&
+          packet.sequence_number % phase.drop_every == 0) {
         ++dropped;
         continue;
       }
       const std::vector<uint8_t> encoded = SerializeRtpPacket(packet);
-      if (jitter_ms > 0 && jitter_every_n > 0 &&
-          packet.sequence_number % jitter_every_n == 0) {
+      if (phase.jitter_ms > 0 && phase.jitter_every_n > 0 &&
+          packet.sequence_number % phase.jitter_every_n == 0) {
         EnqueueDelayed(&delayed,
                        DelayedPacket{
                            encoded,
-                           NowUs() + static_cast<int64_t>(jitter_ms) * 1000,
+                           NowUs() + static_cast<int64_t>(phase.jitter_ms) * 1000,
                            false});
         continue;
       }
-      if (delay_ms > 0) {
+      if (phase.delay_ms > 0) {
         EnqueueDelayed(&delayed,
                        DelayedPacket{
                            encoded,
-                           NowUs() + static_cast<int64_t>(delay_ms) * 1000,
+                           NowUs() + static_cast<int64_t>(phase.delay_ms) * 1000,
                            false});
         continue;
       }
@@ -268,6 +386,9 @@ int main(int argc, char** argv) {
   FlushAllReady(fd, receiver, MakeEnvelopeHeader(EnvelopeType::kRtp, ids),
                 NowUs() + 10000000, &delayed, &forwarded);
   SendEnvelope(fd, receiver, MakeEnvelopeHeader(EnvelopeType::kBye, ids), {});
+  if (min_cap_bps == std::numeric_limits<uint32_t>::max()) {
+    min_cap_bps = kUnlimitedRateCapBps;
+  }
   std::cout << "udp_long_server rtp_in=" << rtp_in
             << " forwarded=" << forwarded
             << " dropped=" << dropped
@@ -275,7 +396,14 @@ int main(int argc, char** argv) {
             << " twcc_sent=" << twcc_sent
             << " rr_sent=" << rr_sent
             << " quality_reports=" << quality_reports
-            << " rate_caps=" << rate_caps << "\n";
+            << " rate_caps=" << rate_caps
+            << " profile=" << profile
+            << " phase_changes=" << phase_changes
+            << " phase_packets=" << phase_packets
+            << " impaired_packets=" << impaired_packets
+            << " min_cap_bps=" << min_cap_bps
+            << " max_limited_cap_bps=" << max_limited_cap_bps
+            << " last_cap_bps=" << last_cap_bps << "\n";
   close(fd);
   return rtp_in > 0 && forwarded > 0 && twcc_sent > 0 && rr_sent > 0 ? 0 : 1;
 }

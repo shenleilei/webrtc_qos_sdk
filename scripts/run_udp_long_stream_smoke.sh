@@ -11,12 +11,14 @@ LOG_DIR="${LOG_DIR:-/tmp/webrtc_qos_udp_long_stream_smoke}"
 WIDTH="${WIDTH:-320}"
 HEIGHT="${HEIGHT:-180}"
 FRAMES="${FRAMES:-90}"
+EXPECT_FRAMES="${EXPECT_FRAMES:-$((FRAMES * 2 / 3))}"
 BITRATE="${BITRATE:-1200000}"
 CONTENT="${CONTENT:-motion}"
 DROP_EVERY="${DROP_EVERY:-0}"
 DELAY_MS="${DELAY_MS:-0}"
 JITTER_MS="${JITTER_MS:-20}"
 JITTER_EVERY_N="${JITTER_EVERY_N:-17}"
+PROFILE="${PROFILE:-none}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -31,7 +33,7 @@ cmake --build "${BUILD_DIR}" --target \
   "--width=${WIDTH}" \
   "--height=${HEIGHT}" \
   "--content=${CONTENT}" \
-  "--expect-frames=$((FRAMES * 2 / 3))" \
+  "--expect-frames=${EXPECT_FRAMES}" \
   >"${LOG_DIR}/receiver.log" 2>&1 &
 receiver_pid=$!
 
@@ -41,6 +43,7 @@ receiver_pid=$!
   "--delay-ms=${DELAY_MS}" \
   "--jitter-ms=${JITTER_MS}" \
   "--jitter-every-n=${JITTER_EVERY_N}" \
+  "--profile=${PROFILE}" \
   >"${LOG_DIR}/server.log" 2>&1 &
 server_pid=$!
 
@@ -91,18 +94,35 @@ receiver_text = Path(sys.argv[3]).read_text(encoding="utf-8")
 summary_path = Path(sys.argv[4])
 
 sender_match = re.search(
-    r"udp_long_sender frames=(?P<frames>\d+) sent_packets=(?P<sent>\d+) "
+    r"udp_long_sender frames=(?P<frames>\d+) "
+    r"encoded_frames=(?P<encoded_frames>\d+) sent_packets=(?P<sent>\d+) "
     r"sent_bytes=(?P<bytes>\d+) pacer_drops=(?P<pacer_drops>\d+) "
     r"twcc_feedback=(?P<twcc>\d+) rr=(?P<rr>\d+) "
     r"rate_caps=(?P<rate_caps>\d+) final_target_bps=(?P<target>\d+) "
-    r"pacing_bps=(?P<pacing>\d+) rtt_ms=(?P<rtt>\d+)",
+    r"pacing_bps=(?P<pacing>\d+) rtt_ms=(?P<rtt>\d+) "
+    r"adapt_target_min=(?P<adapt_target_min>\d+) "
+    r"adapt_target_max=(?P<adapt_target_max>\d+) "
+    r"adapt_target_last=(?P<adapt_target_last>\d+) "
+    r"adapt_fps_min=(?P<adapt_fps_min>\d+) "
+    r"adapt_fps_max=(?P<adapt_fps_max>\d+) "
+    r"adapt_fps_last=(?P<adapt_fps_last>\d+) "
+    r"encoder_reconfigs=(?P<encoder_reconfigs>\d+) "
+    r"applied_bitrate_bps=(?P<applied_bitrate_bps>\d+) "
+    r"applied_fps=(?P<applied_fps>\d+)",
     sender_text,
 )
 server_match = re.search(
     r"udp_long_server rtp_in=(?P<rtp_in>\d+) forwarded=(?P<forwarded>\d+) "
     r"dropped=(?P<dropped>\d+) retransmitted=(?P<retransmitted>\d+) "
     r"twcc_sent=(?P<twcc_sent>\d+) rr_sent=(?P<rr_sent>\d+) "
-    r"quality_reports=(?P<quality_reports>\d+) rate_caps=(?P<rate_caps>\d+)",
+    r"quality_reports=(?P<quality_reports>\d+) rate_caps=(?P<rate_caps>\d+) "
+    r"profile=(?P<profile>[A-Za-z0-9_]+) "
+    r"phase_changes=(?P<phase_changes>\d+) "
+    r"phase_packets=(?P<phase_packets>\d+) "
+    r"impaired_packets=(?P<impaired_packets>\d+) "
+    r"min_cap_bps=(?P<min_cap_bps>\d+) "
+    r"max_limited_cap_bps=(?P<max_limited_cap_bps>\d+) "
+    r"last_cap_bps=(?P<last_cap_bps>\d+)",
     server_text,
 )
 receiver_match = re.search(
@@ -122,7 +142,13 @@ if not receiver_match:
 
 def parse(match):
     return {
-        key: (float(value) if key.startswith("psnr") else int(value))
+        key: (
+            value
+            if key == "profile"
+            else float(value)
+            if key.startswith("psnr")
+            else int(value)
+        )
         for key, value in match.groupdict().items()
     }
 

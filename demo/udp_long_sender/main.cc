@@ -1,7 +1,9 @@
 #include <cstdlib>
+#include <algorithm>
 #include <iostream>
-#include <unordered_map>
+#include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "demo/qoe_common.h"
@@ -32,6 +34,20 @@ bool ParseUint32Arg(const std::string& arg,
   *value = static_cast<uint32_t>(std::strtoul(arg.c_str() + prefix.size(),
                                              nullptr, 10));
   return true;
+}
+
+bool ShouldApplyEncoderRates(uint32_t target_bitrate_bps,
+                             uint32_t target_fps,
+                             uint32_t applied_bitrate_bps,
+                             uint32_t applied_fps) {
+  if (target_fps != applied_fps) {
+    return true;
+  }
+  const uint32_t diff =
+      target_bitrate_bps > applied_bitrate_bps
+          ? target_bitrate_bps - applied_bitrate_bps
+          : applied_bitrate_bps - target_bitrate_bps;
+  return diff >= std::max<uint32_t>(30000, applied_bitrate_bps / 10);
 }
 
 uint64_t DemoNtpFromUs(int64_t time_us) {
@@ -99,9 +115,20 @@ int main(int argc, char** argv) {
 
   uint64_t sent_packets = 0;
   uint64_t sent_bytes = 0;
+  uint64_t encoded_frames = 0;
   uint64_t twcc_feedback = 0;
   uint64_t rr_feedback = 0;
   uint64_t rate_caps = 0;
+  uint64_t encoder_reconfigs = 0;
+  uint32_t adapt_target_min = std::numeric_limits<uint32_t>::max();
+  uint32_t adapt_target_max = 0;
+  uint32_t adapt_target_last = bitrate_bps;
+  uint32_t adapt_fps_min = std::numeric_limits<uint32_t>::max();
+  uint32_t adapt_fps_max = 0;
+  uint32_t adapt_fps_last = 30;
+  uint32_t applied_bitrate_bps = bitrate_bps;
+  uint32_t applied_fps = 30;
+  bool force_keyframe_next = true;
   std::unordered_map<uint16_t, PacketFeedback> sent_packet_feedback;
   int64_t pacer_time_us = 0;
   SenderPacer pacer(
@@ -149,6 +176,46 @@ int main(int argc, char** argv) {
   std::vector<uint8_t> annexb;
   uint64_t last_sr_ntp = 0;
   uint32_t last_sr_lsr = 0;
+  const auto apply_adaptation = [&]() -> Status {
+    const TargetRates rates = qos.GetTargetRates(pacer_time_us);
+    pacer.SetTargetBitrate(rates.pacing_bps);
+    EncoderAdaptation adaptation = qos.GetEncoderAdaptation(pacer_time_us);
+    adaptation.target_bitrate_bps =
+        std::max<uint32_t>(qos_config.min_bitrate_bps,
+                           adaptation.target_bitrate_bps);
+    adaptation.max_fps =
+        std::max<uint32_t>(1, std::min<uint32_t>(30, adaptation.max_fps));
+    adapt_target_min = std::min(adapt_target_min,
+                                adaptation.target_bitrate_bps);
+    adapt_target_max = std::max(adapt_target_max,
+                                adaptation.target_bitrate_bps);
+    adapt_target_last = adaptation.target_bitrate_bps;
+    adapt_fps_min = std::min(adapt_fps_min, adaptation.max_fps);
+    adapt_fps_max = std::max(adapt_fps_max, adaptation.max_fps);
+    adapt_fps_last = adaptation.max_fps;
+    if (!ShouldApplyEncoderRates(adaptation.target_bitrate_bps,
+                                 adaptation.max_fps, applied_bitrate_bps,
+                                 applied_fps)) {
+      if (adaptation.request_keyframe) {
+        force_keyframe_next = true;
+      }
+      return Status::Ok();
+    }
+    const bool bitrate_increased =
+        adaptation.target_bitrate_bps > applied_bitrate_bps;
+    applied_bitrate_bps = adaptation.target_bitrate_bps;
+    applied_fps = adaptation.max_fps;
+    Status status = encoder.SetRates(applied_bitrate_bps, applied_fps);
+    if (!status) {
+      return status;
+    }
+    ++encoder_reconfigs;
+    if (bitrate_increased || adaptation.request_keyframe) {
+      force_keyframe_next = true;
+    }
+    return Status::Ok();
+  };
+
   const auto poll_control = [&](int timeout_ms) -> Status {
     DemoEnvelopeHeader header;
     std::vector<uint8_t> payload;
@@ -212,27 +279,45 @@ int main(int argc, char** argv) {
       }
       ++rate_caps;
     }
-    const TargetRates rates = qos.GetTargetRates(pacer_time_us);
-    pacer.SetTargetBitrate(rates.pacing_bps);
-    return Status::Ok();
+    return apply_adaptation();
   };
 
+  uint32_t next_encode_source_index = 0;
   for (uint32_t i = 0; i < frame_count; ++i) {
     const int64_t capture_time_us =
-        static_cast<int64_t>(i) * 1000000 / static_cast<int64_t>(config.fps);
-    FillI420Frame(width, height, content, static_cast<int>(i), &y, &u, &v);
-    const bool force_keyframe = (i % 30) == 0;
-    status = encoder.EncodeI420(y.data(), width, u.data(), width / 2, v.data(),
-                                width / 2, force_keyframe, &annexb);
+        static_cast<int64_t>(i) * 1000000 / 30;
+    status = apply_adaptation();
     if (!status) {
-      std::cerr << "udp_long_sender: encode failed: " << status.message << "\n";
+      std::cerr << "udp_long_sender: apply adaptation failed: "
+                << status.message << "\n";
       return 1;
     }
-    status = sender.SendAnnexBAccessUnit(annexb.data(), annexb.size(),
-                                         capture_time_us);
-    if (!status && status.code != StatusCode::kQueueFull) {
-      std::cerr << "udp_long_sender: send AU failed: " << status.message << "\n";
-      return 1;
+    if (i >= next_encode_source_index) {
+      FillI420Frame(width, height, content, static_cast<int>(i), &y, &u, &v);
+      const bool force_keyframe =
+          encoded_frames == 0 || force_keyframe_next || (i % 30) == 0 ||
+          pacer.GetStats().waiting_for_idr;
+      status = encoder.EncodeI420(y.data(), width, u.data(), width / 2, v.data(),
+                                  width / 2, force_keyframe, &annexb);
+      if (!status) {
+        std::cerr << "udp_long_sender: encode failed: " << status.message
+                  << "\n";
+        return 1;
+      }
+      if (force_keyframe) {
+        force_keyframe_next = false;
+      }
+      status = sender.SendAnnexBAccessUnit(annexb.data(), annexb.size(),
+                                           capture_time_us);
+      if (!status && status.code != StatusCode::kQueueFull) {
+        std::cerr << "udp_long_sender: send AU failed: " << status.message
+                  << "\n";
+        return 1;
+      }
+      ++encoded_frames;
+      const uint32_t source_frames_per_encode =
+          std::max<uint32_t>(1, (30 + applied_fps - 1) / applied_fps);
+      next_encode_source_index = i + source_frames_per_encode;
     }
     if (i == 0 || i % 30 == 0) {
       last_sr_ntp = DemoNtpFromUs(pacer_time_us);
@@ -256,7 +341,12 @@ int main(int argc, char** argv) {
                   << "\n";
         return 1;
       }
-      pacer.SetTargetBitrate(qos.GetTargetRates(pacer_time_us).pacing_bps);
+      status = apply_adaptation();
+      if (!status) {
+        std::cerr << "udp_long_sender: tick adaptation failed: "
+                  << status.message << "\n";
+        return 1;
+      }
       status = pacer.Tick(pacer_time_us);
       if (!status) {
         std::cerr << "udp_long_sender: pacer failed: " << status.message << "\n";
@@ -279,7 +369,12 @@ int main(int argc, char** argv) {
                 << "\n";
       return 1;
     }
-    pacer.SetTargetBitrate(qos.GetTargetRates(pacer_time_us).pacing_bps);
+    status = apply_adaptation();
+    if (!status) {
+      std::cerr << "udp_long_sender: flush adaptation failed: "
+                << status.message << "\n";
+      return 1;
+    }
     status = pacer.Tick(pacer_time_us);
     if (!status) {
       std::cerr << "udp_long_sender: flush pacer failed: " << status.message
@@ -304,7 +399,14 @@ int main(int argc, char** argv) {
   }
   SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kBye, ids), {});
   const TargetRates rates = qos.GetTargetRates(pacer_time_us);
+  if (adapt_target_min == std::numeric_limits<uint32_t>::max()) {
+    adapt_target_min = adapt_target_last;
+  }
+  if (adapt_fps_min == std::numeric_limits<uint32_t>::max()) {
+    adapt_fps_min = adapt_fps_last;
+  }
   std::cout << "udp_long_sender frames=" << frame_count
+            << " encoded_frames=" << encoded_frames
             << " sent_packets=" << sent_packets
             << " sent_bytes=" << sent_bytes
             << " pacer_drops=" << pacer.GetStats().dropped_packets
@@ -313,9 +415,19 @@ int main(int argc, char** argv) {
             << " rate_caps=" << rate_caps
             << " final_target_bps=" << rates.final_target_bps
             << " pacing_bps=" << rates.pacing_bps
-            << " rtt_ms=" << rates.rtt_ms << "\n";
+            << " rtt_ms=" << rates.rtt_ms
+            << " adapt_target_min=" << adapt_target_min
+            << " adapt_target_max=" << adapt_target_max
+            << " adapt_target_last=" << adapt_target_last
+            << " adapt_fps_min=" << adapt_fps_min
+            << " adapt_fps_max=" << adapt_fps_max
+            << " adapt_fps_last=" << adapt_fps_last
+            << " encoder_reconfigs=" << encoder_reconfigs
+            << " applied_bitrate_bps=" << applied_bitrate_bps
+            << " applied_fps=" << applied_fps << "\n";
   close(fd);
-  return sent_packets > frame_count && twcc_feedback > 0 && rr_feedback > 0
+  return sent_packets > encoded_frames && encoded_frames > 0 &&
+                 twcc_feedback > 0 && rr_feedback > 0
              ? 0
              : 1;
 }

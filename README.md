@@ -173,7 +173,7 @@ Real UDP long-stream QoE smoke:
 bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
 ```
 
-This starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. It is the current closest executable model to the intended C/S/SFU shape, but it is still a smoke test, not a production SFU or full netem deployment.
+This starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. It is the current closest executable model to the intended C/S/SFU shape, but it is still a local SFU-like demo process, not a production SFU or Linux `tc/netem` deployment.
 
 The feedback topology in this smoke is:
 
@@ -182,7 +182,7 @@ The feedback topology in this smoke is:
 - `server -> receiver`: RTP forwarding with optional drop/delay/jitter and server-side retransmission from cache.
 - `receiver -> server`: `DOWNLINK_QUALITY_V1` reports, RTCP NACK for missing RTP sequence numbers, and BYE.
 
-The default smoke uses real FFmpeg/libx264 encoding, RTP packetization, SDK pacer, real UDP sockets, server retransmission cache, receiver jitter assembly, FFmpeg H264 decode, source-aligned PSNR, max frame gap, and hard checks that TWCC/RR/downlink-quality feedback crossed process boundaries. It intentionally exercises periodic downlink jitter by default:
+The default smoke uses real FFmpeg/libx264 encoding, live encoder bitrate/FPS reconfiguration from `SenderQosController::GetEncoderAdaptation`, RTP packetization, SDK pacer, real UDP sockets, server retransmission cache, receiver jitter assembly, FFmpeg H264 decode, source-aligned PSNR, max frame gap, and hard checks that TWCC/RR/downlink-quality feedback crossed process boundaries. It intentionally exercises periodic downlink jitter by default:
 
 ```bash
 LOG_DIR=/tmp/webrtc_qos_udp_long_stream_smoke \
@@ -194,21 +194,42 @@ Latest local result:
 | Metric | Value |
 | --- | ---: |
 | Source frames | 90 |
-| Sender RTP packets | 245 |
-| Sender TWCC feedback packets | 245 |
+| Sender encoded frames | 90 |
+| Sender RTP packets | 296 |
+| Sender TWCC feedback packets | 296 |
 | Sender RTCP RR packets | 3 |
 | Sender rate caps | 1 |
-| Server RTP in / forwarded | 245 / 245 |
-| Server retransmissions | 14 |
+| Sender adaptation target min/max | 1200000 / 2500000 bps |
+| Sender adaptation FPS min/max | 30 / 30 |
+| Server RTP in / forwarded | 296 / 296 |
+| Server retransmissions | 17 |
 | Server downlink quality reports received | 5 |
-| Receiver RTP packets | 259 |
-| Receiver completed / decoded frames | 90 / 84 |
+| Receiver RTP packets | 313 |
+| Receiver completed / decoded frames | 90 / 88 |
 | Receiver decode errors | 0 |
-| Receiver PSNR avg / min | 37.80 / 23.42 dB |
-| Receiver max frame gap | 26 ms |
-| Receiver NACK / downlink reports | 14 / 6 |
+| Receiver PSNR avg / min | 42.68 / 27.18 dB |
+| Receiver max frame gap | 30 ms |
+| Receiver NACK / downlink reports | 17 / 6 |
 
-Boundary of this smoke: it proves real process separation and the core feedback wiring, including weak downlink feedback converted into a sender rate cap. It does not yet replace the seeded long-stream QoE matrix, because it does not run the full walking-dead-zone/bandwidth-cliff/recovery scenario set, does not use Linux `tc/netem`, and currently uses fixed encoder settings during the run rather than live encoder reconfiguration from the sender adaptation decision.
+Real UDP long-stream dynamic weak-network matrix:
+
+```bash
+bash webrtc_qos_sdk/scripts/run_udp_long_stream_matrix.sh
+```
+
+This matrix runs the same three-process UDP topology through media-time-driven weak-network phases. The server changes downlink cap/loss/delay/jitter by RTP timestamp rather than wall clock, so the scenario is repeatable even when local scheduling speed changes. It validates both directions of adaptation: entering weak network must reduce sender target bitrate/FPS, and recovery must remove the server cap and restore sender FPS.
+
+Latest local matrix result:
+
+| Scenario | Completed / decoded | Sender min target | Sender min FPS | Sender last target / FPS | Max frame gap | PSNR avg/min | NACK / RTX | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `walking_dead_zone` | 138 / 138 | 90000 bps | 8 | 1588359 bps / 30 | 403 ms | 59.85 / 53.87 dB | 10 / 62 | PASS |
+| `bandwidth_cliff_recover` | 145 / 140 | 180000 bps | 8 | 1668845 bps / 30 | 92 ms | 60.16 / 22.60 dB | 23 / 114 | PASS |
+| `jitter_loss_recover` | 173 / 170 | 500000 bps | 15 | 1814932 bps / 30 | 229 ms | 59.49 / 30.55 dB | 10 / 69 | PASS |
+
+Aggregate: 3/3 cases passed, `decode_errors=0`, completed frames `456`, decoded frames `448`, sender target reached as low as `90000 bps`, sender FPS reached as low as `8`, sender recovered to `30 fps` in every case, and all server caps recovered to unlimited at the end of each profile.
+
+Boundary of these UDP long-stream tests: they prove real process separation, core feedback wiring, live encoder adaptation, weak-network downshift, and good-network recovery in a local C/S/SFU-like topology. They still do not prove production-global optimum because they do not yet use Linux `tc/netem`, real NIC queues, multiple concurrent play clients, real renderer freeze metrics, or the full 720p multi-seed content matrix in the real UDP topology.
 
 Role-based link verification:
 
@@ -433,7 +454,7 @@ Important boundary samples from the stability run:
 - `detail_motion/bandwidth_staircase` remains the hardest recovery case after the RTP timestamp fix: worst seeded run is `run=2`, `freeze=1`, `max_freeze_ms=1765`, `render_deadline_drops=3`, `frame_latency_max_ms=1710`, `jitter_buffer_max_ms=895`, and `psnr_avg=42.341`.
 - `detail_motion/rtt_jitter_spike_recover` can drop to `psnr_min ~= 15.67 dB`, which is above the current hard floor but still visually fragile.
 
-The current 720p evidence is therefore stronger than a one-off demo pass: hard validation passes across 45 seeded cases with no decode errors, no duplicate output frames, no validation failures, and only 3 total render deadline drops. It still does not prove global optimum. The first migration step from in-process SFU-like validation to a real process topology is now `run_udp_long_stream_smoke.sh`: it proves `sender -> server -> receiver` over UDP with real TWCC/RR/downlink-quality/NACK/rate-cap feedback and real H264 decode/PSNR. The next proof step is to expand that real UDP topology into the full seeded weak-network QoE matrix with UDP/netem or an equivalent link emulator, then add longer mobile traces, real runtime encoder reconfiguration, and stricter recovery-margin metrics rather than only checking whether the current thresholds pass.
+The current 720p evidence is therefore stronger than a one-off demo pass: hard validation passes across 45 seeded cases with no decode errors, no duplicate output frames, no validation failures, and only 3 total render deadline drops. It still does not prove global optimum. The migration from in-process SFU-like validation to a real process topology has started: `run_udp_long_stream_smoke.sh` proves `sender -> server -> receiver` over UDP with real TWCC/RR/downlink-quality/NACK/rate-cap feedback and real H264 decode/PSNR, and `run_udp_long_stream_matrix.sh` now proves live encoder bitrate/FPS downshift and recovery across three real UDP weak-network profiles. The next proof step is to move the full seeded 720p QoE matrix into this real UDP topology with UDP/netem or an equivalent link emulator, then add longer mobile traces, multiple receive clients, renderer freeze metrics, and stricter recovery-margin metrics rather than only checking whether the current thresholds pass.
 
 UDP weak-network matrix:
 
@@ -504,6 +525,7 @@ Implementation boundary in this slice:
 - `udp_*_demo` proves the same small libraries work across a real local UDP C/S chain.
 - `udp_*_demo` also verifies `PLI -> server forward -> sender IDR resend -> receiver keyframe output`.
 - `run_udp_long_stream_smoke.sh` proves a real three-process UDP long-stream path with H264 encode/decode, TWCC, RTCP RR, receiver downlink quality, NACK retransmission, sender rate cap, PSNR, and duplicate completed-frame rejection.
+- `run_udp_long_stream_matrix.sh` proves real three-process dynamic weak-network adaptation: sender bitrate/FPS downshift under weak phases, cap removal and FPS recovery under good phases, no decoder errors, and quantitative PSNR/frame-gap gates.
 - `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.
 - `run_dynamic_qos_matrix.sh` proves the sender adaptation surface reacts in both directions: it degrades under bandwidth/RTT/loss impairment and climbs back when the network recovers.
 - `ffmpeg_encoder_demo` proves real H264 encoder output can enter the same Annex-B -> RTP -> pacer path used by synthetic/file demos.
