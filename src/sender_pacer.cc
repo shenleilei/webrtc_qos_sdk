@@ -148,6 +148,12 @@ Status SenderPacer::Tick(int64_t now_us) {
     last_tick_us_ = now_us;
   }
   DropExpiredMediaPackets(now_us);
+  if (config_.wait_for_idr_after_p_drop && stats_.waiting_for_idr) {
+    Status drop_status = DropQueuedPFrames();
+    if (!drop_status) {
+      return drop_status;
+    }
+  }
   const int64_t delta_us = std::max<int64_t>(0, now_us - last_tick_us_);
   last_tick_us_ = now_us;
   budget_bytes_ += (static_cast<double>(target_bps_) / 8.0) *
@@ -285,6 +291,7 @@ Status SenderPacer::DropQueuedPFrames() {
   if (config_.wait_for_idr_after_p_drop) {
     stats_.waiting_for_idr = true;
   }
+  stats_.queued_packets = retransmission_queue_.size() + media_queue_.size();
   return Status::Ok();
 }
 

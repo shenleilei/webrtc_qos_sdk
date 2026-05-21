@@ -4,7 +4,7 @@ set -euo pipefail
 SDK_ROOT="${SDK_ROOT:-/root/webrtc_qos_sdk}"
 LOG_DIR="${LOG_DIR:-/tmp/webrtc_qos_udp_direct_long_stream_matrix}"
 BASE_PORT="${BASE_PORT:-51000}"
-FRAMES="${FRAMES:-210}"
+FRAMES="${FRAMES:-300}"
 WIDTH="${WIDTH:-320}"
 HEIGHT="${HEIGHT:-180}"
 BITRATE="${BITRATE:-1200000}"
@@ -60,6 +60,7 @@ run_case() {
   RATE_CAP_BPS=500000 \
   RATE_CAP_AT_PACKET=0 \
   MAX_FRAME_GAP_MS=5000 \
+  MAX_COMPLETION_GAP_MS="${max_completion_gap_ms}" \
   MIN_PSNR_AVG=1 \
     bash "${SDK_ROOT}/scripts/run_udp_direct_long_stream_smoke.sh" \
       >"${case_dir}.stdout" 2>&1
@@ -150,6 +151,8 @@ if profile == "walking_dead_zone":
     check(receiver["direct_dropped"] > 0, "walking_drop_missing")
     check(receiver["direct_delayed"] > 0 or receiver["direct_jittered"] > 0,
           "walking_delay_or_jitter_missing")
+    check(receiver.get("pli_sent", 0) > 0, "walking_pli_missing")
+    check(sender.get("pli_feedback", 0) > 0, "walking_sender_pli_missing")
 if profile == "bandwidth_cliff_recover":
     check(receiver["direct_delayed"] > 0 or receiver["direct_jittered"] > 0,
           "bandwidth_delay_or_jitter_missing")
@@ -198,17 +201,17 @@ for content in ${MATRIX_CONTENTS}; do
   for run in $(seq 1 "${MATRIX_RUNS}"); do
     run_case "walking_dead_zone_${content}_run${run}" walking_dead_zone \
       "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
-      80 90 80 100000 8 "${MIN_RECONFIGS_WALKING}" 2500 800 \
+      160 160 160 100000 8 "${MIN_RECONFIGS_WALKING}" 2500 1200 \
       "${min_psnr_avg_strict}" "${min_psnr_min_strict}" 4 4 1 1
     case_index=$((case_index + 1))
     run_case "bandwidth_cliff_recover_${content}_run${run}" bandwidth_cliff_recover \
       "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
-      90 90 90 200000 8 "${MIN_RECONFIGS_BANDWIDTH}" 1200 500 \
+      160 160 160 200000 8 "${MIN_RECONFIGS_BANDWIDTH}" 1800 750 \
       "${min_psnr_avg_strict}" "${min_psnr_min_strict}" 4 4 0 0
     case_index=$((case_index + 1))
     run_case "jitter_loss_recover_${content}_run${run}" jitter_loss_recover \
       "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
-      100 110 110 500000 15 "${MIN_RECONFIGS_JITTER}" 800 500 \
+      200 200 200 500000 15 "${MIN_RECONFIGS_JITTER}" 1200 500 \
       "${min_psnr_avg_jitter}" "${min_psnr_min_jitter}" 3 4 1 1
     case_index=$((case_index + 1))
   done
@@ -249,6 +252,9 @@ summary = {
     "psnr_min_min": min(row["receiver"]["psnr_min"] for row in rows),
     "rate_caps": sum(row["sender"]["rate_caps"] for row in rows),
     "nack_sent": sum(row["receiver"]["nack"] for row in rows),
+    "pli_sent": sum(row["receiver"].get("pli_sent", 0) for row in rows),
+    "pli_feedback": sum(row["sender"].get("pli_feedback", 0) for row in rows),
+    "forced_keyframes": sum(row["sender"].get("forced_keyframes", 0) for row in rows),
     "retransmitted": sum(row["sender"]["retransmitted"] for row in rows),
     "max_encode_gap_ms": max(row["sender"].get("max_encode_gap_ms", 0) for row in rows),
     "pacer_drop_aus": sum(row["sender"].get("pacer_drop_aus", 0) for row in rows),

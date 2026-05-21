@@ -177,7 +177,7 @@ bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
 
 The primary Phase-1a topology is two endpoint processes only: `udp_long_sender_demo <-> udp_long_receiver_demo`. In this direct mode, the receiver sends standard TWCC, RTCP RR, RTCP NACK, downlink quality, and `SENDER_RATE_CAP_V1` directly back to the sender; the sender retransmits from its own RTP cache. This verifies the endpoint SDK QoS loop itself instead of relying on server-side retransmission or SFU behavior.
 
-`run_udp_direct_long_stream_matrix.sh` keeps the same two-process direct topology and moves the weak-network profile into the receiver endpoint. It runs `walking_dead_zone`, `bandwidth_cliff_recover`, and `jitter_loss_recover` with receiver-side drop/delay/jitter/rate-cap generation, so the sender adaptation and receiver jitter/NACK behavior are validated without any relay process.
+`run_udp_direct_long_stream_matrix.sh` keeps the same two-process direct topology and moves the weak-network profile into the receiver endpoint. It runs `walking_dead_zone`, `bandwidth_cliff_recover`, and `jitter_loss_recover` with receiver-side drop/delay/jitter/rate-cap generation, so the sender adaptation and receiver jitter/NACK behavior are validated without any relay process. The profile is driven by a receiver-local accelerated test clock instead of RTP media time, so the simulated network still enters and leaves outage phases even if the sender temporarily reduces FPS or skips source frames.
 
 `run_udp_long_stream_smoke.sh` starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. The server process is intentionally minimal: it is a local UDP relay/test harness for forwarding RTP, producing sender-side TWCC/RR feedback, injecting deterministic weak-network phases, and retransmitting from a cache after receiver NACK. It is not a production SFU, not a long-term server SDK target, and not a Linux `tc/netem` deployment. The optimization focus remains endpoint SDK behavior on the sender and receiver.
 
@@ -242,26 +242,40 @@ Latest local two-process direct result:
 | Receiver max completion / media gap | 50 / 67 ms |
 | Receiver NACK / downlink reports | 17 / 7 |
 
-Latest local two-process direct dynamic matrix result (`MATRIX_CONTENTS=motion`, `MATRIX_RUNS=1`):
+Latest local two-process direct dynamic matrix result (`MATRIX_CONTENTS="motion low_motion detail_motion"`, `MATRIX_RUNS=1`, default `FRAMES=300`):
 
 | Metric | Value |
 | --- | ---: |
-| Cases | 3 / 3 passed |
-| Completed / decoded frames | 419 / 402 |
+| Cases | 9 / 9 passed |
+| Completed / decoded frames | 2130 / 2130 |
 | Decode errors | 0 |
 | Sender target min / recovered max | 80000 / 2500000 bps |
 | Sender FPS min / recovered max | 5 / 30 |
-| Receiver direct drop / delay / jitter events | 47 / 299 / 97 |
-| Receiver max completion gap | 652 ms |
-| Receiver max media gap | 1200 ms |
-| Receiver PSNR avg/min floor | 56.73 / 20.24 dB |
-| NACK / sender retransmissions | 41 / 160 |
-| Sender rate caps | 32 |
+| Receiver direct drop / delay / jitter events | 143 / 714 / 270 |
+| Receiver max completion gap | 785 ms |
+| Receiver max media gap | 1300 ms |
+| Receiver PSNR avg/min floor | 50.62 / 32.64 dB |
+| NACK / PLI / sender retransmissions | 162 / 14 / 1175 |
+| Sender rate caps | 100 |
 | Sender max encode gap | 200 ms |
-| Sender pacer dropped AUs / enqueue dropped AUs | 9 / 0 |
-| Sender source frame skips | 179 |
+| Sender pacer dropped AUs / enqueue dropped AUs | 44 / 0 |
+| Sender source frame skips | 386 |
 
-Direct matrix interpretation: the endpoint-only path proves downshift, recovery, real H264 decode, direct receiver feedback, and sender-side retransmission without server relay behavior. The current low-latency policy intentionally allows media-time gaps when recovering from severe impairment; therefore `max_completion_gap_ms` is the primary smoothness gate, while `max_frame_gap_ms`, `source_frame_skips`, and `pacer_drop_aus` record the continuity cost. The pacer now expires queued P-frame media at access-unit granularity rather than packet granularity, so the receiver is not left with half of a FU-A frame. In the hardest walking-dead-zone case, the remaining media gap is mainly caused by deliberate FPS downshift/source-frame skipping at 5 fps, not by enqueue failure.
+Per-case direct matrix samples:
+
+| Scenario / content | Completed / decoded | Sender min target | Sender min FPS | Sender last target / FPS | Max media / completion gap | PSNR avg/min | NACK / RTX / PLI |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `walking_dead_zone` / `motion` | 220 / 220 | 80000 bps | 5 | 2500000 bps / 30 | 1300 / 738 ms | 62.61 / 53.23 dB | 26 / 184 / 2 |
+| `bandwidth_cliff_recover` / `motion` | 258 / 258 | 80000 bps | 5 | 2500000 bps / 30 | 134 / 294 ms | 62.67 / 53.34 dB | 11 / 61 / 1 |
+| `jitter_loss_recover` / `motion` | 264 / 264 | 500000 bps | 10 | 2500000 bps / 30 | 533 / 236 ms | 62.88 / 55.22 dB | 9 / 83 / 1 |
+| `walking_dead_zone` / `low_motion` | 223 / 223 | 80000 bps | 5 | 2500000 bps / 30 | 1166 / 785 ms | 65.64 / 54.36 dB | 27 / 191 / 2 |
+| `bandwidth_cliff_recover` / `low_motion` | 270 / 270 | 80000 bps | 5 | 2500000 bps / 30 | 200 / 356 ms | 65.86 / 54.12 dB | 18 / 101 / 1 |
+| `jitter_loss_recover` / `low_motion` | 232 / 232 | 500000 bps | 10 | 2500000 bps / 30 | 933 / 250 ms | 66.30 / 58.65 dB | 8 / 130 / 2 |
+| `walking_dead_zone` / `detail_motion` | 181 / 181 | 80000 bps | 5 | 2500000 bps / 30 | 1067 / 709 ms | 50.62 / 32.64 dB | 27 / 240 / 2 |
+| `bandwidth_cliff_recover` / `detail_motion` | 240 / 240 | 80000 bps | 5 | 2500000 bps / 30 | 667 / 547 ms | 50.73 / 32.93 dB | 19 / 52 / 2 |
+| `jitter_loss_recover` / `detail_motion` | 242 / 242 | 500000 bps | 10 | 2500000 bps / 30 | 733 / 257 ms | 50.65 / 42.34 dB | 17 / 133 / 1 |
+
+Direct matrix interpretation: the endpoint-only path proves downshift, recovery, real H264 decode, direct receiver feedback, and sender-side retransmission without server relay behavior. The test explicitly verifies both directions of adaptation: the sender drops to `80kbps/5fps` in the hardest outage phases and returns to `2500000bps/30fps` after the receiver removes the rate cap. `max_completion_gap_ms` remains the primary low-latency smoothness gate, while `max_frame_gap_ms`, `source_frame_skips`, and `pacer_drop_aus` record the continuity cost of intentionally discarding old media to avoid queue buildup. The current direct profile still uses a local synthetic link emulator, not Linux `tc/netem` and not a production SFU.
 
 Real UDP long-stream dynamic weak-network matrix:
 

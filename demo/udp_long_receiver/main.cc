@@ -224,7 +224,12 @@ int main(int argc, char** argv) {
   const TransportIds ids = DemoTransportIds();
   ReceiverQosObserver observer(ReceiverQosObserverConfig{ids, 200});
   observer.SetDownlinkRttMs(12);
-  VideoJitterPlayer jitter(VideoJitterPlayerConfig{ids.sender_ssrc});
+  VideoJitterPlayer jitter(VideoJitterPlayerConfig{
+      ids.sender_ssrc,
+      120,
+      8,
+      250,
+  });
   FfmpegH264Decoder decoder;
   Status status = decoder.Open();
   if (!status) {
@@ -235,6 +240,7 @@ int main(int argc, char** argv) {
 
   uint64_t rtp_packets = 0;
   uint64_t nack_sent = 0;
+  uint64_t pli_sent = 0;
   uint64_t completed_frames = 0;
   uint64_t decoded_frames = 0;
   uint64_t decode_errors = 0;
@@ -263,8 +269,9 @@ int main(int argc, char** argv) {
   uint32_t direct_max_limited_cap_bps = 0;
   uint32_t direct_last_cap_bps = kUnlimitedRateCapBps;
   uint32_t direct_last_sent_cap_bps = 0;
-  uint32_t direct_last_cap_media_ms = 0;
+  uint32_t direct_last_cap_profile_ms = 0;
   size_t direct_last_phase_index = std::numeric_limits<size_t>::max();
+  int64_t direct_profile_start_us = -1;
   std::set<uint16_t> direct_dropped_once;
   std::deque<DirectDelayedPacket> delayed_packets;
   const auto send_direct_twcc = [&](int64_t now_us) {
@@ -300,12 +307,149 @@ int main(int argc, char** argv) {
                  SerializeSenderRateCap(cap));
     ++direct_rate_caps;
   };
+  const auto direct_profile_time_ms = [&](int64_t now_us) -> uint32_t {
+    if (direct_profile_start_us < 0 || now_us <= direct_profile_start_us) {
+      return 0;
+    }
+    // The demo sender advances media time faster than real time to keep tests
+    // short. Drive weak-network phases with the same accelerated clock so
+    // recovery caps are sent even if the sender temporarily skips media frames.
+    constexpr uint32_t kDirectProfileClockMultiplier = 5;
+    const uint64_t elapsed_ms =
+        static_cast<uint64_t>((now_us - direct_profile_start_us) / 1000);
+    return static_cast<uint32_t>(
+        std::min<uint64_t>(elapsed_ms * kDirectProfileClockMultiplier,
+                           std::numeric_limits<uint32_t>::max()));
+  };
+  const auto update_direct_profile_control =
+      [&](int64_t now_us) -> const DirectNetemPhase* {
+    if (!direct_feedback || profile == "none" || direct_profile_start_us < 0) {
+      return nullptr;
+    }
+    size_t phase_index = 0;
+    const uint32_t profile_time_ms = direct_profile_time_ms(now_us);
+    const DirectNetemPhase& phase =
+        SelectDirectPhase(phases, profile_time_ms, &phase_index);
+    if (phase_index != direct_last_phase_index) {
+      direct_last_phase_index = phase_index;
+      ++direct_phase_changes;
+    }
+    const bool should_send_phase_cap =
+        phase.cap_bps != direct_last_sent_cap_bps ||
+        (phase.cap_bps != kUnlimitedRateCapBps &&
+         profile_time_ms >= direct_last_cap_profile_ms + 300);
+    if (should_send_phase_cap) {
+      send_direct_rate_cap(phase.cap_bps, 20);
+      direct_last_sent_cap_bps = phase.cap_bps;
+      direct_last_cap_bps = phase.cap_bps;
+      direct_last_cap_profile_ms = profile_time_ms;
+      if (phase.cap_bps != kUnlimitedRateCapBps) {
+        direct_min_cap_bps = std::min(direct_min_cap_bps, phase.cap_bps);
+        direct_max_limited_cap_bps =
+            std::max(direct_max_limited_cap_bps, phase.cap_bps);
+      }
+    }
+    return &phase;
+  };
   int64_t last_frame_time_us = -1;
   int64_t max_completion_gap_ms = 0;
   int64_t last_frame_media_ms = -1;
   int64_t max_frame_gap_ms = 0;
   int64_t max_frame_gap_from_ms = 0;
   int64_t max_frame_gap_to_ms = 0;
+  int64_t last_pli_time_us = -10000000;
+  uint16_t last_decoded_sequence_end = 0;
+  bool has_decoded_sequence_end = false;
+  bool need_keyframe = false;
+  bool decoder_reset_pending = false;
+  constexpr size_t kPliMissingSequenceThreshold = 4;
+  constexpr int64_t kPliNoFrameTimeoutUs = 700000;
+  constexpr int64_t kReferenceRecoveryWaitUs = 450000;
+  constexpr int64_t kNackRetryIntervalUs = 100000;
+  constexpr size_t kMaxPendingDecodeFrames = 16;
+  std::map<uint16_t, int64_t> outstanding_nack_sequences;
+  std::map<uint16_t, int64_t> last_nack_time_us_by_sequence;
+  std::deque<EncodedVideoFrame> pending_decode_frames;
+  const auto sequence_before = [](uint16_t a, uint16_t b) {
+    return a != b && static_cast<uint16_t>(b - a) < 0x8000;
+  };
+  const auto has_unrecovered_reference_before =
+      [&](uint16_t sequence, int64_t* oldest_missing_us) {
+    bool found = false;
+    int64_t oldest = 0;
+    for (const auto& [lost_sequence, first_missing_us] :
+         outstanding_nack_sequences) {
+      if (sequence_before(lost_sequence, sequence)) {
+        found = true;
+        if (oldest == 0 || first_missing_us < oldest) {
+          oldest = first_missing_us;
+        }
+      }
+    }
+    if (oldest_missing_us) {
+      *oldest_missing_us = oldest;
+    }
+    return found;
+  };
+  const auto oldest_unrecovered_missing_us = [&]() {
+    int64_t oldest = 0;
+    for (const auto& [lost_sequence, first_missing_us] :
+         outstanding_nack_sequences) {
+      (void)lost_sequence;
+      if (oldest == 0 || first_missing_us < oldest) {
+        oldest = first_missing_us;
+      }
+    }
+    return oldest;
+  };
+  const auto request_remote_keyframe = [&](int64_t now_us) {
+    if (now_us - last_pli_time_us < 500000) {
+      return;
+    }
+    RtcpPli pli;
+    pli.sender_ssrc = ids.receiver_id;
+    pli.media_ssrc = ids.sender_ssrc;
+    SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kPli, ids),
+                 SerializeRtcpPli(pli));
+    last_pli_time_us = now_us;
+    ++pli_sent;
+  };
+  const auto enter_keyframe_recovery = [&](int64_t now_us) {
+    need_keyframe = true;
+    decoder_reset_pending = true;
+    request_remote_keyframe(now_us);
+  };
+  const auto send_nack = [&](const std::vector<uint16_t>& missing) {
+    if (missing.empty()) {
+      return;
+    }
+    RtcpNack nack;
+    nack.sender_ssrc = ids.receiver_id;
+    nack.media_ssrc = ids.sender_ssrc;
+    nack.lost_rtp_sequence_numbers = missing;
+    SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kNack, ids),
+                 SerializeRtcpNack(nack));
+    ++nack_sent;
+  };
+  const auto retry_outstanding_nacks = [&](int64_t now_us) {
+    std::vector<uint16_t> retry_sequences;
+    for (const auto& [sequence, first_missing_us] :
+         outstanding_nack_sequences) {
+      (void)first_missing_us;
+      const auto it = last_nack_time_us_by_sequence.find(sequence);
+      if (it == last_nack_time_us_by_sequence.end() ||
+          now_us - it->second >= kNackRetryIntervalUs) {
+        retry_sequences.push_back(sequence);
+      }
+    }
+    if (retry_sequences.empty()) {
+      return;
+    }
+    for (uint16_t sequence : retry_sequences) {
+      last_nack_time_us_by_sequence[sequence] = now_us;
+    }
+    send_nack(retry_sequences);
+  };
   const auto process_rtp_packet = [&](const RtpPacket& input_packet,
                                       bool from_delay_queue) -> Status {
     RtpPacket packet = input_packet;
@@ -316,14 +460,13 @@ int main(int argc, char** argv) {
     }
     if (direct_feedback && profile != "none" && !from_delay_queue &&
         packet.transport_sequence_number < 50000) {
-      size_t phase_index = 0;
-      const uint32_t media_ms = MediaTimeMs(packet);
-      const DirectNetemPhase& phase =
-          SelectDirectPhase(phases, media_ms, &phase_index);
-      if (phase_index != direct_last_phase_index) {
-        direct_last_phase_index = phase_index;
-        ++direct_phase_changes;
+      if (direct_profile_start_us < 0) {
+        direct_profile_start_us = now_us;
       }
+      const DirectNetemPhase* phase_ptr = update_direct_profile_control(now_us);
+      const DirectNetemPhase& phase = phase_ptr != nullptr
+                                          ? *phase_ptr
+                                          : SelectDirectPhase(phases, 0, nullptr);
       ++direct_phase_packets;
       const bool impaired =
           phase.drop_every > 0 || phase.delay_ms > 0 ||
@@ -331,21 +474,6 @@ int main(int argc, char** argv) {
           phase.cap_bps != kUnlimitedRateCapBps;
       if (impaired) {
         ++direct_impaired_packets;
-      }
-      const bool should_send_phase_cap =
-          phase.cap_bps != direct_last_sent_cap_bps ||
-          (phase.cap_bps != kUnlimitedRateCapBps &&
-           media_ms >= direct_last_cap_media_ms + 300);
-      if (should_send_phase_cap) {
-        send_direct_rate_cap(phase.cap_bps, 20);
-        direct_last_sent_cap_bps = phase.cap_bps;
-        direct_last_cap_bps = phase.cap_bps;
-        direct_last_cap_media_ms = media_ms;
-        if (phase.cap_bps != kUnlimitedRateCapBps) {
-          direct_min_cap_bps = std::min(direct_min_cap_bps, phase.cap_bps);
-          direct_max_limited_cap_bps =
-              std::max(direct_max_limited_cap_bps, phase.cap_bps);
-        }
       }
       if (MatchesEvery(phase.drop_every, packet, network_seed, 0x51f15eedu) &&
           direct_dropped_once.insert(packet.sequence_number).second) {
@@ -434,71 +562,25 @@ int main(int argc, char** argv) {
         unlimited_cap_sent = true;
       }
     }
+    outstanding_nack_sequences.erase(packet.sequence_number);
+    last_nack_time_us_by_sequence.erase(packet.sequence_number);
     observer.OnRtpPacketReceived(packet, now_us);
     Status status = jitter.InsertPacket(packet, now_us);
     if (!status) {
       return status;
     }
-    while (jitter.HasFrame()) {
-      EncodedVideoFrame frame;
-      status = jitter.PopFrame(&frame);
-      if (!status) {
-        return status;
-      }
-      observer.OnFrameDecoded(frame.rtp_timestamp);
-      ++completed_frames;
-      if (last_frame_time_us >= 0) {
-        max_completion_gap_ms =
-            std::max<int64_t>(max_completion_gap_ms,
-                              (now_us - last_frame_time_us) / 1000);
-      }
-      last_frame_time_us = now_us;
-      const int64_t frame_media_ms =
-          frame.rtp_timestamp >= 90000
-              ? static_cast<int64_t>(frame.rtp_timestamp - 90000) / 90
-              : static_cast<int64_t>(frame.rtp_timestamp) / 90;
-      if (last_frame_media_ms >= 0) {
-        const int64_t frame_gap_ms = frame_media_ms - last_frame_media_ms;
-        if (frame_gap_ms > max_frame_gap_ms) {
-          max_frame_gap_ms = frame_gap_ms;
-          max_frame_gap_from_ms = last_frame_media_ms;
-          max_frame_gap_to_ms = frame_media_ms;
-        }
-      }
-      last_frame_media_ms = frame_media_ms;
-      std::vector<DecodedVideoFrame> decoded;
-      status = decoder.DecodeAnnexB(frame.annexb_access_unit.data(),
-                                    frame.annexb_access_unit.size(),
-                                    frame.rtp_timestamp, &decoded);
-      if (!status) {
-        ++decode_errors;
-        continue;
-      }
-      decoded_frames += decoded.size();
-      for (const DecodedVideoFrame& out : decoded) {
-        const int64_t pts = out.pts >= 0 ? out.pts : frame.rtp_timestamp;
-        const int64_t timestamp_delta =
-            pts >= 90000 ? pts - 90000 : static_cast<int64_t>(pts);
-        const int frame_index =
-            static_cast<int>((timestamp_delta + 1500) / 3000);
-        I420Frame reference = MakeI420Frame(width, height, content, frame_index);
-        const double psnr = ComputeI420Psnr(reference, out);
-        if (psnr > 0.0) {
-          psnr_sum += psnr;
-          psnr_min = std::min(psnr_min, psnr);
-          ++quality_samples;
-        }
-      }
-    }
     std::vector<uint16_t> missing = observer.TakeMissingSequenceNumbers();
     if (!missing.empty()) {
-      RtcpNack nack;
-      nack.sender_ssrc = ids.receiver_id;
-      nack.media_ssrc = ids.sender_ssrc;
-      nack.lost_rtp_sequence_numbers = std::move(missing);
-      SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kNack, ids),
-                   SerializeRtcpNack(nack));
-      ++nack_sent;
+      for (uint16_t missing_sequence : missing) {
+        outstanding_nack_sequences.emplace(missing_sequence, now_us);
+      }
+      for (uint16_t missing_sequence : missing) {
+        last_nack_time_us_by_sequence[missing_sequence] = now_us;
+      }
+      send_nack(missing);
+      if (missing.size() >= kPliMissingSequenceThreshold) {
+        request_remote_keyframe(now_us);
+      }
     }
     if (observer.ShouldReport(now_us)) {
       DownlinkQuality report = observer.BuildReport(now_us);
@@ -514,12 +596,157 @@ int main(int argc, char** argv) {
     }
     return Status::Ok();
   };
+  const auto drain_completed_frames = [&](int64_t now_us,
+                                          bool force) -> Status {
+    jitter.Flush(now_us, force);
+    while (jitter.HasFrame()) {
+      EncodedVideoFrame frame;
+      Status status = jitter.PopFrame(&frame);
+      if (!status) {
+        return status;
+      }
+      pending_decode_frames.push_back(std::move(frame));
+    }
+    if (pending_decode_frames.size() > kMaxPendingDecodeFrames) {
+      enter_keyframe_recovery(now_us);
+      while (!pending_decode_frames.empty() &&
+             !pending_decode_frames.front().keyframe) {
+        pending_decode_frames.pop_front();
+      }
+    }
+    while (!pending_decode_frames.empty()) {
+      EncodedVideoFrame& frame = pending_decode_frames.front();
+      if (need_keyframe && !frame.keyframe) {
+        pending_decode_frames.pop_front();
+        continue;
+      }
+      if (!frame.keyframe) {
+        int64_t oldest_missing_us = 0;
+        bool has_unrecovered_reference =
+            has_unrecovered_reference_before(frame.rtp_sequence_start,
+                                             &oldest_missing_us);
+        const bool has_sequence_gap =
+            has_decoded_sequence_end &&
+            frame.rtp_sequence_start !=
+                static_cast<uint16_t>(last_decoded_sequence_end + 1);
+        if (!has_unrecovered_reference &&
+            !outstanding_nack_sequences.empty()) {
+          oldest_missing_us = oldest_unrecovered_missing_us();
+          has_unrecovered_reference = true;
+        }
+        if (has_unrecovered_reference || has_sequence_gap) {
+          if (!force && oldest_missing_us > 0 &&
+              now_us - oldest_missing_us < kReferenceRecoveryWaitUs) {
+            break;
+          }
+          pending_decode_frames.pop_front();
+          enter_keyframe_recovery(now_us);
+          continue;
+        }
+      }
+      const int64_t frame_media_ms =
+          frame.rtp_timestamp >= 90000
+              ? static_cast<int64_t>(frame.rtp_timestamp - 90000) / 90
+              : static_cast<int64_t>(frame.rtp_timestamp) / 90;
+      if (last_frame_media_ms >= 0) {
+        const int64_t frame_gap_ms = frame_media_ms - last_frame_media_ms;
+        if (frame_gap_ms > max_frame_gap_ms) {
+          max_frame_gap_ms = frame_gap_ms;
+          max_frame_gap_from_ms = last_frame_media_ms;
+          max_frame_gap_to_ms = frame_media_ms;
+        }
+        if (frame_gap_ms > 500 && !frame.keyframe) {
+          pending_decode_frames.pop_front();
+          enter_keyframe_recovery(now_us);
+          continue;
+        }
+      }
+      if (frame.keyframe) {
+        if (decoder_reset_pending) {
+          decoder.Close();
+          Status reset_status = decoder.Open();
+          if (!reset_status) {
+            return reset_status;
+          }
+        }
+      }
+      std::vector<DecodedVideoFrame> decoded;
+      Status decode_status = decoder.DecodeAnnexB(
+          frame.annexb_access_unit.data(), frame.annexb_access_unit.size(),
+          frame.rtp_timestamp, &decoded);
+      if (!decode_status && frame.keyframe) {
+        decoder.Close();
+        Status reset_status = decoder.Open();
+        if (!reset_status) {
+          return reset_status;
+        }
+        decode_status = decoder.DecodeAnnexB(frame.annexb_access_unit.data(),
+                                             frame.annexb_access_unit.size(),
+                                             frame.rtp_timestamp, &decoded);
+      }
+      if (!decode_status) {
+        std::cerr << "udp_long_receiver: decode failed"
+                  << " rtp_timestamp=" << frame.rtp_timestamp
+                  << " keyframe=" << (frame.keyframe ? 1 : 0)
+                  << " seq_start=" << frame.rtp_sequence_start
+                  << " seq_end=" << frame.rtp_sequence_end
+                  << " outstanding_nack="
+                  << outstanding_nack_sequences.size()
+                  << " status=" << decode_status.message << "\n";
+        ++decode_errors;
+        enter_keyframe_recovery(now_us);
+        pending_decode_frames.pop_front();
+        continue;
+      }
+      if (frame.keyframe && !decoded.empty()) {
+        need_keyframe = false;
+        decoder_reset_pending = false;
+        outstanding_nack_sequences.clear();
+        last_nack_time_us_by_sequence.clear();
+      }
+      if (need_keyframe && decoded.empty()) {
+        pending_decode_frames.pop_front();
+        continue;
+      }
+      ++completed_frames;
+      if (!force && last_frame_time_us >= 0) {
+        max_completion_gap_ms =
+            std::max<int64_t>(max_completion_gap_ms,
+                              (now_us - last_frame_time_us) / 1000);
+      }
+      if (!force) {
+        last_frame_time_us = now_us;
+      }
+      last_decoded_sequence_end = frame.rtp_sequence_end;
+      has_decoded_sequence_end = true;
+      last_frame_media_ms = frame_media_ms;
+      observer.OnFrameDecoded(frame.rtp_timestamp);
+      decoded_frames += decoded.size();
+      for (const DecodedVideoFrame& out : decoded) {
+        const int64_t pts = out.pts >= 0 ? out.pts : frame.rtp_timestamp;
+        const int64_t timestamp_delta =
+            pts >= 90000 ? pts - 90000 : static_cast<int64_t>(pts);
+        const int frame_index =
+            static_cast<int>((timestamp_delta + 1500) / 3000);
+        I420Frame reference = MakeI420Frame(width, height, content, frame_index);
+        const double psnr = ComputeI420Psnr(reference, out);
+        if (psnr > 0.0) {
+          psnr_sum += psnr;
+          psnr_min = std::min(psnr_min, psnr);
+          ++quality_samples;
+        }
+      }
+      pending_decode_frames.pop_front();
+    }
+    return Status::Ok();
+  };
   bool bye = false;
   bool sender_bye_seen = false;
   const int64_t start_us = NowUs();
   const int64_t deadline_us = start_us + 20000000;
   while (NowUs() < deadline_us && !bye) {
     const int64_t loop_now_us = NowUs();
+    update_direct_profile_control(loop_now_us);
     while (!delayed_packets.empty() &&
            delayed_packets.front().release_time_us <= loop_now_us) {
       RtpPacket delayed_packet = delayed_packets.front().packet;
@@ -531,6 +758,17 @@ int main(int argc, char** argv) {
         return 1;
       }
     }
+    status = drain_completed_frames(loop_now_us, false);
+    if (!status) {
+      std::cerr << "udp_long_receiver: drain frames failed: "
+                << status.message << "\n";
+      return 1;
+    }
+    if (last_frame_time_us >= 0 &&
+        loop_now_us - last_frame_time_us >= kPliNoFrameTimeoutUs) {
+      enter_keyframe_recovery(loop_now_us);
+    }
+    retry_outstanding_nacks(loop_now_us);
     if (sender_bye_seen && delayed_packets.empty()) {
       bye = true;
       break;
@@ -589,6 +827,12 @@ int main(int argc, char** argv) {
       return 1;
     }
   }
+  status = drain_completed_frames(NowUs(), true);
+  if (!status) {
+    std::cerr << "udp_long_receiver: final drain frames failed: "
+              << status.message << "\n";
+    return 1;
+  }
   send_direct_twcc(NowUs());
   DownlinkQuality final_report = observer.BuildReport(NowUs());
   const VideoJitterStats final_stats = jitter.GetStats();
@@ -618,6 +862,7 @@ int main(int argc, char** argv) {
             << " max_frame_gap_from_ms=" << max_frame_gap_from_ms
             << " max_frame_gap_to_ms=" << max_frame_gap_to_ms
             << " nack_sent=" << nack_sent
+            << " pli_sent=" << pli_sent
             << " downlink_reports=" << downlink_reports
             << " direct_twcc_sent=" << direct_twcc_sent
             << " direct_rr_sent=" << direct_rr_sent

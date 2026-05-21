@@ -45,6 +45,13 @@ Status VideoJitterPlayer::InsertPacket(const RtpPacket& packet,
   return Status::Error(StatusCode::kUnsupported, "unsupported H264 RTP type");
 }
 
+void VideoJitterPlayer::Flush(int64_t now_us, bool force) {
+  if (backend_) {
+    return;
+  }
+  FlushReadyFrames(now_us, force);
+}
+
 bool VideoJitterPlayer::HasFrame() const {
   if (backend_) {
     return backend_->HasFrame();
@@ -64,7 +71,7 @@ Status VideoJitterPlayer::PopFrame(EncodedVideoFrame* frame) {
   }
   *frame = std::move(completed_.front());
   completed_.pop_front();
-  stats_.decodable_queue_depth = static_cast<uint16_t>(completed_.size());
+  UpdateQueueStats();
   return Status::Ok();
 }
 
@@ -120,7 +127,7 @@ Status VideoJitterPlayer::InsertPacketForAssembly(const RtpPacket& packet) {
   if (!incomplete) {
     partial_frames_.erase(packet.timestamp);
     QueueCompletedFrame(std::move(frame));
-    FlushReadyFrames();
+    FlushReadyFrames(packet.receive_time_us, false);
   }
   return Status::Ok();
 }
@@ -230,6 +237,13 @@ Status VideoJitterPlayer::TryAssembleFrame(const PartialFrame& partial,
 
 void VideoJitterPlayer::QueueCompletedFrame(EncodedVideoFrame frame) {
   if (!completed_timestamps_.insert(frame.rtp_timestamp).second) {
+    ++stats_.dropped_frames;
+    return;
+  }
+  if (has_released_timestamp_ &&
+      frame.rtp_timestamp <= last_released_timestamp_) {
+    completed_timestamps_.erase(frame.rtp_timestamp);
+    ++stats_.dropped_frames;
     return;
   }
   completed_timestamp_order_.push_back(frame.rtp_timestamp);
@@ -239,15 +253,51 @@ void VideoJitterPlayer::QueueCompletedFrame(EncodedVideoFrame frame) {
   }
   ready_frames_[frame.rtp_timestamp] = std::move(frame);
   ++stats_.completed_frames;
+  UpdateQueueStats();
 }
 
-void VideoJitterPlayer::FlushReadyFrames() {
+void VideoJitterPlayer::FlushReadyFrames(int64_t now_us, bool force) {
   while (!ready_frames_.empty()) {
+    auto it = ready_frames_.begin();
+    if (!ShouldReleaseReadyFrame(it->second, now_us, force)) {
+      break;
+    }
     completed_.push_back(std::move(ready_frames_.begin()->second));
     ready_frames_.erase(ready_frames_.begin());
+    last_released_timestamp_ = completed_.back().rtp_timestamp;
+    has_released_timestamp_ = true;
   }
+  UpdateQueueStats();
+}
+
+bool VideoJitterPlayer::ShouldReleaseReadyFrame(
+    const EncodedVideoFrame& frame,
+    int64_t now_us,
+    bool force) const {
+  if (force || config_.max_reorder_delay_ms == 0 ||
+      config_.max_reorder_queue_frames == 0 || !has_released_timestamp_) {
+    return true;
+  }
+  const uint32_t timestamp_delta = frame.rtp_timestamp - last_released_timestamp_;
+  const uint32_t frame_gap_ms = timestamp_delta / 90;
+  if (frame_gap_ms <= config_.max_contiguous_frame_gap_ms) {
+    return true;
+  }
+  const int64_t first_receive_us = frame.first_packet_receive_time_us > 0
+                                       ? frame.first_packet_receive_time_us
+                                       : frame.completed_time_us;
+  const bool waited_long_enough =
+      first_receive_us > 0 &&
+      now_us - first_receive_us >=
+          static_cast<int64_t>(config_.max_reorder_delay_ms) * 1000;
+  return waited_long_enough ||
+         ready_frames_.size() >= config_.max_reorder_queue_frames;
+}
+
+void VideoJitterPlayer::UpdateQueueStats() {
   stats_.decodable_queue_depth = static_cast<uint16_t>(completed_.size());
-  stats_.jitter_frames = stats_.decodable_queue_depth;
+  stats_.jitter_frames =
+      static_cast<uint16_t>(completed_.size() + ready_frames_.size());
 }
 
 }  // namespace webrtc_qos

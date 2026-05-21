@@ -114,6 +114,7 @@ sender_match = re.search(
     r"applied_bitrate_bps=(?P<applied_bitrate_bps>\d+) "
     r"applied_fps=(?P<applied_fps>\d+)"
     r"(?: nack_feedback=(?P<nack_feedback>\d+) "
+    r"(?:pli_feedback=(?P<pli_feedback>\d+) )?"
     r"retransmitted=(?P<sender_retransmitted>\d+))?"
     r"(?: max_encode_gap_ms=(?P<max_encode_gap_ms>\d+) "
     r"enqueue_dropped_aus=(?P<enqueue_dropped_aus>\d+) "
@@ -144,7 +145,9 @@ receiver_match = re.search(
     r"max_frame_gap_ms=(?P<gap>\d+) "
     r"(?:max_frame_gap_from_ms=(?P<gap_from>\d+) "
     r"max_frame_gap_to_ms=(?P<gap_to>\d+) )?"
-    r"nack_sent=(?P<nack>\d+) downlink_reports=(?P<downlink_reports>\d+)",
+    r"nack_sent=(?P<nack>\d+) "
+    r"(?:pli_sent=(?P<pli_sent>\d+) )?"
+    r"downlink_reports=(?P<downlink_reports>\d+)",
     receiver_text,
 )
 if not sender_match:

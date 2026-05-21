@@ -22,6 +22,7 @@ JITTER_EVERY_N="${JITTER_EVERY_N:-0}"
 NETWORK_SEED="${NETWORK_SEED:-0}"
 PROFILE="${PROFILE:-none}"
 MAX_FRAME_GAP_MS="${MAX_FRAME_GAP_MS:-1000}"
+MAX_COMPLETION_GAP_MS="${MAX_COMPLETION_GAP_MS:-1000}"
 MIN_PSNR_AVG="${MIN_PSNR_AVG:-25}"
 
 mkdir -p "${LOG_DIR}"
@@ -83,7 +84,8 @@ if [[ "${sender_rc}" -ne 0 || "${receiver_rc}" -ne 0 ]]; then
 fi
 
 python3 - "${LOG_DIR}/sender.log" "${LOG_DIR}/receiver.log" \
-  "${LOG_DIR}/summary.json" "${PROFILE}" "${DROP_EVERY}" <<'PY'
+  "${LOG_DIR}/summary.json" "${PROFILE}" "${DROP_EVERY}" \
+  "${MAX_COMPLETION_GAP_MS}" <<'PY'
 import json
 import re
 import sys
@@ -94,6 +96,7 @@ receiver_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 summary_path = Path(sys.argv[3])
 profile = sys.argv[4]
 drop_every = int(sys.argv[5])
+max_completion_gap_ms = int(sys.argv[6])
 
 sender_match = re.search(
     r"udp_long_sender frames=(?P<frames>\d+) "
@@ -114,6 +117,7 @@ sender_match = re.search(
     r"applied_bitrate_bps=(?P<applied_bitrate_bps>\d+) "
     r"applied_fps=(?P<applied_fps>\d+) "
     r"nack_feedback=(?P<nack_feedback>\d+) "
+    r"(?:pli_feedback=(?P<pli_feedback>\d+) )?"
     r"retransmitted=(?P<retransmitted>\d+)"
     r"(?: max_encode_gap_ms=(?P<max_encode_gap_ms>\d+) "
     r"enqueue_dropped_aus=(?P<enqueue_dropped_aus>\d+) "
@@ -129,7 +133,9 @@ receiver_match = re.search(
     r"max_frame_gap_ms=(?P<gap>\d+) "
     r"(?:max_frame_gap_from_ms=(?P<gap_from>\d+) "
     r"max_frame_gap_to_ms=(?P<gap_to>\d+) )?"
-    r"nack_sent=(?P<nack>\d+) downlink_reports=(?P<downlink_reports>\d+) "
+    r"nack_sent=(?P<nack>\d+) "
+    r"(?:pli_sent=(?P<pli_sent>\d+) )?"
+    r"downlink_reports=(?P<downlink_reports>\d+) "
     r"direct_twcc_sent=(?P<direct_twcc>\d+) "
     r"direct_rr_sent=(?P<direct_rr>\d+) "
     r"direct_rate_caps=(?P<direct_rate_caps>\d+) "
@@ -191,7 +197,7 @@ if receiver["completed"] > sender["frames"]:
     failures.append("duplicate_completed_frames")
 if receiver["psnr_avg"] < 25.0:
     failures.append("psnr_avg_low")
-if receiver.get("completion_gap", 0) > 1000:
+if receiver.get("completion_gap", 0) > max_completion_gap_ms:
     failures.append("completion_gap_high")
 if failures:
     summary["validation_failures"] = failures

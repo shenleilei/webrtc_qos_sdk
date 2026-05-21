@@ -66,7 +66,9 @@ uint32_t CompactNtp(uint64_t ntp_timestamp) {
 constexpr uint32_t kHealthyPeriodicKeyframeBps = 800000;
 constexpr uint32_t kPeriodicKeyframeSourceFrames = 90;
 constexpr int64_t kNormalKeyframeIntervalUs = 2000000;
-constexpr int64_t kPacerRecoveryKeyframeIntervalUs = 750000;
+constexpr int64_t kPacerRecoveryKeyframeIntervalUs = 500000;
+constexpr uint32_t kRouteRecoveryStartBps = 2000000;
+constexpr int64_t kRouteRecoveryDurationUs = 1000000;
 
 }  // namespace
 
@@ -127,6 +129,7 @@ int main(int argc, char** argv) {
   uint64_t rr_feedback = 0;
   uint64_t rate_caps = 0;
   uint64_t nack_feedback = 0;
+  uint64_t pli_feedback = 0;
   uint64_t retransmitted_packets = 0;
   uint64_t enqueue_dropped_aus = 0;
   uint64_t source_frame_skips = 0;
@@ -152,7 +155,7 @@ int main(int argc, char** argv) {
   int64_t pacer_time_us = 0;
   SenderPacer pacer(
       SenderPacerConfig{bitrate_bps, kPacerTickMs, kPacerMaxQueueMs,
-                        kPacerMaxQueueBytes, 1400, false},
+                        kPacerMaxQueueBytes, 1400, true},
       [&](const RtpPacket& packet) {
         const std::vector<uint8_t> encoded = SerializeRtpPacket(packet);
         if (!SendEnvelope(fd, server, MakeEnvelopeHeader(EnvelopeType::kRtp, ids),
@@ -202,18 +205,42 @@ int main(int argc, char** argv) {
       force_keyframe_next = true;
     }
   };
+  const auto request_keyframe_now = [&]() {
+    force_keyframe_next = true;
+  };
+  const auto route_recovery_limit_bps = [&]() -> uint32_t {
+    if (route_recovery_until_us <= 0 || pacer_time_us >= route_recovery_until_us) {
+      return qos_config.max_bitrate_bps;
+    }
+    const int64_t recovery_start_us =
+        route_recovery_until_us - kRouteRecoveryDurationUs;
+    const int64_t elapsed_us = std::max<int64_t>(0, pacer_time_us - recovery_start_us);
+    const uint32_t start_bps = std::max<uint32_t>(bitrate_bps, kRouteRecoveryStartBps);
+    const uint32_t target_bps = qos_config.max_bitrate_bps;
+    if (elapsed_us >= kRouteRecoveryDurationUs || target_bps <= start_bps) {
+      return target_bps;
+    }
+    const uint64_t delta = target_bps - start_bps;
+    return start_bps + static_cast<uint32_t>(
+                           (delta * static_cast<uint64_t>(elapsed_us)) /
+                           static_cast<uint64_t>(kRouteRecoveryDurationUs));
+  };
   const auto apply_adaptation = [&]() -> Status {
     const TargetRates rates = qos.GetTargetRates(pacer_time_us);
     const bool in_route_recovery =
         route_recovery_until_us > 0 && pacer_time_us < route_recovery_until_us;
+    const uint32_t recovery_limit_bps = route_recovery_limit_bps();
     const uint32_t effective_pacing_bps =
-        in_route_recovery ? std::max(route_recovery_bps, rates.pacing_bps)
+        in_route_recovery ? std::min(recovery_limit_bps,
+                                     std::max(route_recovery_bps,
+                                              rates.pacing_bps))
                           : rates.pacing_bps;
     pacer.SetTargetBitrate(effective_pacing_bps);
     EncoderAdaptation adaptation = qos.GetEncoderAdaptation(pacer_time_us);
     if (in_route_recovery) {
-      adaptation.target_bitrate_bps =
-          std::max(route_recovery_bps, adaptation.target_bitrate_bps);
+      adaptation.target_bitrate_bps = std::min(
+          recovery_limit_bps,
+          std::max(route_recovery_bps, adaptation.target_bitrate_bps));
       adaptation.max_fps = 30;
     }
     adaptation.target_bitrate_bps =
@@ -316,8 +343,9 @@ int main(int argc, char** argv) {
         return status;
       }
       if (cap.cap_bps == kUnlimitedRateCapBps) {
-        route_recovery_bps = std::max<uint32_t>(bitrate_bps, 2500000);
-        route_recovery_until_us = pacer_time_us + 2500000;
+        route_recovery_bps =
+            std::max<uint32_t>(bitrate_bps, kRouteRecoveryStartBps);
+        route_recovery_until_us = pacer_time_us + kRouteRecoveryDurationUs;
         request_keyframe(kPacerRecoveryKeyframeIntervalUs);
         status = qos.OnNetworkRouteChange(route_recovery_bps, pacer_time_us);
         if (!status) {
@@ -331,10 +359,12 @@ int main(int argc, char** argv) {
       if (!status) {
         return status;
       }
+      bool missing_unrecoverable_packet = false;
       for (uint16_t seq : nack.lost_rtp_sequence_numbers) {
         std::optional<RtpPacket> packet =
             retransmission_cache.Find(seq, retransmission_transport_sequence_number++);
         if (!packet) {
+          missing_unrecoverable_packet = true;
           continue;
         }
         status = pacer.Enqueue(
@@ -344,7 +374,18 @@ int main(int argc, char** argv) {
         }
         ++retransmitted_packets;
       }
+      if (missing_unrecoverable_packet) {
+        request_keyframe_now();
+      }
       ++nack_feedback;
+    } else if (header.type == EnvelopeType::kPli) {
+      RtcpPli pli;
+      Status status = ParseRtcpPli(payload.data(), payload.size(), &pli);
+      if (!status) {
+        return status;
+      }
+      request_keyframe_now();
+      ++pli_feedback;
     }
     return apply_adaptation();
   };
@@ -359,6 +400,9 @@ int main(int argc, char** argv) {
                 << status.message << "\n";
       return 1;
     }
+    if (pacer.GetStats().waiting_for_idr) {
+      request_keyframe(kPacerRecoveryKeyframeIntervalUs);
+    }
     if (i >= next_encode_source_index) {
       FillI420Frame(width, height, content, static_cast<int>(i), &y, &u, &v);
       const TargetRates current_rates = qos.GetTargetRates(pacer_time_us);
@@ -367,15 +411,13 @@ int main(int argc, char** argv) {
           current_rates.final_target_bps >= kHealthyPeriodicKeyframeBps &&
           applied_bitrate_bps >= kHealthyPeriodicKeyframeBps &&
           pacer_time_us - last_keyframe_encode_us >= kNormalKeyframeIntervalUs;
-      const bool pacer_recovery_keyframe =
-          pacer.GetStats().waiting_for_idr &&
-          pacer_time_us - last_keyframe_encode_us >=
-              kPacerRecoveryKeyframeIntervalUs;
+      const bool pacer_recovery_keyframe = pacer.GetStats().waiting_for_idr;
       const bool keyframe_requested = encoded_frames == 0 || force_keyframe_next ||
                                       healthy_periodic_keyframe ||
                                       pacer_recovery_keyframe;
       const bool interval_ok =
           encoded_frames == 0 ||
+          pacer_recovery_keyframe ||
           pacer_time_us - last_keyframe_encode_us >=
               (pacer_recovery_keyframe ? kPacerRecoveryKeyframeIntervalUs
                                        : kNormalKeyframeIntervalUs);
@@ -401,7 +443,8 @@ int main(int argc, char** argv) {
       last_encoded_capture_time_us = capture_time_us;
       status = sender.SendAnnexBAccessUnit(annexb.data(), annexb.size(),
                                            capture_time_us);
-      if (!status && status.code == StatusCode::kQueueFull) {
+      if (!status && status.code == StatusCode::kQueueFull &&
+          status.message == "waiting for IDR after P frame drop") {
         ++enqueue_dropped_aus;
       }
       if (!status && status.code != StatusCode::kQueueFull) {
@@ -526,6 +569,7 @@ int main(int argc, char** argv) {
             << " applied_bitrate_bps=" << applied_bitrate_bps
             << " applied_fps=" << applied_fps
             << " nack_feedback=" << nack_feedback
+            << " pli_feedback=" << pli_feedback
             << " retransmitted=" << retransmitted_packets
             << " max_encode_gap_ms=" << max_encode_gap_ms
             << " enqueue_dropped_aus=" << enqueue_dropped_aus

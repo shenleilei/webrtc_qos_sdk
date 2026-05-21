@@ -77,6 +77,9 @@ Status FfmpegH264Encoder::Open(const FfmpegH264EncoderConfig& config) {
   impl_->context->framerate = AVRational{static_cast<int>(config.fps), 1};
   impl_->context->pix_fmt = AV_PIX_FMT_YUV420P;
   impl_->context->bit_rate = config.bitrate_bps;
+  impl_->context->rc_max_rate = config.bitrate_bps;
+  impl_->context->rc_buffer_size =
+      std::max<int>(static_cast<int>(config.bitrate_bps / 4), 20000);
   impl_->context->gop_size = static_cast<int>(config.gop_size);
   impl_->context->max_b_frames = 0;
 
@@ -85,8 +88,10 @@ Status FfmpegH264Encoder::Open(const FfmpegH264EncoderConfig& config) {
     av_opt_set(impl_->context->priv_data, "tune", "zerolatency", 0);
     av_opt_set(impl_->context->priv_data, "profile", "baseline", 0);
     av_opt_set(impl_->context->priv_data, "level", "3.1", 0);
+    av_opt_set(impl_->context->priv_data, "nal-hrd", "cbr", 0);
     av_opt_set(impl_->context->priv_data, "x264-params",
-               "level=3.1:repeat-headers=1:scenecut=0:bframes=0", 0);
+               "level=3.1:repeat-headers=1:scenecut=0:bframes=0:rc-lookahead=0",
+               0);
   }
 
   int ret = avcodec_open2(impl_->context, codec, nullptr);

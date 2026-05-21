@@ -177,6 +177,34 @@ int main() {
   SenderPacerStats stats = pacer.GetStats();
   ok &= Expect(stats.waiting_for_idr, "pacer waits for IDR after P drop");
 
+  size_t wait_sent = 0;
+  SenderPacer wait_pacer(
+      SenderPacerConfig{80000, 5, 500, 512 * 1024, 100},
+      [&](const RtpPacket&) {
+        ++wait_sent;
+        return Status::Ok();
+      });
+  SendPacket wait_p_packet;
+  wait_p_packet.frame_type = VideoFrameType::kP;
+  wait_p_packet.media_duration_ms = 33;
+  wait_p_packet.packet.capture_time_us = 1000000;
+  wait_p_packet.packet.payload.assign(1200, 0x41);
+  status = wait_pacer.Enqueue(wait_p_packet);
+  ok &= Expect(status.code == StatusCode::kOk,
+               "enqueue wait-for-idr P packet");
+  wait_pacer.Tick(1200000);
+  SendPacket dependent_p_packet = wait_p_packet;
+  dependent_p_packet.packet.capture_time_us = 1230000;
+  status = wait_pacer.Enqueue(dependent_p_packet);
+  ok &= Expect(status.code == StatusCode::kQueueFull,
+               "pacer rejects dependent P while waiting for IDR");
+  wait_pacer.Tick(1235000);
+  stats = wait_pacer.GetStats();
+  ok &= Expect(wait_sent == 0,
+               "pacer does not send queued P while waiting for IDR");
+  ok &= Expect(stats.queued_packets == 0,
+               "pacer clears queued P while waiting for IDR");
+
   size_t aged_sent = 0;
   SenderPacer aged_pacer(
       SenderPacerConfig{80000, 5, 500, 512 * 1024, 100},

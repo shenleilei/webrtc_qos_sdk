@@ -11,6 +11,9 @@ namespace webrtc_qos {
 
 struct VideoJitterPlayerConfig {
   uint32_t sender_ssrc = 0;
+  uint32_t max_reorder_delay_ms = 0;
+  uint16_t max_reorder_queue_frames = 0;
+  uint32_t max_contiguous_frame_gap_ms = 250;
 };
 
 struct VideoJitterStats {
@@ -44,6 +47,7 @@ class VideoJitterPlayer {
 
   Status InsertPacket(const RtpPacket& packet);
   Status InsertPacket(const RtpPacket& packet, int64_t arrival_time_us);
+  void Flush(int64_t now_us, bool force);
   bool HasFrame() const;
   Status PopFrame(EncodedVideoFrame* frame);
   VideoJitterStats GetStats() const;
@@ -68,7 +72,11 @@ class VideoJitterPlayer {
                           EncodedVideoFrame* frame,
                           bool* incomplete) const;
   void QueueCompletedFrame(EncodedVideoFrame frame);
-  void FlushReadyFrames();
+  void FlushReadyFrames(int64_t now_us, bool force);
+  bool ShouldReleaseReadyFrame(const EncodedVideoFrame& frame,
+                               int64_t now_us,
+                               bool force) const;
+  void UpdateQueueStats();
 
   VideoJitterPlayerConfig config_;
   std::map<uint32_t, PartialFrame> partial_frames_;
@@ -76,6 +84,8 @@ class VideoJitterPlayer {
   std::deque<EncodedVideoFrame> completed_;
   std::deque<uint32_t> completed_timestamp_order_;
   std::set<uint32_t> completed_timestamps_;
+  uint32_t last_released_timestamp_ = 0;
+  bool has_released_timestamp_ = false;
   std::vector<uint8_t> cached_sps_;
   std::vector<uint8_t> cached_pps_;
   VideoJitterStats stats_;
