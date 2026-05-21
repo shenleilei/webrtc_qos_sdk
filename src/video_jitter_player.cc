@@ -23,22 +23,24 @@ Status VideoJitterPlayer::InsertPacket(const RtpPacket& packet,
   if (backend_) {
     return backend_->InsertPacket(packet, arrival_time_us);
   }
-  if (packet.payload_type != kH264PayloadType) {
+  RtpPacket normalized = packet;
+  normalized.receive_time_us = arrival_time_us;
+  if (normalized.payload_type != kH264PayloadType) {
     return Status::Error(StatusCode::kUnsupported, "unexpected payload type");
   }
-  if (packet.ssrc != 0 && config_.sender_ssrc != 0 &&
-      packet.ssrc != config_.sender_ssrc) {
+  if (normalized.ssrc != 0 && config_.sender_ssrc != 0 &&
+      normalized.ssrc != config_.sender_ssrc) {
     return Status::Error(StatusCode::kInvalidArgument, "SSRC mismatch");
   }
-  if (packet.payload.empty()) {
+  if (normalized.payload.empty()) {
     return Status::Error(StatusCode::kMalformedPacket, "empty H264 RTP payload");
   }
-  const uint8_t type = packet.payload[0] & 0x1f;
+  const uint8_t type = normalized.payload[0] & 0x1f;
   if (type >= 1 && type <= 23) {
-    return InsertSingleNalu(packet);
+    return InsertSingleNalu(normalized);
   }
   if (type == 28) {
-    return InsertFuA(packet);
+    return InsertFuA(normalized);
   }
   return Status::Error(StatusCode::kUnsupported, "unsupported H264 RTP type");
 }
@@ -81,7 +83,17 @@ Status VideoJitterPlayer::InsertSingleNalu(const RtpPacket& packet) {
     }
     current_ = PartialFrame{};
     current_.timestamp = packet.timestamp;
+    current_.sequence_start = packet.sequence_number;
+    current_.capture_time_us = packet.capture_time_us;
+    current_.first_packet_receive_time_us = packet.receive_time_us;
   }
+  if (current_.nalus.empty()) {
+    current_.sequence_start = packet.sequence_number;
+    current_.capture_time_us = packet.capture_time_us;
+    current_.first_packet_receive_time_us = packet.receive_time_us;
+  }
+  current_.sequence_end = packet.sequence_number;
+  current_.last_packet_receive_time_us = packet.receive_time_us;
   current_.nalus.push_back(packet.payload);
   const H264NaluType type = GetNaluType(packet.payload);
   if (type == H264NaluType::kSps) {
@@ -107,7 +119,17 @@ Status VideoJitterPlayer::InsertFuA(const RtpPacket& packet) {
     }
     current_ = PartialFrame{};
     current_.timestamp = packet.timestamp;
+    current_.sequence_start = packet.sequence_number;
+    current_.capture_time_us = packet.capture_time_us;
+    current_.first_packet_receive_time_us = packet.receive_time_us;
   }
+  if (current_.nalus.empty()) {
+    current_.sequence_start = packet.sequence_number;
+    current_.capture_time_us = packet.capture_time_us;
+    current_.first_packet_receive_time_us = packet.receive_time_us;
+  }
+  current_.sequence_end = packet.sequence_number;
+  current_.last_packet_receive_time_us = packet.receive_time_us;
   const uint8_t fu_indicator = packet.payload[0];
   const uint8_t fu_header = packet.payload[1];
   const bool start = (fu_header & 0x80) != 0;
@@ -163,6 +185,11 @@ void VideoJitterPlayer::CompleteFrame(uint32_t timestamp) {
   EncodedVideoFrame frame;
   frame.annexb_access_unit = JoinAnnexB(out_nalus);
   frame.rtp_timestamp = timestamp;
+  frame.rtp_sequence_start = current_.sequence_start;
+  frame.rtp_sequence_end = current_.sequence_end;
+  frame.capture_time_us = current_.capture_time_us;
+  frame.first_packet_receive_time_us = current_.first_packet_receive_time_us;
+  frame.completed_time_us = current_.last_packet_receive_time_us;
   frame.frame_type = frame_type;
   frame.keyframe = frame_type == VideoFrameType::kIdr;
   completed_.push_back(std::move(frame));

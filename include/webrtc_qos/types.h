@@ -72,6 +72,11 @@ enum class VideoFrameType {
 struct EncodedVideoFrame {
   std::vector<uint8_t> annexb_access_unit;
   uint32_t rtp_timestamp = 0;
+  uint16_t rtp_sequence_start = 0;
+  uint16_t rtp_sequence_end = 0;
+  int64_t capture_time_us = 0;
+  int64_t first_packet_receive_time_us = 0;
+  int64_t completed_time_us = 0;
   VideoFrameType frame_type = VideoFrameType::kUnknown;
   bool keyframe = false;
 };

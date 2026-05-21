@@ -115,7 +115,9 @@ with jsonl_path.open("a", encoding="utf-8") as handle:
 print(
     "metrics run={run} seed={seed} content={content} scenario={scenario} backend={backend} strategy={strategy} freeze={freeze} "
     "max_freeze_ms={max_freeze} drops={drops} frames={frames} "
-    "decoded={decoded} decode_errors={decode_errors} psnr_avg={psnr_avg} "
+    "decoded={decoded} decoded_total={decoded_total} "
+    "render_deadline_drops={render_deadline_drops} "
+    "decode_errors={decode_errors} psnr_avg={psnr_avg} "
     "psnr_min={psnr_min} latency_max_ms={latency_max} "
     "jitter_buffer_max_ms={jitter_max} duplicates={duplicates}".format(
         run=data.get("run"),
@@ -129,6 +131,8 @@ print(
         drops=data.get("network_drops"),
         frames=data.get("receiver_frames"),
         decoded=data.get("decoded_frames"),
+        decoded_total=data.get("decoded_frames_total"),
+        render_deadline_drops=data.get("render_deadline_drops"),
         decode_errors=data.get("decode_errors"),
         psnr_avg=data.get("psnr_avg"),
         psnr_min=data.get("psnr_min"),
@@ -299,6 +303,7 @@ def balanced_qoe_score(row):
         row.get("receiver_frames", 0) - row.get("decoded_frames", 0),
     )
     decode_gap_penalty = decode_gap * 20
+    render_deadline_penalty = row.get("render_deadline_drops", 0) * 30
     quality_samples = row.get("quality_samples", 0)
     psnr_avg = row.get("psnr_avg", 0.0) if quality_samples else 0.0
     psnr_min = row.get("psnr_min", 0.0) if quality_samples else 0.0
@@ -318,6 +323,7 @@ def balanced_qoe_score(row):
         + drop_penalty
         + decode_error_penalty
         + decode_gap_penalty
+        + render_deadline_penalty
         + psnr_penalty
         + latency_penalty
         + adaptation_penalty(row),
@@ -429,6 +435,8 @@ for row in rows:
             "balanced_qoe_score_total": 0.0,
             "smoothness_score_total": 0.0,
             "decode_errors_total": 0,
+            "decoded_frames_total": 0,
+            "render_deadline_drops_total": 0,
             "quality_samples_total": 0,
             "psnr_avg_weighted_sum": 0.0,
             "psnr_min": None,
@@ -448,6 +456,9 @@ for row in rows:
     item["balanced_qoe_score_total"] += row["balanced_qoe_score"]
     item["smoothness_score_total"] += row["smoothness_score"]
     item["decode_errors_total"] += row.get("decode_errors", 0)
+    item["decoded_frames_total"] += row.get("decoded_frames_total", 0)
+    item["render_deadline_drops_total"] += row.get(
+        "render_deadline_drops", 0)
     quality_samples = row.get("quality_samples", 0)
     item["quality_samples_total"] += quality_samples
     if quality_samples:
@@ -528,6 +539,7 @@ for row in rows:
             "worst_smoothness_score": None,
             "worst_psnr_min": None,
             "max_decode_errors": 0,
+            "max_render_deadline_drops": 0,
             "max_network_drops": 0,
             "max_duplicate_frames": 0,
             "max_frame_latency_ms": 0,
@@ -567,6 +579,8 @@ for row in rows:
         )
     item["max_decode_errors"] = max(
         item["max_decode_errors"], row.get("decode_errors", 0))
+    item["max_render_deadline_drops"] = max(
+        item["max_render_deadline_drops"], row.get("render_deadline_drops", 0))
     item["max_network_drops"] = max(
         item["max_network_drops"], row.get("network_drops", 0))
     item["max_duplicate_frames"] = max(
@@ -625,6 +639,16 @@ if webrtc_rows:
                         f"{case_label}: webrtc/adaptive decode_errors="
                         f"{adaptive.get('decode_errors', 0)}"
                     )
+                if adaptive.get("render_deadline_drops", 0) != 0:
+                    rendered = adaptive.get("receiver_frames", 0)
+                    late = adaptive.get("render_deadline_drops", 0)
+                    total_render_candidates = max(1, rendered + late)
+                    late_ratio = late / total_render_candidates
+                    if late > 3 or late_ratio > 0.02:
+                        validation_failures.append(
+                            f"{case_label}: render_deadline_drops={late} "
+                            f"ratio={late_ratio:.4f} exceeds <=3 and <=2%"
+                        )
                 if adaptive.get("receiver_frames", 0) <= 0:
                     validation_failures.append(
                         f"{case_label}: webrtc/adaptive produced no receiver frames"
@@ -741,6 +765,8 @@ summary = {
             "max_freeze_ms": row.get("max_freeze_ms"),
             "network_drops": row.get("network_drops"),
             "duplicate_frames": row.get("duplicate_frames"),
+            "render_deadline_drops": row.get("render_deadline_drops"),
+            "decoded_frames_total": row.get("decoded_frames_total"),
             "decoded_frames": row.get("decoded_frames"),
             "decode_errors": row.get("decode_errors"),
             "quality_samples": row.get("quality_samples"),
@@ -831,12 +857,13 @@ summary = {
     "objective_note": (
         "smoothness_score optimizes continuity only; balanced_qoe_score also "
         "penalizes duplicate output, network drops, weak-network non-adaptation, "
-        "real FFmpeg H264 decode errors/gaps, high receiver frame latency, "
+        "real FFmpeg H264 decode errors/gaps, excessive render deadline misses, "
+        "high receiver frame latency, "
         "high jitter-buffer residence time, and failure to recover when the "
         "route becomes good again. It also penalizes low decoded-frame PSNR "
         "against the generated I420 source. Validation requires "
         "webrtc/adaptive to meet per-run/per-content/per-scenario "
-        "decode/quality/adaptation thresholds, win each per-run/per-content/per-scenario "
+        "decode/quality/latency/deadline/adaptation thresholds, win each per-run/per-content/per-scenario "
         "balanced QoE comparison, and win the aggregate balanced QoE score "
         "inside this seeded scenario set; it is not a global mathematical "
         "optimum."

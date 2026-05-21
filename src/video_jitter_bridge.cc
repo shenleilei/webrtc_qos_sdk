@@ -2,6 +2,7 @@
 
 #include <deque>
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -27,6 +28,25 @@ class WebRtcVideoJitterBackend final : public VideoJitterBackend {
     adapter_packet.arrival_time_us = arrival_time_us;
     adapter_packet.payload = packet.payload.data();
     adapter_packet.payload_size = packet.payload.size();
+    PacketTiming& timing = frame_timing_[packet.timestamp];
+    if (!timing.initialized) {
+      timing.initialized = true;
+      timing.sequence_start = packet.sequence_number;
+      timing.capture_time_us = packet.capture_time_us;
+      timing.first_packet_receive_time_us = arrival_time_us;
+    }
+    timing.sequence_end = packet.sequence_number;
+    timing.last_packet_receive_time_us = arrival_time_us;
+    if (packet.capture_time_us > 0 &&
+        (timing.capture_time_us == 0 ||
+         packet.capture_time_us < timing.capture_time_us)) {
+      timing.capture_time_us = packet.capture_time_us;
+    }
+    if (arrival_time_us > 0 &&
+        (timing.first_packet_receive_time_us == 0 ||
+         arrival_time_us < timing.first_packet_receive_time_us)) {
+      timing.first_packet_receive_time_us = arrival_time_us;
+    }
 
     std::vector<VideoJitterFrame> frames =
         adapter_.InsertPacket(adapter_packet);
@@ -39,6 +59,24 @@ class WebRtcVideoJitterBackend final : public VideoJitterBackend {
       EncodedVideoFrame frame;
       frame.annexb_access_unit = std::move(adapter_frame.annexb_access_unit);
       frame.rtp_timestamp = adapter_frame.rtp_timestamp;
+      frame.rtp_sequence_start = adapter_frame.rtp_sequence_start;
+      frame.rtp_sequence_end = adapter_frame.rtp_sequence_end;
+      auto timing_it = frame_timing_.find(adapter_frame.rtp_timestamp);
+      if (timing_it != frame_timing_.end()) {
+        if (frame.rtp_sequence_start == 0) {
+          frame.rtp_sequence_start = timing_it->second.sequence_start;
+        }
+        if (frame.rtp_sequence_end == 0) {
+          frame.rtp_sequence_end = timing_it->second.sequence_end;
+        }
+        frame.capture_time_us = timing_it->second.capture_time_us;
+        frame.first_packet_receive_time_us =
+            timing_it->second.first_packet_receive_time_us;
+        frame.completed_time_us = timing_it->second.last_packet_receive_time_us;
+        frame_timing_.erase(timing_it);
+      } else {
+        frame.completed_time_us = arrival_time_us;
+      }
       frame.keyframe = adapter_frame.keyframe;
       frame.frame_type = adapter_frame.keyframe ? VideoFrameType::kIdr
                                                 : VideoFrameType::kP;
@@ -76,9 +114,19 @@ class WebRtcVideoJitterBackend final : public VideoJitterBackend {
   VideoJitterStats GetStats() const override { return stats_; }
 
  private:
+  struct PacketTiming {
+    bool initialized = false;
+    uint16_t sequence_start = 0;
+    uint16_t sequence_end = 0;
+    int64_t capture_time_us = 0;
+    int64_t first_packet_receive_time_us = 0;
+    int64_t last_packet_receive_time_us = 0;
+  };
+
   VideoJitterAdapter adapter_;
   std::deque<EncodedVideoFrame> completed_;
   std::unordered_set<uint32_t> completed_timestamps_;
+  std::unordered_map<uint32_t, PacketTiming> frame_timing_;
   VideoJitterStats stats_;
   uint32_t last_adapter_packets_rejected_ = 0;
 };

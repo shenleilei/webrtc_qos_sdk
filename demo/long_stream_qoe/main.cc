@@ -45,6 +45,8 @@ struct PhaseMetrics {
   int64_t duration_us = 0;
   uint32_t encoded_frames = 0;
   uint32_t receiver_frames = 0;
+  uint32_t decoded_frames_total = 0;
+  uint32_t render_deadline_drops = 0;
   uint32_t keyframes = 0;
   uint32_t decoded_frames = 0;
   uint32_t decode_errors = 0;
@@ -98,6 +100,8 @@ struct Summary {
   uint32_t duplicate_frames = 0;
   uint32_t encoded_frames = 0;
   uint32_t receiver_frames = 0;
+  uint32_t decoded_frames_total = 0;
+  uint32_t render_deadline_drops = 0;
   uint32_t decoded_frames = 0;
   uint32_t decode_errors = 0;
   uint32_t quality_samples = 0;
@@ -151,6 +155,30 @@ bool ShouldApplyEncoderRates(uint32_t target_bitrate_bps,
   const uint32_t relative_threshold =
       std::max<uint32_t>(30000, applied_bitrate_bps / 10);
   return delta >= relative_threshold;
+}
+
+int64_t RenderDeadlineUs(uint32_t height) {
+  (void)height;
+  return 1800000;
+}
+
+int64_t JitterDeadlineUs(uint32_t height) {
+  (void)height;
+  return 1200000;
+}
+
+uint32_t ComputeServerRateCapBps(const Phase& phase,
+                                 uint32_t min_bitrate_bps,
+                                 uint32_t max_bitrate_bps) {
+  if (phase.downlink_capacity_bps == 0 ||
+      phase.downlink_capacity_bps >= max_bitrate_bps) {
+    return webrtc_qos::kUnlimitedRateCapBps;
+  }
+  const double safety_factor =
+      phase.downlink_capacity_bps < 1000000 ? 0.60 : 0.80;
+  return std::max<uint32_t>(
+      min_bitrate_bps,
+      static_cast<uint32_t>(phase.downlink_capacity_bps * safety_factor));
 }
 
 std::vector<Phase> BuildScenario(const std::string& scenario) {
@@ -501,6 +529,9 @@ void WriteSummary(const std::string& path,
   out << "  \"duplicate_frames\": " << summary.duplicate_frames << ",\n";
   out << "  \"encoded_frames\": " << summary.encoded_frames << ",\n";
   out << "  \"receiver_frames\": " << summary.receiver_frames << ",\n";
+  out << "  \"decoded_frames_total\": " << summary.decoded_frames_total << ",\n";
+  out << "  \"render_deadline_drops\": " << summary.render_deadline_drops
+      << ",\n";
   out << "  \"decoded_frames\": " << summary.decoded_frames << ",\n";
   out << "  \"decode_errors\": " << summary.decode_errors << ",\n";
   out << "  \"quality_samples\": " << summary.quality_samples << ",\n";
@@ -554,6 +585,8 @@ void WriteSummary(const std::string& path,
     out << "    {\"name\": \"" << phase.name << "\", "
         << "\"encoded_frames\": " << phase.encoded_frames << ", "
         << "\"receiver_frames\": " << phase.receiver_frames << ", "
+        << "\"decoded_frames_total\": " << phase.decoded_frames_total << ", "
+        << "\"render_deadline_drops\": " << phase.render_deadline_drops << ", "
         << "\"decoded_frames\": " << phase.decoded_frames << ", "
         << "\"decode_errors\": " << phase.decode_errors << ", "
         << "\"quality_samples\": " << phase.quality_samples << ", "
@@ -938,6 +971,8 @@ int main(int argc, char** argv) {
     std::cerr << "decoder open failed: " << status.message << "\n";
     return 1;
   }
+  const int64_t render_deadline_us = RenderDeadlineUs(height);
+  const int64_t jitter_deadline_us = JitterDeadlineUs(height);
 
   auto handle_recovery_request = [&](const RecoveryRequest& request) {
     if (request.type == RecoveryRequest::Type::kPli) {
@@ -964,38 +999,21 @@ int main(int argc, char** argv) {
       return;
     }
     const size_t phase_index = FindPhaseIndex(phases, now_us);
-    auto first_packet_it = first_packet_receive_time_us.find(frame.rtp_timestamp);
-    if (first_packet_it != first_packet_receive_time_us.end()) {
-      const int64_t jitter_buffer_ms =
-          std::max<int64_t>(0, (now_us - first_packet_it->second) / 1000);
-      ++phase_metrics[phase_index].jitter_buffer_samples;
-      phase_metrics[phase_index].jitter_buffer_sum_ms +=
-          static_cast<uint64_t>(jitter_buffer_ms);
-      phase_metrics[phase_index].jitter_buffer_max_ms =
-          std::max(phase_metrics[phase_index].jitter_buffer_max_ms,
-                   jitter_buffer_ms);
-      ++summary.jitter_buffer_samples;
-      summary.jitter_buffer_sum_ms += static_cast<uint64_t>(jitter_buffer_ms);
-      summary.jitter_buffer_max_ms =
-          std::max(summary.jitter_buffer_max_ms, jitter_buffer_ms);
-      first_packet_receive_time_us.erase(first_packet_it);
-    }
-    auto frame_source_it = source_frames.find(frame.rtp_timestamp);
-    if (frame_source_it != source_frames.end()) {
-      const int64_t frame_latency_ms =
-          std::max<int64_t>(
-              0, (now_us - frame_source_it->second.capture_time_us) / 1000);
-      ++phase_metrics[phase_index].frame_latency_samples;
-      phase_metrics[phase_index].frame_latency_sum_ms +=
-          static_cast<uint64_t>(frame_latency_ms);
-      phase_metrics[phase_index].frame_latency_max_ms =
-          std::max(phase_metrics[phase_index].frame_latency_max_ms,
-                   frame_latency_ms);
-      ++summary.frame_latency_samples;
-      summary.frame_latency_sum_ms += static_cast<uint64_t>(frame_latency_ms);
-      summary.frame_latency_max_ms =
-          std::max(summary.frame_latency_max_ms, frame_latency_ms);
-    }
+    const int64_t first_receive_us = frame.first_packet_receive_time_us > 0
+                                         ? frame.first_packet_receive_time_us
+                                         : now_us;
+    const int64_t complete_us =
+        frame.completed_time_us > 0 ? frame.completed_time_us : now_us;
+    const int64_t jitter_buffer_us =
+        std::max<int64_t>(0, complete_us - first_receive_us);
+    const int64_t source_capture_us =
+        frame.capture_time_us > 0 ? frame.capture_time_us : 0;
+    const int64_t frame_latency_us =
+        source_capture_us > 0 ? std::max<int64_t>(0, complete_us - source_capture_us)
+                              : 0;
+    const bool missed_render_deadline =
+        (source_capture_us > 0 && frame_latency_us > render_deadline_us) ||
+        jitter_buffer_us > jitter_deadline_us;
     std::vector<DecodedVideoFrame> decoded_frames;
     Status decode_status =
         decoder.DecodeAnnexB(frame.annexb_access_unit.data(),
@@ -1014,6 +1032,47 @@ int main(int argc, char** argv) {
     }
     if (decoded_frames.empty()) {
       return;
+    }
+    phase_metrics[phase_index].decoded_frames_total +=
+        static_cast<uint32_t>(decoded_frames.size());
+    summary.decoded_frames_total += static_cast<uint32_t>(decoded_frames.size());
+    if (missed_render_deadline) {
+      ++phase_metrics[phase_index].render_deadline_drops;
+      ++summary.render_deadline_drops;
+      if (frame.keyframe) {
+        ++phase_metrics[phase_index].keyframes;
+        ++summary.keyframes;
+      }
+      return;
+    }
+    const int64_t jitter_buffer_ms = jitter_buffer_us / 1000;
+    ++phase_metrics[phase_index].jitter_buffer_samples;
+    phase_metrics[phase_index].jitter_buffer_sum_ms +=
+        static_cast<uint64_t>(jitter_buffer_ms);
+    phase_metrics[phase_index].jitter_buffer_max_ms =
+        std::max(phase_metrics[phase_index].jitter_buffer_max_ms,
+                 jitter_buffer_ms);
+    ++summary.jitter_buffer_samples;
+    summary.jitter_buffer_sum_ms += static_cast<uint64_t>(jitter_buffer_ms);
+    summary.jitter_buffer_max_ms =
+        std::max(summary.jitter_buffer_max_ms, jitter_buffer_ms);
+    auto first_packet_it = first_packet_receive_time_us.find(frame.rtp_timestamp);
+    if (first_packet_it != first_packet_receive_time_us.end()) {
+      first_packet_receive_time_us.erase(first_packet_it);
+    }
+    auto frame_source_it = source_frames.find(frame.rtp_timestamp);
+    if (frame_source_it != source_frames.end()) {
+      const int64_t frame_latency_ms = frame_latency_us / 1000;
+      ++phase_metrics[phase_index].frame_latency_samples;
+      phase_metrics[phase_index].frame_latency_sum_ms +=
+          static_cast<uint64_t>(frame_latency_ms);
+      phase_metrics[phase_index].frame_latency_max_ms =
+          std::max(phase_metrics[phase_index].frame_latency_max_ms,
+                   frame_latency_ms);
+      ++summary.frame_latency_samples;
+      summary.frame_latency_sum_ms += static_cast<uint64_t>(frame_latency_ms);
+      summary.frame_latency_max_ms =
+          std::max(summary.frame_latency_max_ms, frame_latency_ms);
     }
     phase_metrics[phase_index].decoded_frames +=
         static_cast<uint32_t>(decoded_frames.size());
@@ -1169,12 +1228,8 @@ int main(int argc, char** argv) {
       }
       SenderRateCap cap;
       cap.ids = ids;
-      cap.cap_bps =
-          phase.downlink_capacity_bps < 1000000
-              ? std::max<uint32_t>(
-                    qos_config.min_bitrate_bps,
-                    static_cast<uint32_t>(phase.downlink_capacity_bps * 0.60))
-              : kUnlimitedRateCapBps;
+      cap.cap_bps = ComputeServerRateCapBps(
+          phase, qos_config.min_bitrate_bps, qos_config.max_bitrate_bps);
       cap.expire_ms = 300;
       cap.receive_time_us = now_us;
       status = qos.OnSenderRateCap(cap);
@@ -1413,8 +1468,10 @@ int main(int argc, char** argv) {
             << " max_freeze_ms=" << summary.max_freeze_ms
             << " network_drops=" << summary.network_drops
             << " duplicate_frames=" << summary.duplicate_frames
+            << " render_deadline_drops=" << summary.render_deadline_drops
             << " encoded_frames=" << summary.encoded_frames
             << " receiver_frames=" << summary.receiver_frames
+            << " decoded_frames_total=" << summary.decoded_frames_total
             << " decoded_frames=" << summary.decoded_frames
             << " decode_errors=" << summary.decode_errors
             << " quality_samples=" << summary.quality_samples
@@ -1449,6 +1506,8 @@ int main(int argc, char** argv) {
               << " send_bps=" << send_bps
               << " encoded_frames=" << phase.encoded_frames
               << " receiver_frames=" << phase.receiver_frames
+              << " render_deadline_drops=" << phase.render_deadline_drops
+              << " decoded_frames_total=" << phase.decoded_frames_total
               << " decoded_frames=" << phase.decoded_frames
               << " decode_errors=" << phase.decode_errors
               << " quality_samples=" << phase.quality_samples

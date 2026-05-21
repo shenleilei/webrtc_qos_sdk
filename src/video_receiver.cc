@@ -11,7 +11,7 @@ VideoReceiver::VideoReceiver(VideoReceiverConfig config,
 
 Status VideoReceiver::OnRtpPacket(const RtpPacket& packet, int64_t now_us) {
   observer_.OnRtpPacketReceived(packet, now_us);
-  Status status = jitter_.InsertPacket(packet);
+  Status status = jitter_.InsertPacket(packet, now_us);
   if (!status) {
     RecoveryRequest request;
     request.type = RecoveryRequest::Type::kPli;

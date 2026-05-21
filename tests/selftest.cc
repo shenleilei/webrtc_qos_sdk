@@ -252,6 +252,12 @@ int main() {
   }
   ok &= Expect(fu_frames == 1, "FU-A reassembles one frame");
   ok &= Expect(last_frame.keyframe, "FU-A IDR remains keyframe");
+  ok &= Expect(last_frame.capture_time_us == 1234,
+               "FU-A frame preserves capture time");
+  ok &= Expect(last_frame.first_packet_receive_time_us == 2000000,
+               "FU-A frame records first packet receive time");
+  ok &= Expect(last_frame.completed_time_us == 2000000,
+               "FU-A frame records completion time");
 
   size_t nack_events = 0;
   VideoReceiver loss_receiver(

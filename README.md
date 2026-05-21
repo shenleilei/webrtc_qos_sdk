@@ -279,7 +279,7 @@ For each backend, it compares:
 The script writes `${LOG_DIR}/metrics.jsonl` and `${LOG_DIR}/summary.json`. `MATRIX_RUNS=N` repeats every content/scenario pair with deterministic weak-network seeds (`network_seed=run`) so failures are reproducible and the summary can report both aggregate and worst-case behavior. It reports two objective functions rather than a single ambiguous "best":
 
 - `smoothness_score`: freezes, max freeze duration, network drops, weak-phase receiver FPS, and recovery FPS.
-- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, real FFmpeg H264 decode errors, decoded-frame gaps, low decoded-frame PSNR, high receiver frame latency, high jitter-buffer residence time, weak-network non-adaptation, slow adaptation response, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames, outputs undecodable frames, visibly degrades picture quality, builds seconds of queue, reacts too slowly, or refuses to adapt from being marked best just because it does not visibly freeze.
+- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, render deadline misses, real FFmpeg H264 decode errors, decoded-frame gaps, low decoded-frame PSNR, high receiver frame latency, high jitter-buffer residence time, weak-network non-adaptation, slow adaptation response, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames, misses the playout deadline, outputs undecodable frames, visibly degrades picture quality, builds seconds of queue, reacts too slowly, or refuses to adapt from being marked best just because it does not visibly freeze.
 
 The matrix now has hard validation rules when the WebRTC backend is available:
 
@@ -287,6 +287,7 @@ The matrix now has hard validation rules when the WebRTC backend is available:
 - `webrtc/adaptive` must produce one source-aligned PSNR sample for every receiver frame in every run/content/scenario.
 - `webrtc/adaptive` must keep `psnr_avg >= 20.0 dB` and `psnr_min >= 14.0 dB` in every run/content/scenario.
 - `webrtc/adaptive` must produce one frame-latency and jitter-buffer sample for every receiver frame, with `frame_latency_max_ms <= 1800` and `jitter_buffer_max_ms <= 1200`.
+- `webrtc/adaptive` must keep render deadline misses within `<= 3` frames and `<= 2%` of render candidates per run/content/scenario.
 - `webrtc/adaptive` must meet per-run/per-content/per-scenario weak-network downshift and good-network recovery thresholds for bitrate and FPS.
 - `webrtc/adaptive` must meet per-phase adaptation response-time thresholds after entering outage, poor, and good-again phases.
 - `webrtc/adaptive` must be the best or tied-best `balanced_qoe_score` candidate in every run/content/scenario.
@@ -315,18 +316,18 @@ Latest local seeded long-stream QoE result (`MATRIX_RUNS=1`, 320x180, 3 content 
 
 Latest aggregate ranking:
 
-| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Latency avg/max ms | Jitter-buffer avg/max ms | Decode errors | Drops | Duplicates | Failed cases |
+| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Latency avg/max ms | Jitter-buffer avg/max ms | Decode errors | Drops | Deadline drops | Failed cases |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 455.336 | 56.84 / 15.33 | 135.2 / 1480 | 43.8 / 730 | 0 | 67 | 0 | 0 |
-| webrtc/balanced | 3342.996 | 56.85 / 15.33 | 141.2 / 1480 | 44.2 / 665 | 0 | 67 | 0 | 0 |
-| lightweight/adaptive | 10716.991 | 27.46 / 14.30 | 154.7 / 1965 | 29.1 / 845 | 74 | 67 | 276 | 3 |
-| lightweight/balanced | 14016.000 | 26.10 / 7.65 | 139.2 / 1980 | 27.2 / 775 | 80 | 64 | 269 | 0 |
-| webrtc/bitrate_only | 41023.278 | 52.95 / 15.46 | 184.8 / 890 | 62.4 / 430 | 0 | 104 | 0 | 0 |
-| lightweight/bitrate_only | 53477.620 | 25.98 / 14.30 | 175.9 / 1595 | 32.9 / 845 | 69 | 105 | 1279 | 0 |
-| webrtc/fixed | 135964.274 | 56.67 / 14.66 | 1344.4 / 9680 | 290.7 / 8775 | 0 | 8565 | 0 | 11 |
-| lightweight/fixed | 144408.946 | 24.21 / 10.98 | 988.7 / 8265 | 112.9 / 7165 | 64 | 8284 | 656 | 0 |
+| webrtc/adaptive | 455.336 | 56.84 / 15.33 | 131.9 / 1480 | 41.1 / 730 | 0 | 67 | 0 | 0 |
+| webrtc/balanced | 3342.996 | 56.85 / 15.33 | 138.8 / 1480 | 41.4 / 665 | 0 | 67 | 0 | 0 |
+| lightweight/adaptive | 11001.106 | 27.47 / 14.30 | 103.0 / 1790 | 9.0 / 435 | 74 | 67 | 7 | 3 |
+| lightweight/balanced | 14101.567 | 26.11 / 7.65 | 100.7 / 1795 | 8.5 / 240 | 80 | 64 | 3 | 0 |
+| webrtc/bitrate_only | 41023.278 | 52.95 / 15.46 | 165.6 / 890 | 48.4 / 430 | 0 | 104 | 0 | 0 |
+| lightweight/bitrate_only | 53477.620 | 25.98 / 14.30 | 135.9 / 1595 | 6.3 / 75 | 69 | 105 | 0 | 0 |
+| lightweight/fixed | 146617.730 | 25.14 / 10.98 | 179.6 / 1800 | 5.5 / 105 | 64 | 8284 | 492 | 0 |
+| webrtc/fixed | 166487.944 | 59.16 / 14.97 | 302.7 / 1800 | 48.1 / 1175 | 0 | 8565 | 1437 | 0 |
 
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, content set, candidate set, backend set, seed set, 320x180 video profile, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, server `SENDER_RATE_CAP_V1`, smoothed loss-driven FPS adaptation, and WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks. Under the current 3-content/5-scenario synthetic dynamic weak-network matrix, `webrtc/adaptive` is the best aggregate balanced-QoE candidate with `decode_errors=0` and `failed_cases=0`.
+The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, content set, candidate set, backend set, seed set, video profiles, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, capacity-aware server `SENDER_RATE_CAP_V1`, smoothed loss-driven FPS adaptation, WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks, and receiver-side render deadline accounting. Under the current 3-content/5-scenario synthetic dynamic weak-network matrix, `webrtc/adaptive` is the best aggregate balanced-QoE candidate with `decode_errors=0` and `failed_cases=0`.
 
 720p targeted profile status:
 
@@ -334,19 +335,36 @@ The current conclusion is deliberately bounded: this proves the best strategy on
 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_profile.sh
 ```
 
-This profile intentionally raises the validation bar to 1280x720, start 2.5Mbps, max 5Mbps, and recovered-route start 3.5Mbps. It is not marked as Phase-1a passed yet. The latest local run had 18 validation failures: `webrtc/adaptive` still wins aggregate balanced QoE, but it violates the hard max-latency/jitter thresholds in high-detail and RTT/loss-burst cases.
+This profile intentionally raises the validation bar to 1280x720, start 2.5Mbps, max 5Mbps, and recovered-route start 3.5Mbps. The latest local run passed with `validation_failures=0`; `webrtc/adaptive` is the best aggregate balanced-QoE candidate. The important fix was making the server rate cap capacity-aware for all downlink capacities below the sender maximum, not only for sub-1Mbps links. Without that, the sender could recover to 5Mbps while the simulated server->receiver route could only carry 4Mbps.
 
-| Content | Scenario | Freeze / max ms | Drops | PSNR avg/min | Max latency/jitter ms |
-| --- | --- | ---: | ---: | ---: | ---: |
-| motion | rtt_jitter_spike_recover | 2 / 1115 | 11 | 61.10 / 31.43 | 2585 / 1485 |
-| motion | loss_burst_recover | 1 / 1135 | 51 | 58.26 / 24.24 | 2370 / 1410 |
-| detail_motion | walking_dead_zone | 2 / 1220 | 334 | 39.31 / 16.19 | 1870 / 910 |
-| detail_motion | jitter_loss_oscillation | 0 / 0 | 234 | 32.54 / 15.19 | 1805 / 930 |
-| detail_motion | bandwidth_staircase | 1 / 1125 | 152 | 42.15 / 23.16 | 2145 / 865 |
-| detail_motion | rtt_jitter_spike_recover | 1 / 1015 | 1475 | 39.59 / 16.03 | 4565 / 3460 |
-| detail_motion | loss_burst_recover | 0 / 0 | 829 | 38.41 / 15.08 | 4980 / 4155 |
+| Content | Scenario | Freeze / max ms | Drops | Deadline drops | PSNR avg/min | Max latency/jitter ms | Decode errors |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| motion | walking_dead_zone | 0 / 0 | 0 | 0 | 54.92 / 24.99 | 1725 / 755 | 0 |
+| motion | jitter_loss_oscillation | 0 / 0 | 10 | 0 | 54.39 / 26.57 | 940 / 695 | 0 |
+| motion | bandwidth_staircase | 0 / 0 | 0 | 0 | 57.59 / 45.09 | 1700 / 435 | 0 |
+| motion | rtt_jitter_spike_recover | 0 / 0 | 0 | 0 | 58.44 / 49.93 | 1420 / 735 | 0 |
+| motion | loss_burst_recover | 0 / 0 | 15 | 0 | 58.44 / 45.96 | 1040 / 520 | 0 |
+| low_motion | walking_dead_zone | 0 / 0 | 0 | 0 | 65.59 / 23.83 | 1490 / 345 | 0 |
+| low_motion | jitter_loss_oscillation | 0 / 0 | 10 | 0 | 66.37 / 24.57 | 680 / 415 | 0 |
+| low_motion | bandwidth_staircase | 0 / 0 | 0 | 0 | 70.51 / 48.58 | 1480 / 430 | 0 |
+| low_motion | rtt_jitter_spike_recover | 0 / 0 | 0 | 0 | 69.72 / 24.01 | 955 / 505 | 0 |
+| low_motion | loss_burst_recover | 1 / 1095 | 15 | 0 | 72.01 / 32.39 | 840 / 370 | 0 |
+| detail_motion | walking_dead_zone | 2 / 1220 | 0 | 2 | 41.33 / 29.35 | 1720 / 740 | 0 |
+| detail_motion | jitter_loss_oscillation | 0 / 0 | 12 | 0 | 32.92 / 15.19 | 990 / 640 | 0 |
+| detail_motion | bandwidth_staircase | 1 / 1140 | 0 | 1 | 41.81 / 23.16 | 1790 / 860 | 0 |
+| detail_motion | rtt_jitter_spike_recover | 1 / 1440 | 0 | 0 | 41.06 / 24.84 | 1550 / 730 | 0 |
+| detail_motion | loss_burst_recover | 0 / 0 | 16 | 0 | 42.12 / 35.32 | 975 / 625 | 0 |
 
-A lower 720p probe (`max_bitrate=3.5Mbps`, recovered-route start 3.0Mbps) reduces failures from 18 to 4, but still leaves `detail_motion/walking_dead_zone` and `detail_motion/bandwidth_staircase` above the 1800ms latency threshold. The next implementation step is therefore not more threshold tuning; it is adding receiver-side playout/deadline dropping, better sender-side stale-frame policy for complete frames, and/or a real runtime encoder rate-control path that does not depend on reopening libx264 on every rate change.
+720p aggregate ranking:
+
+| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Latency avg/max ms | Jitter-buffer avg/max ms | Decode errors | Drops | Deadline drops | Failed cases |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| webrtc/adaptive | 1553.297 | 55.52 / 15.19 | 194.9 / 1790 | 60.2 / 860 | 0 | 78 | 3 | 0 |
+| webrtc/balanced | 4623.130 | 55.75 / 15.19 | 192.0 / 1790 | 60.2 / 860 | 0 | 78 | 3 | 0 |
+| webrtc/bitrate_only | 41478.500 | 51.19 / 17.02 | 195.5 / 1280 | 61.7 / 615 | 0 | 95 | 1 | 0 |
+| webrtc/fixed | 278640.500 | 58.19 / 39.31 | 141.3 / 1650 | 52.5 / 1190 | 0 | 46374 | 1001 | 0 |
+
+This is still not a production-global optimum. The tightest 720p cases are `detail_motion/walking_dead_zone` and `detail_motion/bandwidth_staircase`: they pass, but their max latency is close to the 1800ms threshold and they require 1-2 render deadline drops. The next improvement should be a real runtime encoder rate-control path and additional multi-seed/mobile-trace validation, not just looser thresholds.
 
 UDP weak-network matrix:
 

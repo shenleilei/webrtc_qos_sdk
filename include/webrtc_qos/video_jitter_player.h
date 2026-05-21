@@ -49,6 +49,11 @@ class VideoJitterPlayer {
  private:
   struct PartialFrame {
     uint32_t timestamp = 0;
+    uint16_t sequence_start = 0;
+    uint16_t sequence_end = 0;
+    int64_t capture_time_us = 0;
+    int64_t first_packet_receive_time_us = 0;
+    int64_t last_packet_receive_time_us = 0;
     std::vector<std::vector<uint8_t>> nalus;
     VideoFrameType frame_type = VideoFrameType::kUnknown;
     bool has_marker = false;
