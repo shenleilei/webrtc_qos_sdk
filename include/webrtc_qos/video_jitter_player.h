@@ -1,7 +1,9 @@
 #pragma once
 
 #include <deque>
+#include <map>
 #include <memory>
+#include <set>
 
 #include "webrtc_qos/types.h"
 
@@ -54,19 +56,26 @@ class VideoJitterPlayer {
     int64_t capture_time_us = 0;
     int64_t first_packet_receive_time_us = 0;
     int64_t last_packet_receive_time_us = 0;
-    std::vector<std::vector<uint8_t>> nalus;
+    std::map<uint16_t, RtpPacket> packets;
     VideoFrameType frame_type = VideoFrameType::kUnknown;
     bool has_marker = false;
-    bool corrupt = false;
   };
 
   Status InsertSingleNalu(const RtpPacket& packet);
   Status InsertFuA(const RtpPacket& packet);
-  void CompleteFrame(uint32_t timestamp);
+  Status InsertPacketForAssembly(const RtpPacket& packet);
+  Status TryAssembleFrame(const PartialFrame& partial,
+                          EncodedVideoFrame* frame,
+                          bool* incomplete) const;
+  void QueueCompletedFrame(EncodedVideoFrame frame);
+  void FlushReadyFrames();
 
   VideoJitterPlayerConfig config_;
-  PartialFrame current_;
+  std::map<uint32_t, PartialFrame> partial_frames_;
+  std::map<uint32_t, EncodedVideoFrame> ready_frames_;
   std::deque<EncodedVideoFrame> completed_;
+  std::deque<uint32_t> completed_timestamp_order_;
+  std::set<uint32_t> completed_timestamps_;
   std::vector<uint8_t> cached_sps_;
   std::vector<uint8_t> cached_pps_;
   VideoJitterStats stats_;

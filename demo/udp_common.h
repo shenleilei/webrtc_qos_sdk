@@ -229,7 +229,7 @@ inline bool ReceiveEnvelope(int fd,
     return false;
   }
 
-  uint8_t buffer[2048];
+  uint8_t buffer[65536];
   socklen_t from_len = sizeof(*from);
   const ssize_t size =
       ::recvfrom(fd, buffer, sizeof(buffer), 0,

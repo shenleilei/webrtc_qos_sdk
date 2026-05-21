@@ -76,99 +76,133 @@ VideoJitterStats VideoJitterPlayer::GetStats() const {
 }
 
 Status VideoJitterPlayer::InsertSingleNalu(const RtpPacket& packet) {
-  if (current_.timestamp != packet.timestamp) {
-    if (!current_.nalus.empty()) {
-      current_.corrupt = true;
-      ++stats_.dropped_frames;
-    }
-    current_ = PartialFrame{};
-    current_.timestamp = packet.timestamp;
-    current_.sequence_start = packet.sequence_number;
-    current_.capture_time_us = packet.capture_time_us;
-    current_.first_packet_receive_time_us = packet.receive_time_us;
-  }
-  if (current_.nalus.empty()) {
-    current_.sequence_start = packet.sequence_number;
-    current_.capture_time_us = packet.capture_time_us;
-    current_.first_packet_receive_time_us = packet.receive_time_us;
-  }
-  current_.sequence_end = packet.sequence_number;
-  current_.last_packet_receive_time_us = packet.receive_time_us;
-  current_.nalus.push_back(packet.payload);
   const H264NaluType type = GetNaluType(packet.payload);
   if (type == H264NaluType::kSps) {
     cached_sps_ = packet.payload;
   } else if (type == H264NaluType::kPps) {
     cached_pps_ = packet.payload;
   }
-  current_.frame_type = ClassifyAccessUnit(current_.nalus);
-  if (packet.marker) {
-    CompleteFrame(packet.timestamp);
-  }
-  return Status::Ok();
+  return InsertPacketForAssembly(packet);
 }
 
 Status VideoJitterPlayer::InsertFuA(const RtpPacket& packet) {
   if (packet.payload.size() < 3) {
     return Status::Error(StatusCode::kMalformedPacket, "short FU-A payload");
   }
-  if (current_.timestamp != packet.timestamp) {
-    if (!current_.nalus.empty()) {
-      current_.corrupt = true;
-      ++stats_.dropped_frames;
-    }
-    current_ = PartialFrame{};
-    current_.timestamp = packet.timestamp;
-    current_.sequence_start = packet.sequence_number;
-    current_.capture_time_us = packet.capture_time_us;
-    current_.first_packet_receive_time_us = packet.receive_time_us;
-  }
-  if (current_.nalus.empty()) {
-    current_.sequence_start = packet.sequence_number;
-    current_.capture_time_us = packet.capture_time_us;
-    current_.first_packet_receive_time_us = packet.receive_time_us;
-  }
-  current_.sequence_end = packet.sequence_number;
-  current_.last_packet_receive_time_us = packet.receive_time_us;
-  const uint8_t fu_indicator = packet.payload[0];
-  const uint8_t fu_header = packet.payload[1];
-  const bool start = (fu_header & 0x80) != 0;
-  const bool end = (fu_header & 0x40) != 0;
-  const uint8_t nal_type = fu_header & 0x1f;
-  const uint8_t reconstructed_header = (fu_indicator & 0xe0) | nal_type;
+  return InsertPacketForAssembly(packet);
+}
 
-  if (start) {
-    current_.nalus.emplace_back();
-    current_.nalus.back().push_back(reconstructed_header);
-  } else if (current_.nalus.empty()) {
-    current_.corrupt = true;
-    return Status::Error(StatusCode::kMalformedPacket,
-                         "FU-A continuation without start");
+Status VideoJitterPlayer::InsertPacketForAssembly(const RtpPacket& packet) {
+  if (completed_timestamps_.find(packet.timestamp) !=
+      completed_timestamps_.end()) {
+    return Status::Ok();
   }
-  current_.nalus.back().insert(current_.nalus.back().end(),
-                               packet.payload.begin() + 2,
-                               packet.payload.end());
-  if (end) {
-    current_.frame_type = ClassifyAccessUnit(current_.nalus);
+  PartialFrame& partial = partial_frames_[packet.timestamp];
+  if (partial.packets.empty()) {
+    partial.timestamp = packet.timestamp;
+    partial.sequence_start = packet.sequence_number;
+    partial.capture_time_us = packet.capture_time_us;
+    partial.first_packet_receive_time_us = packet.receive_time_us;
   }
-  if (packet.marker) {
-    CompleteFrame(packet.timestamp);
+  partial.sequence_start = std::min(partial.sequence_start, packet.sequence_number);
+  partial.sequence_end = std::max(partial.sequence_end, packet.sequence_number);
+  partial.last_packet_receive_time_us =
+      std::max(partial.last_packet_receive_time_us, packet.receive_time_us);
+  partial.has_marker = partial.has_marker || packet.marker;
+  partial.packets[packet.sequence_number] = packet;
+
+  EncodedVideoFrame frame;
+  bool incomplete = false;
+  Status status = TryAssembleFrame(partial, &frame, &incomplete);
+  if (!status) {
+    return status;
+  }
+  if (!incomplete) {
+    partial_frames_.erase(packet.timestamp);
+    QueueCompletedFrame(std::move(frame));
+    FlushReadyFrames();
   }
   return Status::Ok();
 }
 
-void VideoJitterPlayer::CompleteFrame(uint32_t timestamp) {
-  if (current_.corrupt || current_.nalus.empty()) {
-    current_ = PartialFrame{};
-    ++stats_.dropped_frames;
-    return;
+Status VideoJitterPlayer::TryAssembleFrame(const PartialFrame& partial,
+                                           EncodedVideoFrame* frame,
+                                           bool* incomplete) const {
+  if (!frame || !incomplete) {
+    return Status::Error(StatusCode::kInvalidArgument,
+                         "null frame assembly output");
   }
+  *incomplete = true;
+  if (!partial.has_marker || partial.packets.empty()) {
+    return Status::Ok();
+  }
+  uint16_t previous = partial.packets.begin()->first;
+  bool first = true;
+  for (const auto& [seq, unused] : partial.packets) {
+    (void)unused;
+    if (!first && static_cast<uint16_t>(previous + 1) != seq) {
+      return Status::Ok();
+    }
+    previous = seq;
+    first = false;
+  }
+
+  std::vector<std::vector<uint8_t>> nalus;
+  std::vector<uint8_t> fu_nalu;
+  bool assembling_fu = false;
+  for (const auto& [unused, packet] : partial.packets) {
+    (void)unused;
+    if (packet.payload.empty()) {
+      return Status::Error(StatusCode::kMalformedPacket, "empty RTP payload");
+    }
+    const uint8_t type = packet.payload[0] & 0x1f;
+    if (type >= 1 && type <= 23) {
+      if (assembling_fu) {
+        return Status::Error(StatusCode::kMalformedPacket,
+                             "interrupted FU-A sequence");
+      }
+      nalus.push_back(packet.payload);
+      continue;
+    }
+    if (type != 28 || packet.payload.size() < 3) {
+      return Status::Error(StatusCode::kUnsupported,
+                           "unsupported H264 RTP type");
+    }
+    const uint8_t fu_indicator = packet.payload[0];
+    const uint8_t fu_header = packet.payload[1];
+    const bool start = (fu_header & 0x80) != 0;
+    const bool end = (fu_header & 0x40) != 0;
+    const uint8_t nal_type = fu_header & 0x1f;
+    const uint8_t reconstructed_header = (fu_indicator & 0xe0) | nal_type;
+    if (start) {
+      if (assembling_fu) {
+        return Status::Error(StatusCode::kMalformedPacket,
+                             "nested FU-A start");
+      }
+      assembling_fu = true;
+      fu_nalu.clear();
+      fu_nalu.push_back(reconstructed_header);
+    } else if (!assembling_fu) {
+      return Status::Ok();
+    }
+    fu_nalu.insert(fu_nalu.end(), packet.payload.begin() + 2,
+                   packet.payload.end());
+    if (end) {
+      nalus.push_back(std::move(fu_nalu));
+      fu_nalu.clear();
+      assembling_fu = false;
+    }
+  }
+  if (assembling_fu || nalus.empty()) {
+    return Status::Ok();
+  }
+
   std::vector<std::vector<uint8_t>> out_nalus;
-  const VideoFrameType frame_type = ClassifyAccessUnit(current_.nalus);
+  const VideoFrameType frame_type = ClassifyAccessUnit(nalus);
   if (frame_type == VideoFrameType::kIdr) {
     bool has_sps = false;
     bool has_pps = false;
-    for (const auto& nalu : current_.nalus) {
+    for (const auto& nalu : nalus) {
       const H264NaluType type = GetNaluType(nalu);
       has_sps = has_sps || type == H264NaluType::kSps;
       has_pps = has_pps || type == H264NaluType::kPps;
@@ -180,23 +214,40 @@ void VideoJitterPlayer::CompleteFrame(uint32_t timestamp) {
       out_nalus.push_back(cached_pps_);
     }
   }
-  out_nalus.insert(out_nalus.end(), current_.nalus.begin(),
-                   current_.nalus.end());
-  EncodedVideoFrame frame;
-  frame.annexb_access_unit = JoinAnnexB(out_nalus);
-  frame.rtp_timestamp = timestamp;
-  frame.rtp_sequence_start = current_.sequence_start;
-  frame.rtp_sequence_end = current_.sequence_end;
-  frame.capture_time_us = current_.capture_time_us;
-  frame.first_packet_receive_time_us = current_.first_packet_receive_time_us;
-  frame.completed_time_us = current_.last_packet_receive_time_us;
-  frame.frame_type = frame_type;
-  frame.keyframe = frame_type == VideoFrameType::kIdr;
-  completed_.push_back(std::move(frame));
+  out_nalus.insert(out_nalus.end(), nalus.begin(), nalus.end());
+  frame->annexb_access_unit = JoinAnnexB(out_nalus);
+  frame->rtp_timestamp = partial.timestamp;
+  frame->rtp_sequence_start = partial.sequence_start;
+  frame->rtp_sequence_end = partial.sequence_end;
+  frame->capture_time_us = partial.capture_time_us;
+  frame->first_packet_receive_time_us = partial.first_packet_receive_time_us;
+  frame->completed_time_us = partial.last_packet_receive_time_us;
+  frame->frame_type = frame_type;
+  frame->keyframe = frame_type == VideoFrameType::kIdr;
+  *incomplete = false;
+  return Status::Ok();
+}
+
+void VideoJitterPlayer::QueueCompletedFrame(EncodedVideoFrame frame) {
+  if (!completed_timestamps_.insert(frame.rtp_timestamp).second) {
+    return;
+  }
+  completed_timestamp_order_.push_back(frame.rtp_timestamp);
+  while (completed_timestamp_order_.size() > 256) {
+    completed_timestamps_.erase(completed_timestamp_order_.front());
+    completed_timestamp_order_.pop_front();
+  }
+  ready_frames_[frame.rtp_timestamp] = std::move(frame);
   ++stats_.completed_frames;
+}
+
+void VideoJitterPlayer::FlushReadyFrames() {
+  while (!ready_frames_.empty()) {
+    completed_.push_back(std::move(ready_frames_.begin()->second));
+    ready_frames_.erase(ready_frames_.begin());
+  }
   stats_.decodable_queue_depth = static_cast<uint16_t>(completed_.size());
   stats_.jitter_frames = stats_.decodable_queue_depth;
-  current_ = PartialFrame{};
 }
 
 }  // namespace webrtc_qos

@@ -169,9 +169,33 @@ if(TARGET webrtc_qos_ffmpeg_encoder)
     ${AVCODEC_LIBRARY}
     ${AVUTIL_LIBRARY}
     ${SWSCALE_LIBRARY})
+  add_executable(udp_long_sender_demo demo/udp_long_sender/main.cc)
+  target_include_directories(udp_long_sender_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(udp_long_sender_demo PRIVATE
+    webrtc_qos_ffmpeg_encoder
+    webrtc_qos
+    ${AVCODEC_LIBRARY}
+    ${AVUTIL_LIBRARY})
+  add_executable(udp_long_server_demo demo/udp_long_server/main.cc)
+  target_include_directories(udp_long_server_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(udp_long_server_demo PRIVATE webrtc_qos)
+  add_executable(udp_long_receiver_demo demo/udp_long_receiver/main.cc)
+  target_include_directories(udp_long_receiver_demo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(udp_long_receiver_demo PRIVATE
+    webrtc_qos_ffmpeg_decoder
+    webrtc_qos
+    ${AVCODEC_LIBRARY}
+    ${AVUTIL_LIBRARY}
+    ${SWSCALE_LIBRARY})
   list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS
     ffmpeg_encoder_demo
-    long_stream_qoe_demo)
+    long_stream_qoe_demo
+    udp_long_sender_demo
+    udp_long_server_demo
+    udp_long_receiver_demo)
 endif()
 
 add_executable(webrtc_qos_selftest tests/selftest.cc)
