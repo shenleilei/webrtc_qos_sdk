@@ -212,6 +212,18 @@ int main() {
   rates = controller.GetTargetRates(3000000);
   ok &= Expect(rates.sender_rate_cap_bps == kUnlimitedRateCapBps,
                "expired cap returns to unlimited");
+  SenderRateCap very_low_cap;
+  very_low_cap.ids = TransportIds{1, 2, 3, 4, 5};
+  very_low_cap.cap_bps = 180000;
+  very_low_cap.expire_ms = 1000;
+  very_low_cap.receive_time_us = 3000000;
+  status = controller.OnSenderRateCap(very_low_cap);
+  ok &= Expect(status.code == StatusCode::kOk, "apply very low sender cap");
+  EncoderAdaptation adaptation = controller.GetEncoderAdaptation(3100000);
+  ok &= Expect(adaptation.max_fps == 8,
+               "very constrained capacity lowers fps to 8");
+  ok &= Expect(!adaptation.request_keyframe,
+               "very constrained capacity suppresses loss-driven IDR");
 
   std::vector<RtpPacket> fu_packets;
   SenderPacer fu_pacer(SenderPacerConfig{},
@@ -228,10 +240,14 @@ int main() {
   status = video_sender.SendAnnexBAccessUnit(large_au.data(), large_au.size(),
                                              1234);
   ok &= Expect(status.code == StatusCode::kOk, "send large FU-A AU");
+  ok &= Expect(fu_packets.empty(), "FU-A packets wait for pacer tick");
   for (int i = 0; i < 40; ++i) {
     fu_pacer.Tick(1000000 + i * 5000);
   }
   ok &= Expect(fu_packets.size() > 3, "large AU is fragmented");
+  ok &= Expect(fu_packets.front().timestamp ==
+                   video_sender.RtpTimestampForCaptureTime(1234),
+               "video sender derives RTP timestamp from capture time");
   VideoReceiver fu_receiver(
       VideoReceiverConfig{TransportIds{1, 2, 3, 0x11111111, 5}},
       VideoReceiverCallbacks{});

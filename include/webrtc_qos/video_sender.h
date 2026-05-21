@@ -23,6 +23,7 @@ class VideoSender {
   uint16_t next_transport_sequence_number() const {
     return next_transport_sequence_number_;
   }
+  uint32_t RtpTimestampForCaptureTime(int64_t capture_time_us) const;
 
  private:
   Status ValidateAccessUnit(const std::vector<std::vector<uint8_t>>& nalus,
@@ -30,13 +31,13 @@ class VideoSender {
   Status EnqueueNalu(const std::vector<uint8_t>& nalu,
                      bool marker,
                      VideoFrameType frame_type,
-                     int64_t capture_time_us);
+                     int64_t capture_time_us,
+                     uint32_t rtp_timestamp);
 
   VideoSenderConfig config_;
   SenderPacer* pacer_ = nullptr;
   uint16_t next_rtp_sequence_number_ = 0;
   uint16_t next_transport_sequence_number_ = 0;
-  uint32_t next_rtp_timestamp_ = 0;
 };
 
 }  // namespace webrtc_qos

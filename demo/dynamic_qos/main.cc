@@ -113,8 +113,8 @@ bool ValidateScenario(const std::vector<DecisionRow>& rows,
       ok &= Expect(good->decision.max_fps == 30, scenario + " good fps=30");
       ok &= Expect(outage->decision.max_fps <= 8,
                    scenario + " outage fps<=8");
-      ok &= Expect(outage->decision.request_keyframe,
-                   scenario + " outage keyframe");
+      ok &= Expect(!outage->decision.request_keyframe,
+                   scenario + " outage suppresses low-cap loss keyframe");
       ok &= Expect(poor->decision.max_fps <= 10, scenario + " poor fps<=10");
       ok &= Expect(outage->decision.target_bitrate_bps <
                        good->decision.target_bitrate_bps,
@@ -181,8 +181,8 @@ bool ValidateScenario(const std::vector<DecisionRow>& rows,
     if (good && burst && recovered) {
       ok &= Expect(burst->decision.max_fps <= 10,
                    scenario + " burst loss fps<=10");
-      ok &= Expect(burst->decision.request_keyframe,
-                   scenario + " burst loss keyframe");
+      ok &= Expect(!burst->decision.request_keyframe,
+                   scenario + " burst loss suppresses low-cap keyframe");
       ok &= Expect(burst->decision.target_bitrate_bps <
                        good->decision.target_bitrate_bps,
                    scenario + " burst loss bitrate drops");

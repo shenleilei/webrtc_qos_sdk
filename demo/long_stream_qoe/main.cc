@@ -658,6 +658,7 @@ int main(int argc, char** argv) {
   uint32_t recovered_route_start_bps = 2000000;
   uint32_t network_seed = 0;
   const bool trace_rates = std::getenv("WEBRTC_QOS_TRACE_RATES") != nullptr;
+  const bool trace_frames = std::getenv("WEBRTC_QOS_TRACE_FRAMES") != nullptr;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     const std::string prefix = "--summary=";
@@ -1037,6 +1038,16 @@ int main(int argc, char** argv) {
         static_cast<uint32_t>(decoded_frames.size());
     summary.decoded_frames_total += static_cast<uint32_t>(decoded_frames.size());
     if (missed_render_deadline) {
+      if (trace_frames) {
+        std::cerr << "trace_frame_late"
+                  << " phase=" << phases[phase_index].name
+                  << " now_ms=" << now_us / 1000
+                  << " rtp_ts=" << frame.rtp_timestamp
+                  << " keyframe=" << (frame.keyframe ? 1 : 0)
+                  << " frame_latency_ms=" << frame_latency_us / 1000
+                  << " jitter_buffer_ms=" << jitter_buffer_us / 1000
+                  << " decoded_outputs=" << decoded_frames.size() << "\n";
+      }
       ++phase_metrics[phase_index].render_deadline_drops;
       ++summary.render_deadline_drops;
       if (frame.keyframe) {
@@ -1106,9 +1117,30 @@ int main(int argc, char** argv) {
     if (last_frame_out_us >= 0) {
       const int64_t gap_ms = (now_us - last_frame_out_us) / 1000;
       if (gap_ms > 1000) {
+        if (trace_frames) {
+          std::cerr << "trace_frame_freeze"
+                    << " phase=" << phases[phase_index].name
+                    << " now_ms=" << now_us / 1000
+                    << " rtp_ts=" << frame.rtp_timestamp
+                    << " gap_ms=" << gap_ms
+                    << " keyframe=" << (frame.keyframe ? 1 : 0)
+                    << " frame_latency_ms=" << frame_latency_us / 1000
+                    << " jitter_buffer_ms=" << jitter_buffer_us / 1000
+                    << "\n";
+        }
         ++summary.freeze_count;
         summary.max_freeze_ms = std::max(summary.max_freeze_ms, gap_ms);
       }
+    }
+    if (trace_frames) {
+      std::cerr << "trace_frame_render"
+                << " phase=" << phases[phase_index].name
+                << " now_ms=" << now_us / 1000
+                << " rtp_ts=" << frame.rtp_timestamp
+                << " keyframe=" << (frame.keyframe ? 1 : 0)
+                << " frame_latency_ms=" << frame_latency_us / 1000
+                << " jitter_buffer_ms=" << jitter_buffer_us / 1000
+                << "\n";
     }
     last_frame_out_us = now_us;
   };
@@ -1300,6 +1332,8 @@ int main(int argc, char** argv) {
                                 adaptation.max_fps,
                                 applied_bitrate_bps,
                                 applied_fps)) {
+      const bool bitrate_increased =
+          adaptation.target_bitrate_bps > applied_bitrate_bps;
       applied_bitrate_bps = adaptation.target_bitrate_bps;
       applied_fps = std::max<uint32_t>(1, adaptation.max_fps);
       status = encoder.SetRates(applied_bitrate_bps, applied_fps);
@@ -1311,13 +1345,13 @@ int main(int argc, char** argv) {
         applied_pacing_bps = applied_bitrate_bps;
         pacer.SetTargetBitrate(applied_pacing_bps);
       }
-      force_keyframe_next = true;
+      if (bitrate_increased || adaptation.request_keyframe) {
+        force_keyframe_next = true;
+      }
     }
 
     while (now_us >= next_encode_us) {
-      const uint32_t rtp_timestamp =
-          kVideoClockRateHz + static_cast<uint32_t>(frame_index) *
-                                  (kVideoClockRateHz / 30);
+      const uint32_t rtp_timestamp = sender.RtpTimestampForCaptureTime(now_us);
       FillI420Frame(encoder_config.width, encoder_config.height,
                     content_profile, frame_index, &y, &u, &v);
       I420Frame source_frame;
@@ -1330,9 +1364,13 @@ int main(int argc, char** argv) {
       source_frames[rtp_timestamp] = std::move(source_frame);
       const bool keyframe_needed = force_keyframe_next ||
                                    adaptation.request_keyframe ||
+                                   pacer.GetStats().waiting_for_idr ||
                                    frame_index == 0;
+      const int64_t min_keyframe_interval_us =
+          pacer.GetStats().waiting_for_idr ? 750000 : 2000000;
       const bool force_keyframe =
-          keyframe_needed && now_us - last_keyframe_encode_us >= 2000000;
+          keyframe_needed &&
+          now_us - last_keyframe_encode_us >= min_keyframe_interval_us;
       status = encoder.EncodeI420(y.data(), encoder_config.width, u.data(),
                                   encoder_config.width / 2, v.data(),
                                   encoder_config.width / 2, force_keyframe,

@@ -27,7 +27,7 @@
           "encoder_bps_max": 200000,
           "max_fps_min": 8,
           "max_fps_max": 8,
-          "keyframe": true
+          "keyframe": false
         }
       },
       {
@@ -40,7 +40,7 @@
           "encoder_bps_max": 150000,
           "max_fps_min": 8,
           "max_fps_max": 8,
-          "keyframe": true
+          "keyframe": false
         }
       },
       {
@@ -103,8 +103,8 @@
         "expect": {
           "encoder_bps_min": 80000,
           "encoder_bps_max": 150000,
-          "max_fps_min": 10,
-          "max_fps_max": 10,
+          "max_fps_min": 8,
+          "max_fps_max": 8,
           "keyframe": false
         }
       },
@@ -284,9 +284,9 @@
         "expect": {
           "encoder_bps_min": 120000,
           "encoder_bps_max": 200000,
-          "max_fps_min": 10,
-          "max_fps_max": 10,
-          "keyframe": true
+          "max_fps_min": 8,
+          "max_fps_max": 8,
+          "keyframe": false
         }
       },
       {

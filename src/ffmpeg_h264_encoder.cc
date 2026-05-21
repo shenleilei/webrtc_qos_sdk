@@ -121,6 +121,10 @@ Status FfmpegH264Encoder::SetRates(uint32_t bitrate_bps, uint32_t fps) {
   if (!impl_->context) {
     return Status::Error(StatusCode::kInvalidArgument, "encoder is not open");
   }
+  if (bitrate_bps == 0 || fps == 0) {
+    return Status::Error(StatusCode::kInvalidArgument,
+                         "invalid H264 encoder rate config");
+  }
   FfmpegH264EncoderConfig config = impl_->config;
   config.bitrate_bps = bitrate_bps;
   config.fps = fps;

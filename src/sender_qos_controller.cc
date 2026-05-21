@@ -251,7 +251,7 @@ EncoderAdaptation SenderQosController::GetEncoderAdaptation(
       has_loss_sample_ ? smoothed_loss_fraction_ : rates.loss_fraction;
   const bool severe_capacity = rates.final_target_bps < 90000;
   const bool severe_rtt = rates.rtt_ms >= 800;
-  const bool very_constrained_capacity = rates.final_target_bps < 90000;
+  const bool very_constrained_capacity = rates.final_target_bps < 200000;
   const bool catastrophic_loss = effective_loss >= 0.45;
   const bool constrained_capacity = rates.final_target_bps < 300000;
   const bool high_rtt = rates.rtt_ms >= 400;
@@ -263,7 +263,8 @@ EncoderAdaptation SenderQosController::GetEncoderAdaptation(
   const bool severe_rtt_with_capacity_pressure =
       severe_rtt && rates.final_target_bps < 300000;
 
-  if (severe_capacity || severe_rtt_with_capacity_pressure ||
+  if (severe_capacity || very_constrained_capacity ||
+      severe_rtt_with_capacity_pressure ||
       (very_constrained_capacity && (rates.rtt_ms >= 500 ||
                                      catastrophic_loss))) {
     adaptation.max_fps = 8;
@@ -274,7 +275,11 @@ EncoderAdaptation SenderQosController::GetEncoderAdaptation(
   } else {
     adaptation.max_fps = 30;
   }
-  adaptation.request_keyframe = effective_loss >= 0.15;
+  // Loss-driven IDR can make a very weak link worse: a large keyframe often
+  // consumes the whole pacing budget and misses playout. Under very low caps,
+  // recovery should come from NACK/PLI instead of repeated sender-side IDR.
+  adaptation.request_keyframe =
+      effective_loss >= 0.15 && rates.final_target_bps >= 300000;
   return adaptation;
 }
 

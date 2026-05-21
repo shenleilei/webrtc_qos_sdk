@@ -639,6 +639,16 @@ if webrtc_rows:
                         f"{case_label}: webrtc/adaptive decode_errors="
                         f"{adaptive.get('decode_errors', 0)}"
                     )
+                if adaptive.get("freeze_count", 0) > 3:
+                    validation_failures.append(
+                        f"{case_label}: freeze_count="
+                        f"{adaptive.get('freeze_count', 0)} exceeds 3"
+                    )
+                if adaptive.get("max_freeze_ms", 0) > 2000:
+                    validation_failures.append(
+                        f"{case_label}: max_freeze_ms="
+                        f"{adaptive.get('max_freeze_ms', 0)} exceeds 2000"
+                    )
                 if adaptive.get("render_deadline_drops", 0) != 0:
                     rendered = adaptive.get("receiver_frames", 0)
                     late = adaptive.get("render_deadline_drops", 0)

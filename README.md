@@ -203,7 +203,7 @@ Production transport code should implement the `TransportPort` send/deliver call
 - RTCP SR/RR/TWCC/NACK/PLI: unreliable control.
 - `DOWNLINK_QUALITY_V1` / `SENDER_RATE_CAP_V1` / `BYE`: reliable control.
 
-`dynamic_qos_demo` runs multiple dynamic weak-network transitions, not a single happy-path case. It covers walking into an outage and recovering, bandwidth cliff below 100kbps, RTT/jitter spike, oscillating edge coverage, and burst loss recovery. It verifies that SDK encoder adaptation decisions reduce bitrate/FPS under impairment, request keyframes for severe loss recovery, avoid RTT-only keyframe storms, and restore bitrate/FPS after the network becomes good again.
+`dynamic_qos_demo` runs multiple dynamic weak-network transitions, not a single happy-path case. It covers walking into an outage and recovering, bandwidth cliff below 100kbps, RTT/jitter spike, oscillating edge coverage, and burst loss recovery. It verifies that SDK encoder adaptation decisions reduce bitrate/FPS under impairment, suppress sender-side loss-driven IDR when the sender cap is too low to carry a useful keyframe, avoid RTT-only keyframe storms, and restore bitrate/FPS after the network becomes good again.
 
 Dynamic QoS/QoE adaptation matrix:
 
@@ -222,21 +222,21 @@ Latest local dynamic QoS result:
 | Scenario | Phase | Network | Expected encoder bps | Actual encoder bps | Expected FPS | Actual FPS | Expected keyframe | Actual keyframe | Result |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
 | walk_outage_recover | good | 10000kbps / 20ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| walk_outage_recover | outage | 80kbps / 1000ms / loss 0.45 | 80000-200000 | 156250 | 8-8 | 8 | true | true | PASS |
-| walk_outage_recover | poor | 120kbps / 650ms / loss 0.25 | 80000-150000 | 80000 | 8-8 | 8 | true | true | PASS |
+| walk_outage_recover | outage | 80kbps / 1000ms / loss 0.45 | 80000-200000 | 156250 | 8-8 | 8 | false | false | PASS |
+| walk_outage_recover | poor | 120kbps / 650ms / loss 0.25 | 80000-150000 | 80000 | 8-8 | 8 | false | false | PASS |
 | walk_outage_recover | recovering | 1200kbps / 180ms / loss 0.03 | 800000-1200000 | 931187 | 15-30 | 15 | false | false | PASS |
 | walk_outage_recover | good_again | 10000kbps / 40ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| bandwidth_cliff_recover | bandwidth_cliff | 90kbps / 80ms / loss 0.02 | 80000-150000 | 118549 | 10-10 | 10 | false | false | PASS |
+| bandwidth_cliff_recover | bandwidth_cliff | 90kbps / 80ms / loss 0.02 | 80000-150000 | 118549 | 8-8 | 8 | false | false | PASS |
 | bandwidth_cliff_recover | recovered | 8000kbps / 30ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
 | rtt_jitter_spike_recover | rtt_spike | 700kbps / 900ms / loss 0.08 | 1000000-1500000 | 1305015 | 10-10 | 10 | false | false | PASS |
 | rtt_jitter_spike_recover | recovered | 5000kbps / 45ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
 | oscillating_edge | poor_1 | 180kbps / 550ms / loss 0.18 | 700000-950000 | 857500 | 10-10 | 10 | false | false | PASS |
 | oscillating_edge | poor_2 | 130kbps / 700ms / loss 0.22 | 700000-950000 | 857500 | 10-10 | 10 | true | true | PASS |
 | oscillating_edge | good_3 | 5000kbps / 35ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| loss_burst_recover | loss_burst | 500kbps / 220ms / loss 0.60 | 120000-200000 | 156250 | 10-10 | 10 | true | true | PASS |
+| loss_burst_recover | loss_burst | 500kbps / 220ms / loss 0.60 | 120000-200000 | 156250 | 8-8 | 8 | false | false | PASS |
 | loss_burst_recover | recovered | 6000kbps / 35ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
 
-The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `encoder_bps` range `80000..2500000`, FPS range `8..30`, keyframe requests `4`, threshold failures `0`.
+The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `encoder_bps` range `80000..2500000`, FPS range `8..30`, keyframe requests `1`, threshold failures `0`.
 
 When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
 
@@ -252,6 +252,8 @@ bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_stability.sh
 ```
 
 This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across multiple mobile weak-network transitions:
+
+The long-stream runner is still an in-process SFU-like model, not a standalone production SFU process. It models the C/S server responsibilities needed for this phase: sender-side uplink TWCC generation, RTCP RR RTT input, downlink weak-network capacity/delay/jitter/loss, retransmission cache, NACK/PLI handling, and server-generated sender rate caps. The separate UDP demos prove the libraries can cross process boundaries on local sockets, but the long-stream QoE numbers below are not yet a `sender -> real SFU -> receiver` netem deployment result.
 
 - `walking_dead_zone`: good network, sudden outage below 100kbps with high RTT/loss/jitter, poor edge coverage, then recovery to good network.
 - `jitter_loss_oscillation`: moderate capacity with heavy jitter, periodic loss/reorder, then recovery.
@@ -288,6 +290,7 @@ The matrix now has hard validation rules when the WebRTC backend is available:
 - `webrtc/adaptive` must produce one source-aligned PSNR sample for every receiver frame in every run/content/scenario.
 - `webrtc/adaptive` must keep `psnr_avg >= 20.0 dB` and `psnr_min >= 14.0 dB` in every run/content/scenario.
 - `webrtc/adaptive` must produce one frame-latency and jitter-buffer sample for every receiver frame, with `frame_latency_max_ms <= 1800` and `jitter_buffer_max_ms <= 1200`.
+- `webrtc/adaptive` must keep `freeze_count <= 3` and `max_freeze_ms <= 2000` in every run/content/scenario.
 - `webrtc/adaptive` must keep render deadline misses within `<= 3` frames and `<= 2%` of render candidates per run/content/scenario.
 - `webrtc/adaptive` must meet per-run/per-content/per-scenario weak-network downshift and good-network recovery thresholds for bitrate and FPS.
 - `webrtc/adaptive` must meet per-phase adaptation response-time thresholds after entering outage, poor, and good-again phases.
@@ -365,7 +368,7 @@ This profile intentionally raises the validation bar to 1280x720, start 2.5Mbps,
 | webrtc/bitrate_only | 41478.500 | 51.19 / 17.02 | 195.5 / 1280 | 61.7 / 615 | 0 | 95 | 1 | 0 |
 | webrtc/fixed | 278640.500 | 58.19 / 39.31 | 141.3 / 1650 | 52.5 / 1190 | 0 | 46374 | 1001 | 0 |
 
-This is still not a production-global optimum. The tightest 720p cases are `detail_motion/walking_dead_zone` and `detail_motion/bandwidth_staircase`: they pass, but their max latency is close to the 1800ms threshold and they require 1-2 render deadline drops. The next improvement should be a real runtime encoder rate-control path and additional multi-seed/mobile-trace validation, not just looser thresholds.
+This is still not a production-global optimum. The tightest 720p cases are `detail_motion/walking_dead_zone` and `detail_motion/bandwidth_staircase`: they pass, but their max latency is close to the 1800ms threshold and they can require render deadline drops. The most important fix after this profile was correcting video RTP timestamp generation to follow capture time at 90kHz rather than always incrementing as if the source were fixed 30fps. Without that, FPS downshift during weak-network phases made receiver/jitter timing less faithful and pushed the hardest `detail_motion/bandwidth_staircase` recovery case over the freeze/deadline gates.
 
 720p multi-seed stability profile:
 
@@ -379,15 +382,15 @@ Latest local stability result (`MATRIX_RUNS=3`, 3 content profiles, 5 scenarios,
 
 | Backend/strategy | Cases | Aggregate balanced QoE | PSNR avg/min | Max latency/jitter ms | Decode errors | Drops | Deadline drops | Failed cases | Validation failures |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 45 | 5381.653 | 54.961 / 15.098 | 1800 / 860 | 0 | 214 | 6 | 0 | 0 |
+| webrtc/adaptive | 45 | 3668.548 | 56.140 / 15.673 | 1800 / 895 | 0 | 212 | 3 | 0 | 0 |
 
 Important boundary samples from the stability run:
 
-- `motion/walking_dead_zone` and `detail_motion/walking_dead_zone` can reach the 1800ms latency gate exactly, so the pass has limited latency margin.
-- `detail_motion/bandwidth_staircase` remains the hardest recovery case: one seeded run produced `freeze=1`, `max_freeze_ms=2790`, `render_deadline_drops=2`, while still staying inside the hard latency/jitter/decode validation gates.
-- `detail_motion/jitter_loss_oscillation` can drop to `psnr_min ~= 15.1 dB`, which is above the current hard floor but still visually fragile.
+- The maximum frame latency still reaches the 1800ms gate in one seeded case, so latency margin is not yet generous.
+- `detail_motion/bandwidth_staircase` remains the hardest recovery case after the RTP timestamp fix: worst seeded run is `run=2`, `freeze=1`, `max_freeze_ms=1765`, `render_deadline_drops=3`, `frame_latency_max_ms=1710`, `jitter_buffer_max_ms=895`, and `psnr_avg=42.341`.
+- `detail_motion/rtt_jitter_spike_recover` can drop to `psnr_min ~= 15.67 dB`, which is above the current hard floor but still visually fragile.
 
-The current 720p evidence is therefore stronger than a one-off demo pass: hard validation passes across 45 seeded cases with no decode errors and no validation failures. It still does not prove global optimum. The next proof step is to add real runtime encoder reconfiguration, longer mobile traces, and stricter recovery-margin metrics rather than only checking whether the current thresholds pass.
+The current 720p evidence is therefore stronger than a one-off demo pass: hard validation passes across 45 seeded cases with no decode errors, no duplicate output frames, no validation failures, and only 3 total render deadline drops. It still does not prove global optimum. The next proof step is to move the long-stream QoE runner from the in-process SFU-like model to a real `sender -> SFU/server -> receiver` process topology with UDP/netem or an equivalent link emulator, then add longer mobile traces, real runtime encoder reconfiguration, and stricter recovery-margin metrics rather than only checking whether the current thresholds pass.
 
 UDP weak-network matrix:
 
