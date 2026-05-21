@@ -34,7 +34,13 @@ Phase-2 的核心不是继续扩展功能，而是做一次架构归位：把 We
 - `verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口；`verify_no_selfmade_media_stack.sh`、`verify_webrtc_modules.sh`、`verify_cmake_package.sh`、`verify_webrtc_first_loopback.sh`、`verify_webrtc_first_roles.sh` 是它在 smoke 档串起的主门禁脚本。
 - `verify_webrtc_first_loopback.sh` 已能作为外部 CMake consumer 跑通 H264 Annex-B AU -> WebRTC H264 RTP payload -> WebRTC RTP packet bytes -> WebRTC pacing adapter -> WebRTC video jitter -> Annex-B AU 的基础 media bytes 闭环。
 
-仍未完成的部分：
+当前真正仍未闭合的仅有 3 项：
+
+- 生产级多小时 soak 实际运行和归档：必须在正式验收环境跑出 `SOAK_MINUTES>=120` 的 production soak 证据，不能只用短时 smoke 代替。当前本机只有 `artifacts/webrtc_first_phase2_verify_production_smoke/`，只能证明 runner/archive/verifier 链路可用。
+- 真实 renderer 验收：必须拿到 `real_renderer_status=pass` 的正式结果。当前本机没有 `DISPLAY`，也没有 `Xvfb`，因此 production gate preflight 失败。
+- 正式业务采集素材库：必须提供正式 `capture_library/manifest.csv` 和六类业务素材覆盖，不能继续使用 deterministic fixture 作为完成证据。当前本机默认路径下不存在正式 manifest。
+
+除上述 3 项外，下面这些都属于“已完成并已有 smoke/qoe/runtime 证据的实现或门禁”，不再视为未完成功能项：
 
 - `VideoPushClient`、`VideoPlayClient` 已有 WebRTC-backed 默认实现，可通过 `CreateVideoPushClient()` / `CreateVideoPlayClient()` 创建并跑通基础 H264 RTP bytes 闭环。
 - `ServerQosRouter` 已有 WebRTC-backed 最小默认实现，可通过 `CreateServerQosRouter()` 做 sender RTP relay、packet history 缓存、receiver NACK 本地重传、缺包 NACK/PLI 向 sender 路由和基础 rate cap。
@@ -55,7 +61,7 @@ Phase-2 的核心不是继续扩展功能，而是做一次架构归位：把 We
 - 真实采集内容库 QoE 入口脚本已新增，支持把 `CAPTURE_LIBRARY_DIR` 下的 `.mp4 / .mov / .mkv / .webm / .yuv / .i420` 素材转换/读取为 raw I420，并进入同一套真实 H264 encode/decode、WebRTC-first facade、QoE/renderer proxy 门禁；当前已新增 deterministic fixture 生成器，并通过 Phase-2 聚合门禁跑通 6 类 manifest + baseline QoE smoke：`entries=6`、类别覆盖 `high_motion,indoor_face,low_light_noise,outdoor_walking,scene_cut,screen_text`、QoE `rows=6/6 pass`、`playable_ratio_min=0.833333`、`avg_psnr_y_min=42.6753`、`avg_ssim_y_min=0.998468`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`。正式业务真实采集素材库仍需业务侧提供或录制。
 - 仓库内 WebRTC-first loopback demo 已新增，直接驱动 `VideoPushClient / ServerQosRouter / VideoPlayClient` role facade，不直接 include WebRTC adapter，不使用旧自研 RTP/RTCP/pacer/video jitter，并输出 WebRTC backend、custom bytes transport 和 `peer_connection=false`。
 - 仓库内 WebRTC-first UDP sender/server/receiver demo 已新增，保留 `selftest` 自动门禁，并提供独立 `sender/server/receiver` 三进程手工模式；所有入口都直接驱动 role facade，输出 `backend=webrtc_first_facade transport=udp peer_connection=false`，不引入 PeerConnection，不让 WebRTC 持有 socket。
-- 仍未完成生产级多小时 soak 实际运行归档、真实 renderer 指标和正式业务真实采集素材库。
+- 综上，当前 Phase-2 剩余工作已经收敛为上面的 3 项正式验收闭环，不再是新的核心模块研发。
 - 旧 Phase-1a 自研链路 demo 已删除，不再作为测试入口；当前已有外部 loopback smoke、CMake package runtime smoke、仓库内 role facade loopback demo、UDP role demo、弱网矩阵和 `verify_webrtc_first_phase2.sh` 聚合门禁覆盖 push/play/server facade。
 - QoS 弱网/QoE 矩阵已开始基于 WebRTC-first facade 重建，旧自研链路的弱网脚本已删除；后续需要继续扩展真实采集内容库和生产级长时间 soak。
 - `webrtc_pacing` 已从 WebRTC `IntervalBudget` 子集切到 WebRTC `PacingController` 最小闭包；adapter 不直接发布完整 `modules/pacing`，而是只编 `pacing_controller / bitrate_prober / prioritized_packet_queue` 和必要 `RtpPacketToSend` 依赖。当前已通过 adapter smoke、push facade probe、loopback 和 role facade 门禁，并已补齐基于媒体包模板的 RTP padding 生成、统计和 facade/server/play padding 边界。
@@ -867,6 +873,8 @@ preflight 全部通过后，才会继续执行：
 这说明当前代码和门禁链路已经具备，但这台机器还不具备完成正式 production 验收的外部条件。
 
 当前本机运行这个审计应当失败，因为已有的是 qoe、production 短时 smoke、renderer skipped 和 capture fixture 证据；这能防止把短时 runner 验证误当成生产级完成。
+
+换句话说，当前 completion audit 失败并不表示还有新的架构功能没做，而是准确地等价于前面列出的 3 个正式验收闭环尚未完成：多小时 production soak、真实 renderer、正式业务采集素材库。
 
 当前本机 `VERIFY_LEVEL=qoe` 聚合门禁结果：
 
