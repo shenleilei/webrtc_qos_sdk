@@ -19,7 +19,7 @@ set(CMAKE_IMPORT_FILE_VERSION 1)
 set(_cmake_targets_defined "")
 set(_cmake_targets_not_defined "")
 set(_cmake_expected_targets "")
-foreach(_cmake_expected_target IN ITEMS WebRtcQosSdk::webrtc_qos WebRtcQosSdk::webrtc_qos_core WebRtcQosSdk::webrtc_qos_rtp WebRtcQosSdk::webrtc_qos_rtcp WebRtcQosSdk::webrtc_qos_feedback WebRtcQosSdk::webrtc_qos_transport WebRtcQosSdk::webrtc_qos_nack WebRtcQosSdk::webrtc_qos_pacer WebRtcQosSdk::webrtc_qos_video)
+foreach(_cmake_expected_target IN ITEMS WebRtcQosSdk::webrtc_qos WebRtcQosSdk::webrtc_qos_core WebRtcQosSdk::webrtc_qos_transport WebRtcQosSdk::webrtc_qos_transport_packet_history WebRtcQosSdk::webrtc_qos_facade_video)
   list(APPEND _cmake_expected_targets "${_cmake_expected_target}")
   if(TARGET "${_cmake_expected_target}")
     list(APPEND _cmake_targets_defined "${_cmake_expected_target}")
@@ -69,27 +69,6 @@ set_target_properties(WebRtcQosSdk::webrtc_qos_core PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
 )
 
-# Create imported target WebRtcQosSdk::webrtc_qos_rtp
-add_library(WebRtcQosSdk::webrtc_qos_rtp STATIC IMPORTED)
-
-set_target_properties(WebRtcQosSdk::webrtc_qos_rtp PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
-)
-
-# Create imported target WebRtcQosSdk::webrtc_qos_rtcp
-add_library(WebRtcQosSdk::webrtc_qos_rtcp STATIC IMPORTED)
-
-set_target_properties(WebRtcQosSdk::webrtc_qos_rtcp PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
-)
-
-# Create imported target WebRtcQosSdk::webrtc_qos_feedback
-add_library(WebRtcQosSdk::webrtc_qos_feedback STATIC IMPORTED)
-
-set_target_properties(WebRtcQosSdk::webrtc_qos_feedback PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
-)
-
 # Create imported target WebRtcQosSdk::webrtc_qos_transport
 add_library(WebRtcQosSdk::webrtc_qos_transport STATIC IMPORTED)
 
@@ -97,31 +76,19 @@ set_target_properties(WebRtcQosSdk::webrtc_qos_transport PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
 )
 
-# Create imported target WebRtcQosSdk::webrtc_qos_nack
-add_library(WebRtcQosSdk::webrtc_qos_nack STATIC IMPORTED)
+# Create imported target WebRtcQosSdk::webrtc_qos_transport_packet_history
+add_library(WebRtcQosSdk::webrtc_qos_transport_packet_history STATIC IMPORTED)
 
-set_target_properties(WebRtcQosSdk::webrtc_qos_nack PROPERTIES
+set_target_properties(WebRtcQosSdk::webrtc_qos_transport_packet_history PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
 )
 
-# Create imported target WebRtcQosSdk::webrtc_qos_pacer
-add_library(WebRtcQosSdk::webrtc_qos_pacer STATIC IMPORTED)
+# Create imported target WebRtcQosSdk::webrtc_qos_facade_video
+add_library(WebRtcQosSdk::webrtc_qos_facade_video STATIC IMPORTED)
 
-set_target_properties(WebRtcQosSdk::webrtc_qos_pacer PROPERTIES
+set_target_properties(WebRtcQosSdk::webrtc_qos_facade_video PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
 )
-
-# Create imported target WebRtcQosSdk::webrtc_qos_video
-add_library(WebRtcQosSdk::webrtc_qos_video STATIC IMPORTED)
-
-set_target_properties(WebRtcQosSdk::webrtc_qos_video PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
-  INTERFACE_LINK_LIBRARIES "WebRtcQosSdk::webrtc_qos_core"
-)
-
-if(CMAKE_VERSION VERSION_LESS 2.8.12)
-  message(FATAL_ERROR "This file relies on consumers using CMake 2.8.12 or greater.")
-endif()
 
 # Load information for each installed configuration.
 file(GLOB _cmake_config_files "${CMAKE_CURRENT_LIST_DIR}/WebRtcQosSdkTargets-*.cmake")

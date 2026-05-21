@@ -112,8 +112,32 @@ Status FfmpegH264Decoder::DecodeAnnexB(
                          "avcodec_send_packet failed: " + FfmpegError(ret));
   }
 
+  return ReceiveAvailableFrames(decoded_frames);
+}
+
+Status FfmpegH264Decoder::Flush(
+    std::vector<DecodedVideoFrame>* decoded_frames) {
+  if (!impl_->context || !impl_->frame) {
+    return Status::Error(StatusCode::kInvalidArgument, "decoder is not open");
+  }
+  if (!decoded_frames) {
+    return Status::Error(StatusCode::kInvalidArgument, "null decoded output");
+  }
+  decoded_frames->clear();
+  int ret = avcodec_send_packet(impl_->context, nullptr);
+  if (ret < 0 && ret != AVERROR_EOF) {
+    ++impl_->stats.decode_errors;
+    return Status::Error(StatusCode::kMalformedPacket,
+                         "avcodec_send_packet flush failed: " +
+                             FfmpegError(ret));
+  }
+  return ReceiveAvailableFrames(decoded_frames);
+}
+
+Status FfmpegH264Decoder::ReceiveAvailableFrames(
+    std::vector<DecodedVideoFrame>* decoded_frames) {
   while (true) {
-    ret = avcodec_receive_frame(impl_->context, impl_->frame);
+    int ret = avcodec_receive_frame(impl_->context, impl_->frame);
     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
       break;
     }

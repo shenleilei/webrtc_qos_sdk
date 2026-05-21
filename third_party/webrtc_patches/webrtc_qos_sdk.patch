@@ -1,0 +1,2516 @@
+diff --git a/modules/pacing/BUILD.gn b/modules/pacing/BUILD.gn
+index 083b6ec..27837c5 100644
+--- a/modules/pacing/BUILD.gn
++++ b/modules/pacing/BUILD.gn
+@@ -59,6 +59,40 @@ rtc_library("pacing") {
+   ]
+ }
+ 
++rtc_library("pacing_controller_qos_minimal") {
++  visibility = [ "*" ]
++  sources = [
++    "bitrate_prober.cc",
++    "bitrate_prober.h",
++    "pacing_controller.cc",
++    "pacing_controller.h",
++    "prioritized_packet_queue.cc",
++    "prioritized_packet_queue.h",
++  ]
++
++  deps = [
++    "../../api:field_trials_view",
++    "../../api:rtp_headers",
++    "../../api:rtp_packet_sender",
++    "../../api/transport:network_control",
++    "../../api/units:data_rate",
++    "../../api/units:data_size",
++    "../../api/units:time_delta",
++    "../../api/units:timestamp",
++    "../../modules/rtp_rtcp:rtp_packet_to_send_qos_minimal",
++    "../../rtc_base:checks",
++    "../../rtc_base:logging",
++    "../../rtc_base:rtc_numerics",
++    "../../rtc_base:safe_conversions",
++    "../../rtc_base/experiments:field_trial_parser",
++    "../../system_wrappers",
++    "//third_party/abseil-cpp/absl/base:core_headers",
++    "//third_party/abseil-cpp/absl/cleanup",
++    "//third_party/abseil-cpp/absl/container:inlined_vector",
++    "//third_party/abseil-cpp/absl/strings:string_view",
++  ]
++}
++
+ rtc_library("interval_budget") {
+   sources = [
+     "interval_budget.cc",
+diff --git a/modules/rtp_rtcp/BUILD.gn b/modules/rtp_rtcp/BUILD.gn
+index 6ae7fc5..3d7535a 100644
+--- a/modules/rtp_rtcp/BUILD.gn
++++ b/modules/rtp_rtcp/BUILD.gn
+@@ -147,6 +147,111 @@ rtc_library("rtp_rtcp_format") {
+   ]
+ }
+ 
++rtc_library("rtcp_packet_qos_minimal") {
++  visibility = [ "*" ]
++  sources = [
++    "source/byte_io.h",
++    "source/rtcp_packet.cc",
++    "source/rtcp_packet.h",
++    "source/rtcp_packet/common_header.cc",
++    "source/rtcp_packet/common_header.h",
++    "source/rtcp_packet/nack.cc",
++    "source/rtcp_packet/nack.h",
++    "source/rtcp_packet/pli.cc",
++    "source/rtcp_packet/pli.h",
++    "source/rtcp_packet/psfb.cc",
++    "source/rtcp_packet/psfb.h",
++    "source/rtcp_packet/receiver_report.cc",
++    "source/rtcp_packet/receiver_report.h",
++    "source/rtcp_packet/report_block.cc",
++    "source/rtcp_packet/report_block.h",
++    "source/rtcp_packet/rtpfb.cc",
++    "source/rtcp_packet/rtpfb.h",
++    "source/rtcp_packet/sender_report.cc",
++    "source/rtcp_packet/sender_report.h",
++    "source/rtcp_packet/transport_feedback.cc",
++    "source/rtcp_packet/transport_feedback.h",
++  ]
++  deps = [
++    "..:module_api_public",
++    "../../api:function_view",
++    "../../api/units:time_delta",
++    "../../api/units:timestamp",
++    "../../rtc_base:buffer",
++    "../../rtc_base:checks",
++    "../../rtc_base:logging",
++    "../../system_wrappers",
++    "//third_party/abseil-cpp/absl/algorithm:container",
++  ]
++}
++
++rtc_library("rtp_packet_qos_minimal") {
++  visibility = [ "*" ]
++  sources = [
++    "include/rtp_header_extension_map.h",
++    "include/rtp_rtcp_defines.h",
++    "source/byte_io.h",
++    "source/rtp_header_extension_map.cc",
++    "source/rtp_header_extensions.cc",
++    "source/rtp_header_extensions.h",
++    "source/rtp_packet.cc",
++    "source/rtp_packet.h",
++  ]
++  deps = [
++    "..:module_api_public",
++    "../../api:rtp_headers",
++    "../../api:rtp_parameters",
++    "../../api/units:time_delta",
++    "../../api/units:timestamp",
++    "../../api/video:video_rtp_headers",
++    "../../rtc_base:checks",
++    "../../rtc_base:copy_on_write_buffer",
++    "../../rtc_base:logging",
++    "../../rtc_base:safe_conversions",
++    "../../rtc_base:stringutils",
++    "../../system_wrappers",
++    "//third_party/abseil-cpp/absl/strings:string_view",
++  ]
++}
++
++rtc_library("rtp_packet_to_send_qos_minimal") {
++  visibility = [ "*" ]
++  sources = [
++    "include/rtp_header_extension_map.h",
++    "include/rtp_rtcp_defines.h",
++    "source/byte_io.h",
++    "source/rtp_header_extension_map.cc",
++    "source/rtp_header_extensions.cc",
++    "source/rtp_header_extensions.h",
++    "source/rtp_packet.cc",
++    "source/rtp_packet.h",
++    "source/rtp_packet_to_send.cc",
++    "source/rtp_packet_to_send.h",
++  ]
++  deps = [
++    "..:module_api_public",
++    "../../api:refcountedbase",
++    "../../api:rtp_headers",
++    "../../api:rtp_parameters",
++    "../../api:scoped_refptr",
++    "../../api/transport:ecn_marking",
++    "../../api/transport/rtp:corruption_detection_message",
++    "../../api/transport/rtp:dependency_descriptor",
++    "../../api/units:time_delta",
++    "../../api/units:timestamp",
++    "../../api/video:video_rtp_headers",
++    "../../rtc_base:checks",
++    "../../rtc_base:copy_on_write_buffer",
++    "../../rtc_base:logging",
++    "../../rtc_base:rtc_numerics",
++    "../../rtc_base:safe_conversions",
++    "../../rtc_base:stringutils",
++    "../../system_wrappers",
++    "//third_party/abseil-cpp/absl/base:core_headers",
++    "//third_party/abseil-cpp/absl/strings:string_view",
++  ]
++}
++
+ rtc_library("rtp_rtcp") {
+   visibility = [ "*" ]
+   sources = [
+@@ -406,6 +511,37 @@ rtc_library("h264_jitter_minimal") {
+   ]
+ }
+ 
++rtc_library("h264_rtp_qos_minimal") {
++  visibility = [ "*" ]
++  sources = [
++    "source/rtp_format.h",
++    "source/rtp_format_h264.cc",
++    "source/rtp_format_h264.h",
++    "source/rtp_format_h264_qos_minimal.cc",
++    "source/rtp_packet_to_send.cc",
++    "source/rtp_packet_to_send.h",
++    "source/video_rtp_depacketizer_qos_minimal.cc",
++    "source/video_rtp_depacketizer.h",
++    "source/video_rtp_depacketizer_h264.cc",
++    "source/video_rtp_depacketizer_h264.h",
++  ]
++  deps = [
++    ":rtp_packet_minimal",
++    ":rtp_video_header_qos_minimal",
++    "../../api/video:video_frame_type",
++    "../../api/video:video_rtp_headers",
++    "../../common_video:h264_only",
++    "../../rtc_base:buffer",
++    "../../rtc_base:byte_buffer",
++    "../../rtc_base:checks",
++    "../../rtc_base:copy_on_write_buffer",
++    "../../rtc_base:logging",
++    "../../system_wrappers",
++    "../video_coding:codec_globals_headers",
++    "//third_party/abseil-cpp/absl/algorithm:container",
++  ]
++}
++
+ rtc_library("ntp_time_util") {
+   visibility = [ "*" ]
+   sources = [
+diff --git a/modules/rtp_rtcp/source/rtp_format_h264_qos_minimal.cc b/modules/rtp_rtcp/source/rtp_format_h264_qos_minimal.cc
+new file mode 100644
+index 0000000..65ba42c
+--- /dev/null
++++ b/modules/rtp_rtcp/source/rtp_format_h264_qos_minimal.cc
+@@ -0,0 +1,72 @@
++#include "modules/rtp_rtcp/source/rtp_format.h"
++
++#include <vector>
++
++#include "rtc_base/checks.h"
++
++namespace webrtc {
++
++std::vector<int> RtpPacketizer::SplitAboutEqually(
++    int payload_len,
++    const PayloadSizeLimits& limits) {
++  RTC_DCHECK_GT(payload_len, 0);
++  RTC_DCHECK_GE(limits.first_packet_reduction_len, 0);
++  RTC_DCHECK_GE(limits.last_packet_reduction_len, 0);
++
++  std::vector<int> result;
++  if (limits.max_payload_len >=
++      limits.single_packet_reduction_len + payload_len) {
++    result.push_back(payload_len);
++    return result;
++  }
++  if (limits.max_payload_len - limits.first_packet_reduction_len < 1 ||
++      limits.max_payload_len - limits.last_packet_reduction_len < 1) {
++    return result;
++  }
++
++  int total_bytes = payload_len + limits.first_packet_reduction_len +
++                    limits.last_packet_reduction_len;
++  int num_packets_left =
++      (total_bytes + limits.max_payload_len - 1) / limits.max_payload_len;
++  if (num_packets_left == 1) {
++    num_packets_left = 2;
++  }
++  if (payload_len < num_packets_left) {
++    return result;
++  }
++
++  int bytes_per_packet = total_bytes / num_packets_left;
++  int num_larger_packets = total_bytes % num_packets_left;
++  int remaining_data = payload_len;
++
++  result.reserve(num_packets_left);
++  bool first_packet = true;
++  while (remaining_data > 0) {
++    if (num_packets_left == num_larger_packets) {
++      ++bytes_per_packet;
++    }
++    int current_packet_bytes = bytes_per_packet;
++    if (first_packet) {
++      if (current_packet_bytes > limits.first_packet_reduction_len + 1) {
++        current_packet_bytes -= limits.first_packet_reduction_len;
++      } else {
++        current_packet_bytes = 1;
++      }
++    }
++    if (current_packet_bytes > remaining_data) {
++      current_packet_bytes = remaining_data;
++    }
++    if (num_packets_left == 2 && current_packet_bytes == remaining_data) {
++      --current_packet_bytes;
++    }
++    result.push_back(current_packet_bytes);
++
++    remaining_data -= current_packet_bytes;
++    --num_packets_left;
++    first_packet = false;
++  }
++
++  return result;
++}
++
++}  // namespace webrtc
+diff --git a/modules/rtp_rtcp/source/video_rtp_depacketizer_qos_minimal.cc b/modules/rtp_rtcp/source/video_rtp_depacketizer_qos_minimal.cc
+new file mode 100644
+index 0000000..91709d7
+--- /dev/null
++++ b/modules/rtp_rtcp/source/video_rtp_depacketizer_qos_minimal.cc
+@@ -0,0 +1,16 @@
++#include "modules/rtp_rtcp/source/video_rtp_depacketizer.h"
++
++#include <cstdint>
++#include <span>
++
++#include "api/scoped_refptr.h"
++#include "api/video/encoded_image.h"
++
++namespace webrtc {
++
++scoped_refptr<EncodedImageBuffer> VideoRtpDepacketizer::AssembleFrame(
++    std::span<const std::span<const uint8_t>>) {
++  return nullptr;
++}
++
++}  // namespace webrtc
+diff --git a/sdk_qos/BUILD.gn b/sdk_qos/BUILD.gn
+index d1bf9d8..b9e0074 100644
+--- a/sdk_qos/BUILD.gn
++++ b/sdk_qos/BUILD.gn
+@@ -85,3 +85,190 @@ rtc_executable("webrtc_qos_video_jitter_smoke") {
+   sources = [ "video_jitter_smoke.cc" ]
+   deps = [ ":webrtc_qos_video_jitter_adapter_complete" ]
+ }
++
++rtc_library("webrtc_qos_rtcp_adapter") {
++  visibility = [ "*" ]
++  sources = [
++    "rtcp_adapter.cc",
++    "rtcp_adapter.h",
++  ]
++  deps = [
++    "../api/units:time_delta",
++    "../api/units:timestamp",
++    "../modules/rtp_rtcp:rtcp_packet_qos_minimal",
++    "../rtc_base:buffer",
++    "../system_wrappers",
++  ]
++}
++
++rtc_static_library("webrtc_qos_rtcp_adapter_complete") {
++  visibility = [ "*" ]
++  complete_static_lib = true
++  suppressed_configs = [ "//build/config/compiler:thin_archive" ]
++  sources = [
++    "rtcp_adapter.cc",
++    "rtcp_adapter.h",
++  ]
++  deps = [
++    "../api/units:time_delta",
++    "../api/units:timestamp",
++    "../modules/rtp_rtcp:rtcp_packet_qos_minimal",
++    "../rtc_base:buffer",
++    "../system_wrappers",
++  ]
++}
++
++rtc_executable("webrtc_qos_rtcp_adapter_smoke") {
++  sources = [ "rtcp_adapter_smoke.cc" ]
++  deps = [ ":webrtc_qos_rtcp_adapter_complete" ]
++}
++
++rtc_library("webrtc_qos_rtp_packet_adapter") {
++  visibility = [ "*" ]
++  sources = [
++    "rtp_packet_adapter.cc",
++    "rtp_packet_adapter.h",
++  ]
++  deps = [
++    "../modules/rtp_rtcp:rtp_packet_qos_minimal",
++  ]
++}
++
++rtc_static_library("webrtc_qos_rtp_packet_adapter_complete") {
++  visibility = [ "*" ]
++  complete_static_lib = true
++  suppressed_configs = [ "//build/config/compiler:thin_archive" ]
++  sources = [
++    "rtp_packet_adapter.cc",
++    "rtp_packet_adapter.h",
++  ]
++  deps = [
++    "../modules/rtp_rtcp:rtp_packet_qos_minimal",
++  ]
++}
++
++rtc_executable("webrtc_qos_rtp_packet_adapter_smoke") {
++  sources = [ "rtp_packet_adapter_smoke.cc" ]
++  deps = [ ":webrtc_qos_rtp_packet_adapter_complete" ]
++}
++
++rtc_library("webrtc_qos_pacing_adapter") {
++  visibility = [ "*" ]
++  sources = [
++    "pacing_adapter.cc",
++    "pacing_adapter.h",
++  ]
++  deps = [
++    "../api:field_trials_view",
++    "../api/transport:network_control",
++    "../api/units:data_rate",
++    "../api/units:data_size",
++    "../api/units:time_delta",
++    "../api/units:timestamp",
++    "../modules/pacing:pacing_controller_qos_minimal",
++    "../modules/rtp_rtcp:rtp_packet_to_send_qos_minimal",
++    "../system_wrappers",
++  ]
++}
++
++rtc_static_library("webrtc_qos_pacing_adapter_complete") {
++  visibility = [ "*" ]
++  complete_static_lib = true
++  suppressed_configs = [ "//build/config/compiler:thin_archive" ]
++  sources = [
++    "pacing_adapter.cc",
++    "pacing_adapter.h",
++  ]
++  deps = [
++    "../api:field_trials_view",
++    "../api/transport:network_control",
++    "../api/units:data_rate",
++    "../api/units:data_size",
++    "../api/units:time_delta",
++    "../api/units:timestamp",
++    "../modules/pacing:pacing_controller_qos_minimal",
++    "../modules/rtp_rtcp:rtp_packet_to_send_qos_minimal",
++    "../system_wrappers",
++  ]
++}
++
++rtc_executable("webrtc_qos_pacing_adapter_smoke") {
++  sources = [ "pacing_adapter_smoke.cc" ]
++  deps = [ ":webrtc_qos_pacing_adapter_complete" ]
++}
++
++rtc_library("webrtc_qos_nack_requester_adapter") {
++  visibility = [ "*" ]
++  sources = [
++    "nack_requester_adapter.cc",
++    "nack_requester_adapter.h",
++  ]
++  deps = [
++    "../api:field_trials_view",
++    "../api/task_queue",
++    "../api/units:time_delta",
++    "../modules:module_api",
++    "../modules/video_coding:nack_requester",
++    "../system_wrappers",
++    "//third_party/abseil-cpp/absl/functional:any_invocable",
++  ]
++}
++
++rtc_static_library("webrtc_qos_nack_requester_adapter_complete") {
++  visibility = [ "*" ]
++  complete_static_lib = true
++  suppressed_configs = [ "//build/config/compiler:thin_archive" ]
++  sources = [
++    "nack_requester_adapter.cc",
++    "nack_requester_adapter.h",
++  ]
++  deps = [
++    "../api:field_trials_view",
++    "../api/task_queue",
++    "../api/units:time_delta",
++    "../modules:module_api",
++    "../modules/video_coding:nack_requester",
++    "../system_wrappers",
++    "//third_party/abseil-cpp/absl/functional:any_invocable",
++  ]
++}
++
++rtc_executable("webrtc_qos_nack_requester_adapter_smoke") {
++  sources = [ "nack_requester_adapter_smoke.cc" ]
++  deps = [ ":webrtc_qos_nack_requester_adapter_complete" ]
++}
++
++rtc_library("webrtc_qos_h264_rtp_adapter") {
++  visibility = [ "*" ]
++  sources = [
++    "h264_rtp_adapter.cc",
++    "h264_rtp_adapter.h",
++  ]
++  deps = [
++    "../common_video:h264_only",
++    "../modules/rtp_rtcp:h264_rtp_qos_minimal",
++    "../modules/video_coding:codec_globals_headers",
++    "../rtc_base:copy_on_write_buffer",
++  ]
++}
++
++rtc_static_library("webrtc_qos_h264_rtp_adapter_complete") {
++  visibility = [ "*" ]
++  complete_static_lib = true
++  suppressed_configs = [ "//build/config/compiler:thin_archive" ]
++  sources = [
++    "h264_rtp_adapter.cc",
++    "h264_rtp_adapter.h",
++  ]
++  deps = [
++    "../common_video:h264_only",
++    "../modules/rtp_rtcp:h264_rtp_qos_minimal",
++    "../modules/video_coding:codec_globals_headers",
++    "../rtc_base:copy_on_write_buffer",
++  ]
++}
++
++rtc_executable("webrtc_qos_h264_rtp_adapter_smoke") {
++  sources = [ "h264_rtp_adapter_smoke.cc" ]
++  deps = [ ":webrtc_qos_h264_rtp_adapter_complete" ]
++}
+diff --git a/sdk_qos/h264_rtp_adapter.cc b/sdk_qos/h264_rtp_adapter.cc
+new file mode 100644
+index 0000000..5fb3049
+--- /dev/null
++++ b/sdk_qos/h264_rtp_adapter.cc
+@@ -0,0 +1,131 @@
++#include "sdk_qos/h264_rtp_adapter.h"
++
++#include <cstddef>
++#include <cstdint>
++#include <span>
++#include <utility>
++#include <variant>
++#include <vector>
++
++#include "common_video/h264/h264_common.h"
++#include "modules/rtp_rtcp/source/rtp_format.h"
++#include "modules/rtp_rtcp/source/rtp_format_h264.h"
++#include "modules/rtp_rtcp/source/rtp_packet_to_send.h"
++#include "modules/rtp_rtcp/source/video_rtp_depacketizer_h264.h"
++#include "modules/video_coding/codecs/h264/include/h264_globals.h"
++#include "rtc_base/copy_on_write_buffer.h"
++
++namespace webrtc_qos {
++namespace {
++
++bool IsKeyframeNalu(std::span<const uint8_t> nalu) {
++  return !nalu.empty() &&
++         (nalu[0] & webrtc::kH264TypeMask) == webrtc::H264::NaluType::kIdr;
++}
++
++void AppendAnnexBNalu(std::span<const uint8_t> nalu,
++                      std::vector<uint8_t>* out) {
++  out->push_back(0x00);
++  out->push_back(0x00);
++  out->push_back(0x00);
++  out->push_back(0x01);
++  out->insert(out->end(), nalu.begin(), nalu.end());
++}
++
++}  // namespace
++
++bool PacketizeH264AnnexB(const uint8_t* annexb_access_unit,
++                         size_t annexb_access_unit_size,
++                         const H264RtpPacketizerConfig& config,
++                         std::vector<H264RtpPayload>* out) {
++  if (!annexb_access_unit || !out || annexb_access_unit_size == 0 ||
++      config.max_payload_size < 3) {
++    return false;
++  }
++
++  out->clear();
++  const std::span<const uint8_t> au(annexb_access_unit,
++                                   annexb_access_unit_size);
++  const std::vector<webrtc::H264::NaluIndex> nalu_indices =
++      webrtc::H264::FindNaluIndices(au);
++  if (nalu_indices.empty()) {
++    return false;
++  }
++
++  bool keyframe = false;
++  std::vector<std::span<const uint8_t>> nalus;
++  nalus.reserve(nalu_indices.size());
++  for (const webrtc::H264::NaluIndex& index : nalu_indices) {
++    if (index.payload_size == 0) {
++      return false;
++    }
++    std::span<const uint8_t> nalu =
++        au.subspan(index.payload_start_offset, index.payload_size);
++    nalus.push_back(nalu);
++    keyframe = keyframe || IsKeyframeNalu(nalu);
++  }
++
++  webrtc::RtpPacketizer::PayloadSizeLimits limits;
++  limits.max_payload_len = static_cast<int>(config.max_payload_size);
++  for (size_t i = 0; i < nalus.size(); ++i) {
++    std::vector<uint8_t> single_nalu_annexb;
++    AppendAnnexBNalu(nalus[i], &single_nalu_annexb);
++
++    webrtc::RtpPacketizerH264 packetizer(
++        single_nalu_annexb, limits,
++        webrtc::H264PacketizationMode::NonInterleaved);
++
++    while (packetizer.NumPackets() > 0) {
++      webrtc::RtpPacketToSend packet(nullptr, config.max_payload_size + 64);
++      if (!packetizer.NextPacket(&packet)) {
++        return false;
++      }
++      H264RtpPayload payload;
++      payload.marker = false;
++      payload.first_packet_in_frame = out->empty();
++      payload.keyframe = keyframe;
++      std::span<const uint8_t> packet_payload = packet.payload();
++      payload.payload.assign(packet_payload.begin(), packet_payload.end());
++      out->push_back(std::move(payload));
++    }
++  }
++
++  if (out->empty()) {
++    return false;
++  }
++  out->back().marker = true;
++  return true;
++}
++
++bool DepacketizeH264Payload(const uint8_t* rtp_payload,
++                            size_t rtp_payload_size,
++                            H264DepacketizedPayload* out) {
++  if (!rtp_payload || rtp_payload_size == 0 || !out) {
++    return false;
++  }
++
++  webrtc::VideoRtpDepacketizerH264 depacketizer;
++  webrtc::CopyOnWriteBuffer payload(rtp_payload, rtp_payload_size);
++  auto parsed = depacketizer.Parse(std::move(payload));
++  if (!parsed.has_value()) {
++    return false;
++  }
++
++  *out = H264DepacketizedPayload{};
++  out->first_packet_in_frame =
++      parsed->video_header.is_first_packet_in_frame;
++  out->keyframe =
++      parsed->video_header.frame_type == webrtc::VideoFrameType::kVideoFrameKey;
++  if (std::holds_alternative<webrtc::RTPVideoHeaderH264>(
++          parsed->video_header.video_type_header)) {
++    const auto& h264 = std::get<webrtc::RTPVideoHeaderH264>(
++        parsed->video_header.video_type_header);
++    out->nalu_type = h264.nalu_type;
++  }
++  out->valid = true;
++  std::span<const uint8_t> video_payload(parsed->video_payload);
++  out->video_payload.assign(video_payload.begin(), video_payload.end());
++  return true;
++}
++
++}  // namespace webrtc_qos
+diff --git a/sdk_qos/h264_rtp_adapter.h b/sdk_qos/h264_rtp_adapter.h
+new file mode 100644
+index 0000000..8aad25a
+--- /dev/null
++++ b/sdk_qos/h264_rtp_adapter.h
+@@ -0,0 +1,40 @@
++#ifndef SDK_QOS_H264_RTP_ADAPTER_H_
++#define SDK_QOS_H264_RTP_ADAPTER_H_
++
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++namespace webrtc_qos {
++
++struct H264RtpPacketizerConfig {
++  size_t max_payload_size = 1200;
++};
++
++struct H264RtpPayload {
++  bool marker = false;
++  bool first_packet_in_frame = false;
++  bool keyframe = false;
++  std::vector<uint8_t> payload;
++};
++
++struct H264DepacketizedPayload {
++  bool first_packet_in_frame = false;
++  bool keyframe = false;
++  bool valid = false;
++  uint8_t nalu_type = 0;
++  std::vector<uint8_t> video_payload;
++};
++
++bool PacketizeH264AnnexB(const uint8_t* annexb_access_unit,
++                         size_t annexb_access_unit_size,
++                         const H264RtpPacketizerConfig& config,
++                         std::vector<H264RtpPayload>* out);
++
++bool DepacketizeH264Payload(const uint8_t* rtp_payload,
++                            size_t rtp_payload_size,
++                            H264DepacketizedPayload* out);
++
++}  // namespace webrtc_qos
++
++#endif  // SDK_QOS_H264_RTP_ADAPTER_H_
+diff --git a/sdk_qos/h264_rtp_adapter_smoke.cc b/sdk_qos/h264_rtp_adapter_smoke.cc
+new file mode 100644
+index 0000000..ee2f082
+--- /dev/null
++++ b/sdk_qos/h264_rtp_adapter_smoke.cc
+@@ -0,0 +1,80 @@
++#include <cstdint>
++#include <iostream>
++#include <vector>
++
++#include "sdk_qos/h264_rtp_adapter.h"
++
++namespace {
++
++bool Check(bool condition, const char* message) {
++  if (!condition) {
++    std::cerr << "FAIL: " << message << "\n";
++    return false;
++  }
++  return true;
++}
++
++std::vector<uint8_t> MakeAnnexBIdr(size_t payload_bytes) {
++  std::vector<uint8_t> au = {0x00, 0x00, 0x00, 0x01, 0x65};
++  for (size_t i = 0; i < payload_bytes; ++i) {
++    au.push_back(static_cast<uint8_t>(0x80 + (i % 31)));
++  }
++  return au;
++}
++
++}  // namespace
++
++int main() {
++  bool ok = true;
++
++  std::vector<webrtc_qos::H264RtpPayload> payloads;
++  std::vector<uint8_t> small_idr = MakeAnnexBIdr(16);
++  ok &= Check(webrtc_qos::PacketizeH264AnnexB(
++                  small_idr.data(), small_idr.size(), {1200}, &payloads),
++              "packetize small idr");
++  ok &= Check(payloads.size() == 1, "small idr uses one payload");
++  ok &= Check(payloads[0].marker, "single payload marker");
++  ok &= Check(payloads[0].first_packet_in_frame, "single payload first");
++  ok &= Check(payloads[0].keyframe, "single payload keyframe");
++  ok &= Check(!payloads[0].payload.empty() && payloads[0].payload[0] == 0x65,
++              "single nalu payload");
++
++  webrtc_qos::H264DepacketizedPayload depacketized;
++  ok &= Check(webrtc_qos::DepacketizeH264Payload(
++                  payloads[0].payload.data(), payloads[0].payload.size(),
++                  &depacketized),
++              "depacketize single nalu");
++  ok &= Check(depacketized.valid, "single nalu valid");
++  ok &= Check(depacketized.keyframe, "single nalu keyframe");
++  ok &= Check(depacketized.nalu_type == 5, "single nalu type idr");
++
++  std::vector<uint8_t> large_idr = MakeAnnexBIdr(180);
++  ok &= Check(webrtc_qos::PacketizeH264AnnexB(
++                  large_idr.data(), large_idr.size(), {50}, &payloads),
++              "packetize large idr");
++  ok &= Check(payloads.size() > 1, "large idr uses FU-A payloads");
++  ok &= Check(payloads.front().first_packet_in_frame, "fua first packet");
++  ok &= Check(!payloads.front().marker, "fua first marker false");
++  ok &= Check(payloads.back().marker, "fua last marker true");
++  ok &= Check(payloads.front().payload.size() >= 2 &&
++                  (payloads.front().payload[0] & 0x1f) == 28 &&
++                  (payloads.front().payload[1] & 0x80) != 0,
++              "fua start bit");
++  ok &= Check(payloads.back().payload.size() >= 2 &&
++                  (payloads.back().payload[1] & 0x40) != 0,
++              "fua end bit");
++
++  ok &= Check(webrtc_qos::DepacketizeH264Payload(
++                  payloads.front().payload.data(),
++                  payloads.front().payload.size(), &depacketized),
++              "depacketize fua start");
++  ok &= Check(depacketized.keyframe, "fua keyframe");
++  ok &= Check(depacketized.nalu_type == 5, "fua original nalu type idr");
++
++  if (!ok) {
++    return 1;
++  }
++  std::cout << "h264_rtp_adapter_smoke passed payloads=" << payloads.size()
++            << "\n";
++  return 0;
++}
+diff --git a/sdk_qos/nack_requester_adapter.cc b/sdk_qos/nack_requester_adapter.cc
+new file mode 100644
+index 0000000..17a7790
+--- /dev/null
++++ b/sdk_qos/nack_requester_adapter.cc
+@@ -0,0 +1,166 @@
++#include "sdk_qos/nack_requester_adapter.h"
++
++#include <cstdint>
++#include <memory>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "absl/functional/any_invocable.h"
++#include "api/field_trials_view.h"
++#include "api/location.h"
++#include "api/task_queue/task_queue_base.h"
++#include "api/units/time_delta.h"
++#include "modules/include/module_common_types.h"
++#include "modules/video_coding/nack_requester.h"
++#include "system_wrappers/include/clock.h"
++
++namespace webrtc_qos {
++namespace {
++
++class EmptyFieldTrials final : public webrtc::FieldTrialsView {
++ public:
++  std::string Lookup(absl::string_view) const override { return ""; }
++};
++
++class InlineTaskQueue final : public webrtc::TaskQueueBase {
++ public:
++  class ScopedCurrent {
++   public:
++    explicit ScopedCurrent(InlineTaskQueue* queue) : current_(queue) {}
++
++    ScopedCurrent(const ScopedCurrent&) = delete;
++    ScopedCurrent& operator=(const ScopedCurrent&) = delete;
++
++   private:
++    CurrentTaskQueueSetter current_;
++  };
++
++  void Delete() override {}
++
++ private:
++  void PostTaskImpl(absl::AnyInvocable<void() &&> task,
++                    const PostTaskTraits&,
++                    const webrtc::Location&) override {
++    ScopedCurrent current(this);
++    std::move(task)();
++  }
++
++  void PostDelayedTaskImpl(absl::AnyInvocable<void() &&>,
++                           webrtc::TimeDelta,
++                           const PostDelayedTaskTraits&,
++                           const webrtc::Location&) override {
++    // The SDK facade drives ProcessNacks() explicitly. Periodic delayed tasks
++    // are intentionally not scheduled here to keep this adapter single-threaded
++    // and transport-owned.
++  }
++};
++
++class EventSink final : public webrtc::NackSender,
++                        public webrtc::KeyFrameRequestSender {
++ public:
++  void SendNack(const std::vector<uint16_t>& sequence_numbers,
++                bool buffering_allowed) override {
++    NackRequesterAdapterEvent event;
++    event.type = NackRequesterAdapterEventType::kNack;
++    event.buffering_allowed = buffering_allowed;
++    event.rtp_sequence_numbers = sequence_numbers;
++    events_.push_back(std::move(event));
++  }
++
++  void RequestKeyFrame() override {
++    NackRequesterAdapterEvent event;
++    event.type = NackRequesterAdapterEventType::kKeyFrameRequest;
++    events_.push_back(std::move(event));
++  }
++
++  std::vector<NackRequesterAdapterEvent> DrainEvents() {
++    std::vector<NackRequesterAdapterEvent> out;
++    out.swap(events_);
++    return out;
++  }
++
++ private:
++  std::vector<NackRequesterAdapterEvent> events_;
++};
++
++}  // namespace
++
++class NackRequesterAdapter::Impl {
++ public:
++  explicit Impl(const NackRequesterAdapterConfig& config)
++      : current_(&queue_),
++        periodic_processor_(webrtc::TimeDelta::PlusInfinity()),
++        clock_(0),
++        requester_(&queue_,
++                   &periodic_processor_,
++                   &clock_,
++                   &event_sink_,
++                   &event_sink_,
++                   field_trials_) {
++    requester_.UpdateRtt(config.rtt_ms);
++  }
++
++  int OnReceivedPacket(uint16_t rtp_sequence_number, bool is_recovered) {
++    return requester_.OnReceivedPacket(rtp_sequence_number, is_recovered);
++  }
++
++  void ClearUpTo(uint16_t rtp_sequence_number) {
++    requester_.ClearUpTo(rtp_sequence_number);
++  }
++
++  void UpdateRtt(int64_t rtt_ms) { requester_.UpdateRtt(rtt_ms); }
++
++  void ProcessNacks() { requester_.ProcessNacks(); }
++
++  std::vector<NackRequesterAdapterEvent> DrainEvents() {
++    return event_sink_.DrainEvents();
++  }
++
++ private:
++  InlineTaskQueue queue_;
++  InlineTaskQueue::ScopedCurrent current_;
++  EmptyFieldTrials field_trials_;
++  webrtc::NackPeriodicProcessor periodic_processor_;
++  webrtc::SimulatedClock clock_;
++  EventSink event_sink_;
++  webrtc::NackRequester requester_;
++};
++
++NackRequesterAdapter::NackRequesterAdapter(
++    const NackRequesterAdapterConfig& config)
++    : impl_(std::make_unique<Impl>(config)) {}
++
++NackRequesterAdapter::~NackRequesterAdapter() = default;
++
++int NackRequesterAdapter::OnReceivedPacket(uint16_t rtp_sequence_number,
++                                           bool is_recovered) {
++  return impl_->OnReceivedPacket(rtp_sequence_number, is_recovered);
++}
++
++void NackRequesterAdapter::ClearUpTo(uint16_t rtp_sequence_number) {
++  impl_->ClearUpTo(rtp_sequence_number);
++}
++
++void NackRequesterAdapter::UpdateRtt(int64_t rtt_ms) {
++  impl_->UpdateRtt(rtt_ms);
++}
++
++void NackRequesterAdapter::ProcessNacks() {
++  impl_->ProcessNacks();
++}
++
++std::vector<NackRequesterAdapterEvent> NackRequesterAdapter::DrainEvents() {
++  return impl_->DrainEvents();
++}
++
++NackRequesterAdapter* CreateNackRequesterAdapter(
++    const NackRequesterAdapterConfig& config) {
++  return new NackRequesterAdapter(config);
++}
++
++void DestroyNackRequesterAdapter(NackRequesterAdapter* adapter) {
++  delete adapter;
++}
++
++}  // namespace webrtc_qos
+diff --git a/sdk_qos/nack_requester_adapter.h b/sdk_qos/nack_requester_adapter.h
+new file mode 100644
+index 0000000..56adb05
+--- /dev/null
++++ b/sdk_qos/nack_requester_adapter.h
+@@ -0,0 +1,50 @@
++#ifndef SDK_QOS_NACK_REQUESTER_ADAPTER_H_
++#define SDK_QOS_NACK_REQUESTER_ADAPTER_H_
++
++#include <cstdint>
++#include <memory>
++#include <vector>
++
++namespace webrtc_qos {
++
++struct NackRequesterAdapterConfig {
++  int64_t rtt_ms = 100;
++};
++
++enum class NackRequesterAdapterEventType {
++  kNack,
++  kKeyFrameRequest,
++};
++
++struct NackRequesterAdapterEvent {
++  NackRequesterAdapterEventType type = NackRequesterAdapterEventType::kNack;
++  bool buffering_allowed = false;
++  std::vector<uint16_t> rtp_sequence_numbers;
++};
++
++class NackRequesterAdapter {
++ public:
++  explicit NackRequesterAdapter(const NackRequesterAdapterConfig& config);
++  ~NackRequesterAdapter();
++
++  NackRequesterAdapter(const NackRequesterAdapter&) = delete;
++  NackRequesterAdapter& operator=(const NackRequesterAdapter&) = delete;
++
++  int OnReceivedPacket(uint16_t rtp_sequence_number, bool is_recovered);
++  void ClearUpTo(uint16_t rtp_sequence_number);
++  void UpdateRtt(int64_t rtt_ms);
++  void ProcessNacks();
++  std::vector<NackRequesterAdapterEvent> DrainEvents();
++
++ private:
++  class Impl;
++  std::unique_ptr<Impl> impl_;
++};
++
++NackRequesterAdapter* CreateNackRequesterAdapter(
++    const NackRequesterAdapterConfig& config);
++void DestroyNackRequesterAdapter(NackRequesterAdapter* adapter);
++
++}  // namespace webrtc_qos
++
++#endif  // SDK_QOS_NACK_REQUESTER_ADAPTER_H_
+diff --git a/sdk_qos/nack_requester_adapter_smoke.cc b/sdk_qos/nack_requester_adapter_smoke.cc
+new file mode 100644
+index 0000000..a092152
+--- /dev/null
++++ b/sdk_qos/nack_requester_adapter_smoke.cc
+@@ -0,0 +1,53 @@
++#include <cstdint>
++#include <iostream>
++
++#include "sdk_qos/nack_requester_adapter.h"
++
++namespace {
++
++bool Check(bool condition, const char* message) {
++  if (!condition) {
++    std::cerr << "FAIL: " << message << "\n";
++    return false;
++  }
++  return true;
++}
++
++}  // namespace
++
++int main() {
++  webrtc_qos::NackRequesterAdapter adapter({20});
++  bool ok = true;
++
++  adapter.OnReceivedPacket(1, false);
++  adapter.OnReceivedPacket(3, false);
++  auto events = adapter.DrainEvents();
++  ok &= Check(events.size() == 1, "single missing packet produces NACK event");
++  ok &= Check(events[0].type == webrtc_qos::NackRequesterAdapterEventType::kNack,
++              "event type is nack");
++  ok &= Check(events[0].rtp_sequence_numbers.size() == 1,
++              "one nack sequence emitted");
++  ok &= Check(events[0].rtp_sequence_numbers[0] == 2,
++              "missing sequence number is nacked");
++
++  adapter.OnReceivedPacket(6, false);
++  events = adapter.DrainEvents();
++  ok &= Check(events.size() == 1, "gap produces batched NACK event");
++  ok &= Check(events[0].rtp_sequence_numbers.size() == 2,
++              "two missing packets are nacked");
++  ok &= Check(events[0].rtp_sequence_numbers[0] == 4 &&
++                  events[0].rtp_sequence_numbers[1] == 5,
++              "batched nack sequence numbers");
++
++  adapter.ClearUpTo(6);
++  adapter.ProcessNacks();
++  events = adapter.DrainEvents();
++  ok &= Check(events.empty(), "clear removes pending NACKs");
++
++  if (!ok) {
++    return 1;
++  }
++
++  std::cout << "nack_requester_adapter_smoke passed\n";
++  return 0;
++}
+diff --git a/sdk_qos/pacing_adapter.cc b/sdk_qos/pacing_adapter.cc
+new file mode 100644
+index 0000000..85377c4
+--- /dev/null
++++ b/sdk_qos/pacing_adapter.cc
+@@ -0,0 +1,472 @@
++#include "sdk_qos/pacing_adapter.h"
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <deque>
++#include <memory>
++#include <optional>
++#include <span>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "api/field_trials_view.h"
++#include "api/transport/network_types.h"
++#include "api/units/data_rate.h"
++#include "api/units/data_size.h"
++#include "api/units/time_delta.h"
++#include "api/units/timestamp.h"
++#include "modules/pacing/pacing_controller.h"
++#include "modules/rtp_rtcp/include/rtp_header_extension_map.h"
++#include "modules/rtp_rtcp/include/rtp_rtcp_defines.h"
++#include "modules/rtp_rtcp/source/rtp_header_extensions.h"
++#include "modules/rtp_rtcp/source/rtp_packet_to_send.h"
++#include "system_wrappers/include/clock.h"
++
++namespace webrtc_qos {
++namespace {
++
++class EmptyFieldTrials final : public webrtc::FieldTrialsView {
++ public:
++  std::string Lookup(absl::string_view) const override { return std::string(); }
++};
++
++class CollectingPacketSender final
++    : public webrtc::PacingController::PacketSender {
++ public:
++  explicit CollectingPacketSender(uint8_t transport_sequence_extension_id) {
++    if (transport_sequence_extension_id != 0) {
++      extensions_.Register<webrtc::TransportSequenceNumber>(
++          transport_sequence_extension_id);
++    }
++  }
++
++  void SetPaddingTemplate(const webrtc::RtpPacketToSend& packet,
++                          uint16_t next_sequence_number,
++                          uint16_t next_transport_sequence_number) {
++    padding_template_ = std::make_unique<webrtc::RtpPacketToSend>(&extensions_);
++    padding_template_->CopyHeaderFrom(packet);
++    padding_template_->IdentifyExtensions(extensions_);
++    padding_template_->SetPayloadSize(0);
++    next_padding_sequence_number_ = next_sequence_number;
++    next_padding_transport_sequence_number_ = next_transport_sequence_number;
++  }
++
++  void ReservePaddingSequenceRange(uint16_t next_sequence_number,
++                                   uint16_t next_transport_sequence_number) {
++    if (!padding_template_) {
++      return;
++    }
++    next_padding_sequence_number_ = next_sequence_number;
++    next_padding_transport_sequence_number_ = next_transport_sequence_number;
++  }
++
++  uint16_t next_padding_sequence_number() const {
++    return next_padding_sequence_number_;
++  }
++
++  uint16_t next_padding_transport_sequence_number() const {
++    return next_padding_transport_sequence_number_;
++  }
++
++  void SendPacket(std::unique_ptr<webrtc::RtpPacketToSend> packet,
++                  const webrtc::PacedPacketInfo& cluster_info) override {
++    SentPacket sent;
++    sent.packet = std::move(packet);
++    sent.cluster_info = cluster_info;
++    sent_packets_.push_back(std::move(sent));
++  }
++
++  std::vector<std::unique_ptr<webrtc::RtpPacketToSend>> FetchFec() override {
++    return {};
++  }
++
++  std::vector<std::unique_ptr<webrtc::RtpPacketToSend>> GeneratePadding(
++      webrtc::DataSize size) override {
++    std::vector<std::unique_ptr<webrtc::RtpPacketToSend>> padding_packets;
++    if (!padding_template_ || size <= webrtc::DataSize::Bytes(1)) {
++      return padding_packets;
++    }
++
++    webrtc::DataSize generated = webrtc::DataSize::Zero();
++    while (generated < size) {
++      const size_t remaining =
++          static_cast<size_t>((size - generated).bytes());
++      const size_t padding_size = std::min<size_t>(remaining, 224);
++      auto padding =
++          std::make_unique<webrtc::RtpPacketToSend>(*padding_template_);
++      padding->SetMarker(false);
++      padding->SetSequenceNumber(next_padding_sequence_number_++);
++      padding->set_transport_sequence_number(
++          next_padding_transport_sequence_number_);
++      padding->SetExtension<webrtc::TransportSequenceNumber>(
++          next_padding_transport_sequence_number_++);
++      padding->set_packet_type(webrtc::RtpPacketMediaType::kPadding);
++      padding->set_is_key_frame(false);
++      padding->set_first_packet_of_frame(false);
++      padding->SetPayloadSize(0);
++      if (!padding->SetPadding(padding_size)) {
++        break;
++      }
++      generated += webrtc::DataSize::Bytes(padding->padding_size());
++      padding_packets.push_back(std::move(padding));
++    }
++    return padding_packets;
++  }
++
++  struct SentPacket {
++    std::unique_ptr<webrtc::RtpPacketToSend> packet;
++    webrtc::PacedPacketInfo cluster_info;
++  };
++
++  std::vector<SentPacket> TakeSentPackets() {
++    std::vector<SentPacket> out;
++    out.swap(sent_packets_);
++    return out;
++  }
++
++ private:
++  std::vector<SentPacket> sent_packets_;
++  webrtc::RtpHeaderExtensionMap extensions_;
++  std::unique_ptr<webrtc::RtpPacketToSend> padding_template_;
++  uint16_t next_padding_sequence_number_ = 0;
++  uint16_t next_padding_transport_sequence_number_ = 0;
++};
++
++uint32_t ExpectedQueueTimeMs(size_t bytes, uint32_t pacing_bitrate_bps) {
++  if (bytes == 0 || pacing_bitrate_bps == 0) {
++    return 0;
++  }
++  const uint64_t bits = static_cast<uint64_t>(bytes) * 8 * 1000;
++  return static_cast<uint32_t>(bits / pacing_bitrate_bps);
++}
++
++std::unique_ptr<webrtc::RtpPacketToSend> MakeWebRtcPacket(
++    const PacingAdapterPacket& packet) {
++  if (packet.bytes.empty()) {
++    return nullptr;
++  }
++  auto rtp_packet = std::make_unique<webrtc::RtpPacketToSend>(nullptr);
++  if (!rtp_packet->Parse(packet.bytes.data(), packet.bytes.size())) {
++    return nullptr;
++  }
++  rtp_packet->set_capture_time(
++      webrtc::Timestamp::Micros(std::max<int64_t>(0, packet.enqueue_time_us)));
++  rtp_packet->set_transport_sequence_number(packet.transport_sequence_number);
++  rtp_packet->set_is_key_frame(packet.keyframe);
++  rtp_packet->set_first_packet_of_frame(packet.keyframe);
++  if (packet.retransmission) {
++    rtp_packet->set_packet_type(webrtc::RtpPacketMediaType::kVideo);
++    rtp_packet->set_packet_type(webrtc::RtpPacketMediaType::kRetransmission);
++    rtp_packet->set_retransmitted_sequence_number(packet.rtp_sequence_number);
++    rtp_packet->set_original_ssrc(packet.ssrc);
++  } else {
++    rtp_packet->set_packet_type(webrtc::RtpPacketMediaType::kVideo);
++  }
++  return rtp_packet;
++}
++
++PacingAdapterPacket MakeAdapterPacket(
++    std::unique_ptr<webrtc::RtpPacketToSend> packet,
++    const webrtc::PacedPacketInfo& cluster_info,
++    bool fallback_retransmission,
++    bool fallback_keyframe) {
++  PacingAdapterPacket out;
++  out.ssrc = packet->Ssrc();
++  out.rtp_sequence_number = packet->SequenceNumber();
++  out.transport_sequence_number =
++      packet->transport_sequence_number().value_or(-1);
++  out.enqueue_time_us = packet->capture_time().us();
++  out.retransmission = packet->packet_type() ==
++                       webrtc::RtpPacketMediaType::kRetransmission;
++  out.padding =
++      packet->packet_type() == webrtc::RtpPacketMediaType::kPadding ||
++      packet->padding_size() > 0;
++  out.keyframe = packet->is_key_frame() || fallback_keyframe;
++  out.probe_cluster_id = cluster_info.probe_cluster_id;
++  if (!out.retransmission) {
++    out.retransmission = fallback_retransmission;
++  }
++  auto buffer = packet->buffer();
++  out.bytes.assign(buffer.begin(), buffer.end());
++  return out;
++}
++
++}  // namespace
++
++class PacingAdapter::Impl {
++ public:
++  explicit Impl(const PacingAdapterConfig& config)
++      : config_(config),
++        clock_(webrtc::Timestamp::Zero()),
++        packet_sender_(config.transport_sequence_extension_id) {
++    webrtc::PacingController::Configuration controller_config =
++        webrtc::PacingController::DefaultConfiguration();
++    controller_config.queue_time_limit =
++        webrtc::TimeDelta::Millis(config_.max_queue_time_ms > 0
++                                      ? config_.max_queue_time_ms
++                                      : 500);
++    controller_config.prioritize_audio_retransmission = true;
++    controller_ = std::make_unique<webrtc::PacingController>(
++        &clock_, &packet_sender_, field_trials_, controller_config);
++    controller_->SetPacerConfig(webrtc::PacerConfig::Create(
++        webrtc::Timestamp::Zero(),
++        webrtc::DataRate::BitsPerSec(std::max<uint32_t>(1, config_.pacing_bitrate_bps)),
++        webrtc::DataRate::BitsPerSec(config_.padding_bitrate_bps),
++        webrtc::TimeDelta::Millis(5)));
++    controller_->SetAllowProbeWithoutMediaPacket(true);
++    stats_.pacing_bitrate_bps = config_.pacing_bitrate_bps;
++  }
++
++  void SetRates(uint32_t pacing_bitrate_bps, uint32_t padding_bitrate_bps) {
++    config_.pacing_bitrate_bps = pacing_bitrate_bps;
++    config_.padding_bitrate_bps = padding_bitrate_bps;
++    controller_->SetPacerConfig(webrtc::PacerConfig::Create(
++        clock_.CurrentTime(),
++        webrtc::DataRate::BitsPerSec(std::max<uint32_t>(1, pacing_bitrate_bps)),
++        webrtc::DataRate::BitsPerSec(padding_bitrate_bps),
++        webrtc::TimeDelta::Millis(5)));
++    stats_.pacing_bitrate_bps = pacing_bitrate_bps;
++  }
++
++  void SetProbeCluster(const PacingAdapterProbeCluster& probe_cluster) {
++    probe_cluster_ = probe_cluster;
++    probe_packets_emitted_ = 0;
++    probe_bytes_emitted_ = 0;
++    if (probe_cluster.id >= 0 && probe_cluster.target_bitrate_bps > 0) {
++      webrtc::ProbeClusterConfig config;
++      config.at_time = clock_.CurrentTime();
++      config.target_data_rate =
++          webrtc::DataRate::BitsPerSec(probe_cluster.target_bitrate_bps);
++      config.target_duration = webrtc::TimeDelta::Micros(
++          probe_cluster.target_duration_us > 0 ? probe_cluster.target_duration_us
++                                               : 15000);
++      config.min_probe_delta = webrtc::TimeDelta::Micros(
++          probe_cluster.min_probe_delta_us > 0 ? probe_cluster.min_probe_delta_us
++                                               : 1000);
++      config.target_probe_count =
++          static_cast<int>(std::max<uint32_t>(1, probe_cluster.min_probe_count));
++      config.id = probe_cluster.id;
++      controller_->CreateProbeClusters(std::span<const webrtc::ProbeClusterConfig>(&config, 1));
++      stats_.last_probe_cluster_id = probe_cluster.id;
++    }
++  }
++
++  void ClearProbeCluster() {
++    probe_cluster_.id = -1;
++    probe_packets_emitted_ = 0;
++    probe_bytes_emitted_ = 0;
++  }
++
++  bool EnqueuePacket(const PacingAdapterPacket& packet) {
++    const size_t packet_size = packet.bytes.size();
++    if (packet_size == 0) {
++      return false;
++    }
++    if (queue_bytes_ + packet_size > config_.max_queue_bytes) {
++      ++stats_.dropped_packets;
++      return false;
++    }
++    if (config_.max_queue_time_ms > 0 &&
++        ExpectedQueueTimeMs(queue_bytes_ + packet_size,
++                            std::max<uint32_t>(1, config_.pacing_bitrate_bps)) >
++            config_.max_queue_time_ms) {
++      ++stats_.dropped_packets;
++      return false;
++    }
++    std::unique_ptr<webrtc::RtpPacketToSend> rtp_packet = MakeWebRtcPacket(packet);
++    if (!rtp_packet) {
++      ++stats_.dropped_packets;
++      return false;
++    }
++    QueuedMetadata metadata;
++    metadata.ssrc = packet.ssrc;
++    metadata.rtp_sequence_number = packet.rtp_sequence_number;
++    metadata.retransmission = packet.retransmission;
++    metadata.keyframe = packet.keyframe;
++    metadata.bytes = packet_size;
++    queued_metadata_.push_back(metadata);
++    queue_bytes_ += packet_size;
++    padding_sequence_floor_ =
++        static_cast<uint16_t>(packet.rtp_sequence_number + 1);
++    if (packet.transport_sequence_number >= 0) {
++      padding_transport_sequence_floor_ =
++          static_cast<uint16_t>(packet.transport_sequence_number + 1);
++    }
++    packet_sender_.SetPaddingTemplate(*rtp_packet, padding_sequence_floor_,
++                                      padding_transport_sequence_floor_);
++    controller_->EnqueuePacket(std::move(rtp_packet));
++    UpdateStats();
++    return true;
++  }
++
++  std::vector<PacingAdapterPacket> Process(int64_t now_us) {
++    AdvanceClock(now_us);
++    controller_->ProcessPackets();
++    std::vector<PacingAdapterPacket> emitted;
++    for (auto& sent : packet_sender_.TakeSentPackets()) {
++      QueuedMetadata metadata = PopMetadata(*sent.packet);
++      PacingAdapterPacket packet = MakeAdapterPacket(
++          std::move(sent.packet), sent.cluster_info, metadata.retransmission,
++          metadata.keyframe);
++      if (queue_bytes_ >= metadata.bytes) {
++        queue_bytes_ -= metadata.bytes;
++      } else {
++        queue_bytes_ = 0;
++      }
++      ++stats_.emitted_packets;
++      if (packet.retransmission) {
++        ++stats_.emitted_retransmissions;
++      }
++      if (packet.padding) {
++        ++stats_.emitted_padding_packets;
++        stats_.emitted_padding_bytes += packet.bytes.size();
++        padding_sequence_floor_ =
++            static_cast<uint16_t>(packet.rtp_sequence_number + 1);
++        if (packet.transport_sequence_number >= 0) {
++          padding_transport_sequence_floor_ =
++              static_cast<uint16_t>(packet.transport_sequence_number + 1);
++        }
++      }
++      if (packet.keyframe) {
++        ++stats_.emitted_keyframe_packets;
++      }
++      if (packet.probe_cluster_id != webrtc::PacedPacketInfo::kNotAProbe) {
++        ++stats_.emitted_probe_packets;
++        stats_.emitted_probe_bytes += packet.bytes.size();
++        stats_.last_probe_cluster_id = packet.probe_cluster_id;
++        ++probe_packets_emitted_;
++        probe_bytes_emitted_ += packet.bytes.size();
++        MaybeCompleteProbeCluster();
++      }
++      emitted.push_back(std::move(packet));
++    }
++    packet_sender_.ReservePaddingSequenceRange(
++        padding_sequence_floor_, padding_transport_sequence_floor_);
++    UpdateStats();
++    return emitted;
++  }
++
++  PacingAdapterStats stats() const {
++    PacingAdapterStats out = stats_;
++    out.queue_packets = static_cast<size_t>(std::max<int>(0, controller_->QueueSizePackets()));
++    out.queue_bytes = queue_bytes_;
++    out.expected_queue_time_ms = ExpectedQueueTimeMs(
++        queue_bytes_, std::max<uint32_t>(1, config_.pacing_bitrate_bps));
++    return out;
++  }
++
++ private:
++  struct QueuedMetadata {
++    uint32_t ssrc = 0;
++    uint16_t rtp_sequence_number = 0;
++    bool retransmission = false;
++    bool keyframe = false;
++    size_t bytes = 0;
++  };
++
++  void AdvanceClock(int64_t now_us) {
++    if (now_us < 0) {
++      now_us = 0;
++    }
++    const int64_t current_us = clock_.CurrentTime().us();
++    if (now_us > current_us) {
++      clock_.AdvanceTimeMicroseconds(now_us - current_us);
++    }
++  }
++
++  QueuedMetadata PopMetadata(const webrtc::RtpPacketToSend& packet) {
++    for (auto it = queued_metadata_.begin(); it != queued_metadata_.end(); ++it) {
++      if (it->ssrc == packet.Ssrc() &&
++          it->rtp_sequence_number == packet.SequenceNumber()) {
++        QueuedMetadata metadata = *it;
++        queued_metadata_.erase(it);
++        return metadata;
++      }
++    }
++    QueuedMetadata metadata;
++    metadata.ssrc = packet.Ssrc();
++    metadata.rtp_sequence_number = packet.SequenceNumber();
++    metadata.retransmission =
++        packet.packet_type() == webrtc::RtpPacketMediaType::kRetransmission;
++    metadata.keyframe = packet.is_key_frame();
++    metadata.bytes = packet.size();
++    return metadata;
++  }
++
++  void MaybeCompleteProbeCluster() {
++    if (probe_cluster_.id < 0) {
++      return;
++    }
++    const bool enough_packets = probe_cluster_.min_probe_count == 0 ||
++                                probe_packets_emitted_ >= probe_cluster_.min_probe_count;
++    const bool enough_bytes = probe_cluster_.min_probe_bytes == 0 ||
++                              probe_bytes_emitted_ >= probe_cluster_.min_probe_bytes;
++    if (enough_packets && enough_bytes) {
++      ClearProbeCluster();
++    }
++  }
++
++  void UpdateStats() {
++    stats_.queue_packets = static_cast<size_t>(std::max<int>(0, controller_->QueueSizePackets()));
++    stats_.queue_bytes = queue_bytes_;
++    stats_.expected_queue_time_ms = ExpectedQueueTimeMs(
++        queue_bytes_, std::max<uint32_t>(1, config_.pacing_bitrate_bps));
++  }
++
++  PacingAdapterConfig config_;
++  EmptyFieldTrials field_trials_;
++  webrtc::SimulatedClock clock_;
++  CollectingPacketSender packet_sender_;
++  std::unique_ptr<webrtc::PacingController> controller_;
++  PacingAdapterProbeCluster probe_cluster_;
++  uint32_t probe_packets_emitted_ = 0;
++  uint32_t probe_bytes_emitted_ = 0;
++  uint16_t padding_sequence_floor_ = 1;
++  uint16_t padding_transport_sequence_floor_ = 1;
++  std::deque<QueuedMetadata> queued_metadata_;
++  size_t queue_bytes_ = 0;
++  PacingAdapterStats stats_;
++};
++
++PacingAdapter::PacingAdapter(const PacingAdapterConfig& config)
++    : impl_(std::make_unique<Impl>(config)) {}
++
++PacingAdapter::~PacingAdapter() = default;
++
++void PacingAdapter::SetRates(uint32_t pacing_bitrate_bps,
++                             uint32_t padding_bitrate_bps) {
++  impl_->SetRates(pacing_bitrate_bps, padding_bitrate_bps);
++}
++
++void PacingAdapter::SetProbeCluster(
++    const PacingAdapterProbeCluster& probe_cluster) {
++  impl_->SetProbeCluster(probe_cluster);
++}
++
++void PacingAdapter::ClearProbeCluster() {
++  impl_->ClearProbeCluster();
++}
++
++bool PacingAdapter::EnqueuePacket(const PacingAdapterPacket& packet) {
++  return impl_->EnqueuePacket(packet);
++}
++
++std::vector<PacingAdapterPacket> PacingAdapter::Process(int64_t now_us) {
++  return impl_->Process(now_us);
++}
++
++PacingAdapterStats PacingAdapter::stats() const {
++  return impl_->stats();
++}
++
++PacingAdapter* CreatePacingAdapter(const PacingAdapterConfig& config) {
++  return new PacingAdapter(config);
++}
++
++void DestroyPacingAdapter(PacingAdapter* adapter) {
++  delete adapter;
++}
++
++}  // namespace webrtc_qos
+diff --git a/sdk_qos/pacing_adapter.h b/sdk_qos/pacing_adapter.h
+new file mode 100644
+index 0000000..cc266c2
+--- /dev/null
++++ b/sdk_qos/pacing_adapter.h
+@@ -0,0 +1,81 @@
++#ifndef SDK_QOS_PACING_ADAPTER_H_
++#define SDK_QOS_PACING_ADAPTER_H_
++
++#include <cstddef>
++#include <cstdint>
++#include <memory>
++#include <vector>
++
++namespace webrtc_qos {
++
++struct PacingAdapterConfig {
++  uint32_t pacing_bitrate_bps = 1200000;
++  uint32_t padding_bitrate_bps = 0;
++  uint32_t max_queue_bytes = 512 * 1024;
++  uint32_t max_queue_time_ms = 500;
++  uint8_t transport_sequence_extension_id = 1;
++};
++
++struct PacingAdapterProbeCluster {
++  int32_t id = -1;
++  uint32_t target_bitrate_bps = 0;
++  uint32_t min_probe_count = 0;
++  uint32_t min_probe_bytes = 0;
++  uint32_t target_duration_us = 0;
++  uint32_t min_probe_delta_us = 0;
++};
++
++struct PacingAdapterPacket {
++  uint32_t ssrc = 0;
++  uint16_t rtp_sequence_number = 0;
++  int64_t transport_sequence_number = -1;
++  int64_t enqueue_time_us = 0;
++  bool retransmission = false;
++  bool keyframe = false;
++  bool padding = false;
++  int32_t probe_cluster_id = -1;
++  std::vector<uint8_t> bytes;
++};
++
++struct PacingAdapterStats {
++  uint32_t pacing_bitrate_bps = 0;
++  size_t queue_packets = 0;
++  size_t queue_bytes = 0;
++  uint32_t expected_queue_time_ms = 0;
++  uint64_t emitted_packets = 0;
++  uint64_t dropped_packets = 0;
++  uint64_t emitted_retransmissions = 0;
++  uint64_t emitted_keyframe_packets = 0;
++  uint64_t emitted_probe_packets = 0;
++  uint64_t emitted_probe_bytes = 0;
++  uint64_t emitted_padding_packets = 0;
++  uint64_t emitted_padding_bytes = 0;
++  int32_t last_probe_cluster_id = -1;
++};
++
++class PacingAdapter {
++ public:
++  explicit PacingAdapter(const PacingAdapterConfig& config);
++  ~PacingAdapter();
++
++  PacingAdapter(const PacingAdapter&) = delete;
++  PacingAdapter& operator=(const PacingAdapter&) = delete;
++
++  void SetRates(uint32_t pacing_bitrate_bps, uint32_t padding_bitrate_bps);
++  void SetProbeCluster(const PacingAdapterProbeCluster& probe_cluster);
++  void ClearProbeCluster();
++  bool EnqueuePacket(const PacingAdapterPacket& packet);
++  std::vector<PacingAdapterPacket> Process(int64_t now_us);
++  PacingAdapterStats stats() const;
++
++ private:
++  class Impl;
++  std::unique_ptr<Impl> impl_;
++};
++
++PacingAdapter* CreatePacingAdapter(const PacingAdapterConfig& config);
++void DestroyPacingAdapter(PacingAdapter* adapter);
++
++}  // namespace webrtc_qos
++
++#endif  // SDK_QOS_PACING_ADAPTER_H_
+diff --git a/sdk_qos/pacing_adapter_smoke.cc b/sdk_qos/pacing_adapter_smoke.cc
+new file mode 100644
+index 0000000..ee36687
+--- /dev/null
++++ b/sdk_qos/pacing_adapter_smoke.cc
+@@ -0,0 +1,153 @@
++#include <cstdint>
++#include <iostream>
++#include <vector>
++
++#include "sdk_qos/pacing_adapter.h"
++
++namespace {
++
++bool Check(bool condition, const char* message) {
++  if (!condition) {
++    std::cerr << "FAIL: " << message << "\n";
++    return false;
++  }
++  return true;
++}
++
++webrtc_qos::PacingAdapterPacket MakePacket(uint16_t seq,
++                                           size_t bytes,
++                                           bool retransmission) {
++  const size_t payload_size = bytes > 12 ? bytes - 12 : 1;
++  webrtc_qos::PacingAdapterPacket packet;
++  packet.ssrc = 0x12345678;
++  packet.rtp_sequence_number = seq;
++  packet.transport_sequence_number = seq;
++  packet.enqueue_time_us = 0;
++  packet.retransmission = retransmission;
++  packet.keyframe = seq == 7;
++  packet.bytes.assign(12 + payload_size, 0);
++  packet.bytes[0] = 0x80;
++  packet.bytes[1] = 96;
++  packet.bytes[2] = static_cast<uint8_t>(seq >> 8);
++  packet.bytes[3] = static_cast<uint8_t>(seq & 0xff);
++  const uint32_t timestamp = 90000 + seq * 3000;
++  packet.bytes[4] = static_cast<uint8_t>(timestamp >> 24);
++  packet.bytes[5] = static_cast<uint8_t>(timestamp >> 16);
++  packet.bytes[6] = static_cast<uint8_t>(timestamp >> 8);
++  packet.bytes[7] = static_cast<uint8_t>(timestamp);
++  packet.bytes[8] = 0x12;
++  packet.bytes[9] = 0x34;
++  packet.bytes[10] = 0x56;
++  packet.bytes[11] = 0x78;
++  std::fill(packet.bytes.begin() + 12, packet.bytes.end(),
++            static_cast<uint8_t>(seq & 0xff));
++  return packet;
++}
++
++}  // namespace
++
++int main() {
++  webrtc_qos::PacingAdapter adapter(
++      webrtc_qos::PacingAdapterConfig{800000, 0, 4096, 500});
++  bool ok = true;
++
++  adapter.Process(0);
++  ok &= Check(adapter.EnqueuePacket(MakePacket(1, 400, false)),
++              "enqueue media 1");
++  ok &= Check(adapter.EnqueuePacket(MakePacket(2, 400, false)),
++              "enqueue media 2");
++  ok &= Check(adapter.EnqueuePacket(MakePacket(3, 300, true)),
++              "enqueue retransmission");
++
++  auto emitted = adapter.Process(10000);
++  ok &= Check(emitted.size() == 3, "emits through WebRTC PacingController");
++  ok &= Check(emitted[0].retransmission, "retransmission priority");
++  ok &= Check(adapter.stats().queue_packets == 0, "queue drained");
++
++  adapter.SetRates(1600000, 0);
++  emitted = adapter.Process(20000);
++  ok &= Check(emitted.empty(), "no duplicate sends after queue drained");
++
++  webrtc_qos::PacingAdapter tiny(
++      webrtc_qos::PacingAdapterConfig{800000, 0, 512, 500});
++  ok &= Check(tiny.EnqueuePacket(MakePacket(4, 400, false)),
++              "tiny enqueue first");
++  ok &= Check(!tiny.EnqueuePacket(MakePacket(5, 400, false)),
++              "tiny drops over queue limit");
++
++  webrtc_qos::PacingAdapter short_queue(
++      webrtc_qos::PacingAdapterConfig{800000, 0, 4096, 5});
++  ok &= Check(!short_queue.EnqueuePacket(MakePacket(6, 800, false)),
++              "drops over queue time limit");
++
++  webrtc_qos::PacingAdapter probe(
++      webrtc_qos::PacingAdapterConfig{800000, 0, 8192, 500});
++  probe.Process(0);
++  probe.SetProbeCluster(
++      webrtc_qos::PacingAdapterProbeCluster{101, 2400000, 2, 800, 20000, 1000});
++  ok &= Check(probe.EnqueuePacket(MakePacket(7, 400, false)),
++              "probe enqueue keyframe packet");
++  ok &= Check(probe.EnqueuePacket(MakePacket(8, 400, false)),
++              "probe enqueue media packet");
++  emitted = probe.Process(10000);
++  auto second_probe = probe.Process(12000);
++  emitted.insert(emitted.end(), second_probe.begin(), second_probe.end());
++  ok &= Check(emitted.size() >= 1, "probe emits through PacingController");
++  ok &= Check(emitted[0].probe_cluster_id == 101, "probe packet tagged");
++  ok &= Check(emitted[0].keyframe, "keyframe metadata preserved");
++  ok &= Check(probe.stats().emitted_probe_packets == 2,
++              "probe packet stats");
++  ok &= Check(probe.stats().emitted_probe_bytes == 800,
++              "probe byte stats");
++  ok &= Check(probe.stats().last_probe_cluster_id == 101,
++              "last probe cluster stats");
++
++  webrtc_qos::PacingAdapter padding(
++      webrtc_qos::PacingAdapterConfig{800000, 160000, 8192, 500});
++  padding.Process(0);
++  ok &= Check(padding.EnqueuePacket(MakePacket(20, 400, false)),
++              "padding enqueue media template");
++  emitted = padding.Process(10000);
++  ok &= Check(!emitted.empty(), "padding media emitted");
++  emitted = padding.Process(40000);
++  ok &= Check(!emitted.empty(), "padding generated after media");
++  ok &= Check(emitted[0].padding, "padding packet marked");
++  ok &= Check(emitted[0].rtp_sequence_number == 21,
++              "padding uses next RTP sequence");
++  ok &= Check(emitted[0].transport_sequence_number == 21,
++              "padding uses next transport sequence");
++  ok &= Check(emitted[0].bytes.size() >= 13,
++              "padding has RTP header and padding bytes");
++  ok &= Check((emitted[0].bytes[0] & 0x20) != 0,
++              "padding RTP bit set");
++  ok &= Check(padding.stats().emitted_padding_packets >= 1,
++              "padding packet stats");
++  ok &= Check(padding.stats().emitted_padding_bytes >= emitted[0].bytes.size(),
++              "padding byte stats");
++
++  webrtc_qos::PacingAdapter probe_rtx(
++      webrtc_qos::PacingAdapterConfig{800000, 0, 8192, 500});
++  probe_rtx.Process(0);
++  probe_rtx.SetProbeCluster(
++      webrtc_qos::PacingAdapterProbeCluster{102, 2400000, 1, 300, 20000, 1000});
++  ok &= Check(probe_rtx.EnqueuePacket(MakePacket(9, 400, true)),
++              "probe enqueue retransmission");
++  emitted = probe_rtx.Process(10000);
++  ok &= Check(emitted.size() == 1 && emitted[0].retransmission,
++              "probe can use retransmission packet");
++  ok &= Check(probe_rtx.stats().emitted_retransmissions == 1,
++              "retransmission stats");
++
++  if (!ok) {
++    return 1;
++  }
++  std::cout << "pacing_adapter_smoke passed emitted="
++            << adapter.stats().emitted_packets
++            << " probe_emitted=" << probe.stats().emitted_probe_packets
++            << " probe_bytes=" << probe.stats().emitted_probe_bytes
++            << " padding_emitted="
++            << padding.stats().emitted_padding_packets
++            << " padding_bytes=" << padding.stats().emitted_padding_bytes
++            << "\n";
++  return 0;
++}
+diff --git a/sdk_qos/rtcp_adapter.cc b/sdk_qos/rtcp_adapter.cc
+new file mode 100644
+index 0000000..c9f7071
+--- /dev/null
++++ b/sdk_qos/rtcp_adapter.cc
+@@ -0,0 +1,281 @@
++#include "sdk_qos/rtcp_adapter.h"
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <span>
++#include <utility>
++
++#include "api/units/time_delta.h"
++#include "api/units/timestamp.h"
++#include "modules/rtp_rtcp/source/rtcp_packet/common_header.h"
++#include "modules/rtp_rtcp/source/rtcp_packet/nack.h"
++#include "modules/rtp_rtcp/source/rtcp_packet/pli.h"
++#include "modules/rtp_rtcp/source/rtcp_packet/receiver_report.h"
++#include "modules/rtp_rtcp/source/rtcp_packet/report_block.h"
++#include "modules/rtp_rtcp/source/rtcp_packet/sender_report.h"
++#include "modules/rtp_rtcp/source/rtcp_packet/transport_feedback.h"
++#include "rtc_base/buffer.h"
++#include "system_wrappers/include/ntp_time.h"
++
++namespace webrtc_qos {
++namespace {
++
++bool CopyBuiltPacket(const webrtc::Buffer& packet, std::vector<uint8_t>* out) {
++  if (!out || packet.empty()) {
++    return false;
++  }
++  const std::span<const uint8_t> packet_view(packet.data(), packet.size());
++  out->assign(packet_view.begin(), packet_view.end());
++  return true;
++}
++
++bool ParseHeader(const uint8_t* data,
++                 size_t size,
++                 webrtc::rtcp::CommonHeader* header) {
++  return data && size >= webrtc::rtcp::CommonHeader::kHeaderSizeBytes &&
++         header && header->Parse(data, size);
++}
++
++webrtc::rtcp::ReportBlock ToWebRtcReportBlock(
++    const RtcpAdapterReportBlock& input) {
++  webrtc::rtcp::ReportBlock block;
++  block.SetMediaSsrc(input.media_ssrc);
++  block.SetFractionLost(input.fraction_lost);
++  block.SetCumulativeLost(input.cumulative_lost);
++  block.SetExtHighestSeqNum(input.extended_high_seq_num);
++  block.SetJitter(input.jitter);
++  block.SetLastSr(input.last_sr);
++  block.SetDelayLastSr(input.delay_since_last_sr);
++  return block;
++}
++
++RtcpAdapterReportBlock FromWebRtcReportBlock(
++    const webrtc::rtcp::ReportBlock& input) {
++  RtcpAdapterReportBlock block;
++  block.media_ssrc = input.source_ssrc();
++  block.fraction_lost = input.fraction_lost();
++  block.cumulative_lost = input.cumulative_lost();
++  block.extended_high_seq_num = input.extended_high_seq_num();
++  block.jitter = input.jitter();
++  block.last_sr = input.last_sr();
++  block.delay_since_last_sr = input.delay_since_last_sr();
++  return block;
++}
++
++}  // namespace
++
++bool BuildRtcpSenderReport(const RtcpAdapterSenderReport& input,
++                           std::vector<uint8_t>* out) {
++  webrtc::rtcp::SenderReport packet;
++  packet.SetSenderSsrc(input.sender_ssrc);
++  packet.SetNtp(webrtc::NtpTime(input.ntp_seconds, input.ntp_fractions));
++  packet.SetRtpTimestamp(input.rtp_timestamp);
++  packet.SetPacketCount(input.packet_count);
++  packet.SetOctetCount(input.octet_count);
++  for (const auto& block : input.report_blocks) {
++    if (!packet.AddReportBlock(ToWebRtcReportBlock(block))) {
++      return false;
++    }
++  }
++  return CopyBuiltPacket(packet.Build(), out);
++}
++
++bool ParseRtcpSenderReport(const uint8_t* data,
++                           size_t size,
++                           RtcpAdapterSenderReport* out) {
++  webrtc::rtcp::CommonHeader header;
++  if (!out || !ParseHeader(data, size, &header) ||
++      header.type() != webrtc::rtcp::SenderReport::kPacketType) {
++    return false;
++  }
++  webrtc::rtcp::SenderReport packet;
++  if (!packet.Parse(header)) {
++    return false;
++  }
++  out->sender_ssrc = packet.sender_ssrc();
++  out->ntp_seconds = packet.ntp().seconds();
++  out->ntp_fractions = packet.ntp().fractions();
++  out->rtp_timestamp = packet.rtp_timestamp();
++  out->packet_count = packet.sender_packet_count();
++  out->octet_count = packet.sender_octet_count();
++  out->report_blocks.clear();
++  for (const auto& block : packet.report_blocks()) {
++    out->report_blocks.push_back(FromWebRtcReportBlock(block));
++  }
++  return true;
++}
++
++bool BuildRtcpReceiverReport(const RtcpAdapterReceiverReport& input,
++                             std::vector<uint8_t>* out) {
++  webrtc::rtcp::ReceiverReport packet;
++  packet.SetSenderSsrc(input.sender_ssrc);
++  for (const auto& block : input.report_blocks) {
++    if (!packet.AddReportBlock(ToWebRtcReportBlock(block))) {
++      return false;
++    }
++  }
++  return CopyBuiltPacket(packet.Build(), out);
++}
++
++bool ParseRtcpReceiverReport(const uint8_t* data,
++                             size_t size,
++                             RtcpAdapterReceiverReport* out) {
++  webrtc::rtcp::CommonHeader header;
++  if (!out || !ParseHeader(data, size, &header) ||
++      header.type() != webrtc::rtcp::ReceiverReport::kPacketType) {
++    return false;
++  }
++  webrtc::rtcp::ReceiverReport packet;
++  if (!packet.Parse(header)) {
++    return false;
++  }
++  out->sender_ssrc = packet.sender_ssrc();
++  out->report_blocks.clear();
++  for (const auto& block : packet.report_blocks()) {
++    out->report_blocks.push_back(FromWebRtcReportBlock(block));
++  }
++  return true;
++}
++
++bool BuildRtcpTransportFeedback(
++    const RtcpAdapterTransportFeedback& input,
++    std::vector<uint8_t>* out) {
++  webrtc::rtcp::TransportFeedback packet;
++  packet.SetSenderSsrc(input.sender_ssrc);
++  packet.SetMediaSsrc(input.media_ssrc);
++  packet.SetBase(input.base_sequence,
++                 webrtc::Timestamp::Micros(input.base_time_us));
++  packet.SetFeedbackSequenceNumber(input.feedback_sequence);
++  for (const auto& item : input.packets) {
++    if (item.delta_since_base_us < 0) {
++      continue;
++    }
++    if (!packet.AddReceivedPacket(
++            item.sequence_number,
++            webrtc::Timestamp::Micros(input.base_time_us +
++                                      item.delta_since_base_us))) {
++      return false;
++    }
++  }
++  return CopyBuiltPacket(packet.Build(), out);
++}
++
++bool ParseRtcpTransportFeedback(const uint8_t* data,
++                                size_t size,
++                                RtcpAdapterTransportFeedback* out) {
++  webrtc::rtcp::CommonHeader header;
++  if (!out || !ParseHeader(data, size, &header) ||
++      header.type() != webrtc::rtcp::Rtpfb::kPacketType ||
++      header.fmt() != webrtc::rtcp::TransportFeedback::kFeedbackMessageType) {
++    return false;
++  }
++  webrtc::rtcp::TransportFeedback packet;
++  if (!packet.Parse(header)) {
++    return false;
++  }
++  out->sender_ssrc = packet.sender_ssrc();
++  out->media_ssrc = packet.media_ssrc();
++  out->base_sequence = packet.GetBaseSequence();
++  out->base_time_us = packet.BaseTime().us();
++  if (size < 20) {
++    return false;
++  }
++  const std::span<const uint8_t> packet_view(data, size);
++  out->feedback_sequence = packet_view[19];
++  out->packets.clear();
++  packet.ForAllPackets([&](uint16_t sequence_number,
++                           webrtc::TimeDelta delta_since_base) {
++    RtcpAdapterTransportFeedbackPacket item;
++    item.sequence_number = sequence_number;
++    item.delta_since_base_us = delta_since_base.IsPlusInfinity()
++                                   ? -1
++                                   : delta_since_base.us();
++    out->packets.push_back(item);
++  });
++  return true;
++}
++
++bool BuildRtcpNack(const RtcpAdapterNack& input, std::vector<uint8_t>* out) {
++  webrtc::rtcp::Nack packet;
++  packet.SetSenderSsrc(input.sender_ssrc);
++  packet.SetMediaSsrc(input.media_ssrc);
++  packet.SetPacketIds(input.packet_ids);
++  return CopyBuiltPacket(packet.Build(), out);
++}
++
++bool ParseRtcpNack(const uint8_t* data, size_t size, RtcpAdapterNack* out) {
++  webrtc::rtcp::CommonHeader header;
++  if (!out || !ParseHeader(data, size, &header) ||
++      header.type() != webrtc::rtcp::Rtpfb::kPacketType ||
++      header.fmt() != webrtc::rtcp::Nack::kFeedbackMessageType) {
++    return false;
++  }
++  webrtc::rtcp::Nack packet;
++  if (!packet.Parse(header)) {
++    return false;
++  }
++  out->sender_ssrc = packet.sender_ssrc();
++  out->media_ssrc = packet.media_ssrc();
++  out->packet_ids = packet.packet_ids();
++  return true;
++}
++
++bool BuildRtcpPli(const RtcpAdapterPli& input, std::vector<uint8_t>* out) {
++  webrtc::rtcp::Pli packet;
++  packet.SetSenderSsrc(input.sender_ssrc);
++  packet.SetMediaSsrc(input.media_ssrc);
++  return CopyBuiltPacket(packet.Build(), out);
++}
++
++bool ParseRtcpPli(const uint8_t* data, size_t size, RtcpAdapterPli* out) {
++  webrtc::rtcp::CommonHeader header;
++  if (!out || !ParseHeader(data, size, &header) ||
++      header.type() != webrtc::rtcp::Psfb::kPacketType ||
++      header.fmt() != webrtc::rtcp::Pli::kFeedbackMessageType) {
++    return false;
++  }
++  webrtc::rtcp::Pli packet;
++  if (!packet.Parse(header)) {
++    return false;
++  }
++  out->sender_ssrc = packet.sender_ssrc();
++  out->media_ssrc = packet.media_ssrc();
++  return true;
++}
++
++bool ParseRtcpPacket(const uint8_t* data,
++                     size_t size,
++                     RtcpAdapterParsedPacket* out) {
++  webrtc::rtcp::CommonHeader header;
++  if (!out || !ParseHeader(data, size, &header)) {
++    return false;
++  }
++  *out = RtcpAdapterParsedPacket{};
++  if (header.type() == webrtc::rtcp::SenderReport::kPacketType) {
++    out->type = RtcpAdapterPacketType::kSenderReport;
++    return ParseRtcpSenderReport(data, size, &out->sender_report);
++  }
++  if (header.type() == webrtc::rtcp::ReceiverReport::kPacketType) {
++    out->type = RtcpAdapterPacketType::kReceiverReport;
++    return ParseRtcpReceiverReport(data, size, &out->receiver_report);
++  }
++  if (header.type() == webrtc::rtcp::Rtpfb::kPacketType &&
++      header.fmt() == webrtc::rtcp::TransportFeedback::kFeedbackMessageType) {
++    out->type = RtcpAdapterPacketType::kTransportFeedback;
++    return ParseRtcpTransportFeedback(data, size, &out->transport_feedback);
++  }
++  if (header.type() == webrtc::rtcp::Rtpfb::kPacketType &&
++      header.fmt() == webrtc::rtcp::Nack::kFeedbackMessageType) {
++    out->type = RtcpAdapterPacketType::kNack;
++    return ParseRtcpNack(data, size, &out->nack);
++  }
++  if (header.type() == webrtc::rtcp::Psfb::kPacketType &&
++      header.fmt() == webrtc::rtcp::Pli::kFeedbackMessageType) {
++    out->type = RtcpAdapterPacketType::kPli;
++    return ParseRtcpPli(data, size, &out->pli);
++  }
++  return false;
++}
++
++}  // namespace webrtc_qos
+diff --git a/sdk_qos/rtcp_adapter.h b/sdk_qos/rtcp_adapter.h
+new file mode 100644
+index 0000000..a3d4ae7
+--- /dev/null
++++ b/sdk_qos/rtcp_adapter.h
+@@ -0,0 +1,109 @@
++#ifndef SDK_QOS_RTCP_ADAPTER_H_
++#define SDK_QOS_RTCP_ADAPTER_H_
++
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++namespace webrtc_qos {
++
++struct RtcpAdapterReportBlock {
++  uint32_t media_ssrc = 0;
++  uint8_t fraction_lost = 0;
++  int32_t cumulative_lost = 0;
++  uint32_t extended_high_seq_num = 0;
++  uint32_t jitter = 0;
++  uint32_t last_sr = 0;
++  uint32_t delay_since_last_sr = 0;
++};
++
++struct RtcpAdapterSenderReport {
++  uint32_t sender_ssrc = 0;
++  uint32_t ntp_seconds = 0;
++  uint32_t ntp_fractions = 0;
++  uint32_t rtp_timestamp = 0;
++  uint32_t packet_count = 0;
++  uint32_t octet_count = 0;
++  std::vector<RtcpAdapterReportBlock> report_blocks;
++};
++
++struct RtcpAdapterReceiverReport {
++  uint32_t sender_ssrc = 0;
++  std::vector<RtcpAdapterReportBlock> report_blocks;
++};
++
++struct RtcpAdapterTransportFeedbackPacket {
++  uint16_t sequence_number = 0;
++  int64_t delta_since_base_us = -1;
++};
++
++struct RtcpAdapterTransportFeedback {
++  uint32_t sender_ssrc = 0;
++  uint32_t media_ssrc = 0;
++  uint16_t base_sequence = 0;
++  int64_t base_time_us = 0;
++  uint8_t feedback_sequence = 0;
++  std::vector<RtcpAdapterTransportFeedbackPacket> packets;
++};
++
++struct RtcpAdapterNack {
++  uint32_t sender_ssrc = 0;
++  uint32_t media_ssrc = 0;
++  std::vector<uint16_t> packet_ids;
++};
++
++struct RtcpAdapterPli {
++  uint32_t sender_ssrc = 0;
++  uint32_t media_ssrc = 0;
++};
++
++enum class RtcpAdapterPacketType {
++  kUnknown = 0,
++  kSenderReport,
++  kReceiverReport,
++  kTransportFeedback,
++  kNack,
++  kPli,
++};
++
++struct RtcpAdapterParsedPacket {
++  RtcpAdapterPacketType type = RtcpAdapterPacketType::kUnknown;
++  RtcpAdapterSenderReport sender_report;
++  RtcpAdapterReceiverReport receiver_report;
++  RtcpAdapterTransportFeedback transport_feedback;
++  RtcpAdapterNack nack;
++  RtcpAdapterPli pli;
++};
++
++bool BuildRtcpSenderReport(const RtcpAdapterSenderReport& input,
++                           std::vector<uint8_t>* out);
++bool ParseRtcpSenderReport(const uint8_t* data,
++                           size_t size,
++                           RtcpAdapterSenderReport* out);
++
++bool BuildRtcpReceiverReport(const RtcpAdapterReceiverReport& input,
++                             std::vector<uint8_t>* out);
++bool ParseRtcpReceiverReport(const uint8_t* data,
++                             size_t size,
++                             RtcpAdapterReceiverReport* out);
++
++bool BuildRtcpTransportFeedback(
++    const RtcpAdapterTransportFeedback& input,
++    std::vector<uint8_t>* out);
++bool ParseRtcpTransportFeedback(const uint8_t* data,
++                                size_t size,
++                                RtcpAdapterTransportFeedback* out);
++
++bool BuildRtcpNack(const RtcpAdapterNack& input, std::vector<uint8_t>* out);
++bool ParseRtcpNack(const uint8_t* data, size_t size, RtcpAdapterNack* out);
++
++bool BuildRtcpPli(const RtcpAdapterPli& input, std::vector<uint8_t>* out);
++bool ParseRtcpPli(const uint8_t* data, size_t size, RtcpAdapterPli* out);
++
++bool ParseRtcpPacket(const uint8_t* data,
++                     size_t size,
++                     RtcpAdapterParsedPacket* out);
++
++}  // namespace webrtc_qos
++
++#endif  // SDK_QOS_RTCP_ADAPTER_H_
+diff --git a/sdk_qos/rtcp_adapter_smoke.cc b/sdk_qos/rtcp_adapter_smoke.cc
+new file mode 100644
+index 0000000..a54f520
+--- /dev/null
++++ b/sdk_qos/rtcp_adapter_smoke.cc
+@@ -0,0 +1,118 @@
++#include <cstdint>
++#include <iostream>
++#include <vector>
++
++#include "sdk_qos/rtcp_adapter.h"
++
++namespace {
++
++bool Check(bool condition, const char* message) {
++  if (!condition) {
++    std::cerr << "FAIL: " << message << "\n";
++    return false;
++  }
++  return true;
++}
++
++}  // namespace
++
++int main() {
++  bool ok = true;
++  std::vector<uint8_t> bytes;
++
++  webrtc_qos::RtcpAdapterPli pli{0x11111111, 0x22222222};
++  ok &= Check(webrtc_qos::BuildRtcpPli(pli, &bytes), "build PLI");
++  webrtc_qos::RtcpAdapterPli parsed_pli;
++  ok &= Check(webrtc_qos::ParseRtcpPli(bytes.data(), bytes.size(),
++                                       &parsed_pli),
++              "parse PLI");
++  ok &= Check(parsed_pli.sender_ssrc == pli.sender_ssrc &&
++                  parsed_pli.media_ssrc == pli.media_ssrc,
++              "PLI roundtrip");
++
++  webrtc_qos::RtcpAdapterNack nack;
++  nack.sender_ssrc = 0x11111111;
++  nack.media_ssrc = 0x22222222;
++  nack.packet_ids = {7, 8, 23, 42};
++  ok &= Check(webrtc_qos::BuildRtcpNack(nack, &bytes), "build NACK");
++  webrtc_qos::RtcpAdapterNack parsed_nack;
++  ok &= Check(webrtc_qos::ParseRtcpNack(bytes.data(), bytes.size(),
++                                        &parsed_nack),
++              "parse NACK");
++  ok &= Check(parsed_nack.packet_ids == nack.packet_ids, "NACK packet ids");
++
++  webrtc_qos::RtcpAdapterReceiverReport rr;
++  rr.sender_ssrc = 0x11111111;
++  rr.report_blocks.push_back(
++      webrtc_qos::RtcpAdapterReportBlock{0x22222222, 13, 3, 90000, 77, 88, 99});
++  ok &= Check(webrtc_qos::BuildRtcpReceiverReport(rr, &bytes), "build RR");
++  webrtc_qos::RtcpAdapterReceiverReport parsed_rr;
++  ok &= Check(webrtc_qos::ParseRtcpReceiverReport(bytes.data(), bytes.size(),
++                                                  &parsed_rr),
++              "parse RR");
++  ok &= Check(parsed_rr.sender_ssrc == rr.sender_ssrc &&
++                  parsed_rr.report_blocks.size() == 1 &&
++                  parsed_rr.report_blocks[0].media_ssrc == 0x22222222 &&
++                  parsed_rr.report_blocks[0].last_sr == 88,
++              "RR roundtrip");
++
++  webrtc_qos::RtcpAdapterSenderReport sr;
++  sr.sender_ssrc = 0x11111111;
++  sr.ntp_seconds = 100;
++  sr.ntp_fractions = 200;
++  sr.rtp_timestamp = 123456;
++  sr.packet_count = 12;
++  sr.octet_count = 3456;
++  ok &= Check(webrtc_qos::BuildRtcpSenderReport(sr, &bytes), "build SR");
++  webrtc_qos::RtcpAdapterSenderReport parsed_sr;
++  ok &= Check(webrtc_qos::ParseRtcpSenderReport(bytes.data(), bytes.size(),
++                                                &parsed_sr),
++              "parse SR");
++  ok &= Check(parsed_sr.rtp_timestamp == sr.rtp_timestamp &&
++                  parsed_sr.packet_count == sr.packet_count,
++              "SR roundtrip");
++
++  webrtc_qos::RtcpAdapterTransportFeedback twcc;
++  twcc.sender_ssrc = 0x11111111;
++  twcc.media_ssrc = 0x22222222;
++  twcc.base_sequence = 1000;
++  twcc.base_time_us = 5000000;
++  twcc.feedback_sequence = 9;
++  twcc.packets.push_back({1000, 0});
++  twcc.packets.push_back({1002, 1000});
++  ok &= Check(webrtc_qos::BuildRtcpTransportFeedback(twcc, &bytes),
++              "build TWCC");
++  webrtc_qos::RtcpAdapterTransportFeedback parsed_twcc;
++  ok &= Check(webrtc_qos::ParseRtcpTransportFeedback(bytes.data(),
++                                                     bytes.size(),
++                                                     &parsed_twcc),
++              "parse TWCC");
++  bool has_missing_1001 = false;
++  bool has_received_1002 = false;
++  for (const auto& packet : parsed_twcc.packets) {
++    if (packet.sequence_number == 1001 && packet.delta_since_base_us < 0) {
++      has_missing_1001 = true;
++    }
++    if (packet.sequence_number == 1002 && packet.delta_since_base_us >= 0) {
++      has_received_1002 = true;
++    }
++  }
++  ok &= Check(parsed_twcc.base_sequence == twcc.base_sequence &&
++                  parsed_twcc.feedback_sequence == twcc.feedback_sequence &&
++                  has_missing_1001 && has_received_1002,
++              "TWCC status vector handles missing packet");
++
++  webrtc_qos::RtcpAdapterParsedPacket parsed_packet;
++  ok &= Check(webrtc_qos::ParseRtcpPacket(bytes.data(), bytes.size(),
++                                          &parsed_packet),
++              "generic parse");
++  ok &= Check(parsed_packet.type ==
++                  webrtc_qos::RtcpAdapterPacketType::kTransportFeedback,
++              "generic parse type");
++
++  if (!ok) {
++    return 1;
++  }
++  std::cout << "rtcp_adapter_smoke passed bytes=" << bytes.size() << "\n";
++  return 0;
++}
+diff --git a/sdk_qos/rtp_packet_adapter.cc b/sdk_qos/rtp_packet_adapter.cc
+new file mode 100644
+index 0000000..20049fd
+--- /dev/null
++++ b/sdk_qos/rtp_packet_adapter.cc
+@@ -0,0 +1,87 @@
++#include "sdk_qos/rtp_packet_adapter.h"
++
++#include <cstdint>
++#include <optional>
++#include <span>
++#include <vector>
++
++#include "modules/rtp_rtcp/include/rtp_header_extension_map.h"
++#include "modules/rtp_rtcp/source/rtp_header_extensions.h"
++#include "modules/rtp_rtcp/source/rtp_packet.h"
++
++namespace webrtc_qos {
++namespace {
++
++webrtc::RtpHeaderExtensionMap MakeExtensionMap(
++    const RtpPacketAdapterConfig& config) {
++  webrtc::RtpHeaderExtensionMap extensions;
++  if (config.enable_transport_sequence_extension &&
++      config.transport_sequence_extension_id != 0) {
++    extensions.Register<webrtc::TransportSequenceNumber>(
++        config.transport_sequence_extension_id);
++  }
++  return extensions;
++}
++
++}  // namespace
++
++bool BuildRtpPacket(const RtpPacketAdapterBuildInput& input,
++                    const RtpPacketAdapterConfig& config,
++                    std::vector<uint8_t>* out) {
++  if (out == nullptr || input.payload == nullptr || input.payload_size == 0 ||
++      input.payload_type > 0x7f) {
++    return false;
++  }
++  if (input.transport_sequence_number.has_value() &&
++      (!config.enable_transport_sequence_extension ||
++       config.transport_sequence_extension_id == 0)) {
++    return false;
++  }
++
++  webrtc::RtpHeaderExtensionMap extensions = MakeExtensionMap(config);
++  webrtc::RtpPacket packet(&extensions, 12 + 8 + input.payload_size);
++  packet.SetPayloadType(input.payload_type);
++  packet.SetMarker(input.marker);
++  packet.SetSequenceNumber(input.sequence_number);
++  packet.SetTimestamp(input.timestamp);
++  packet.SetSsrc(input.ssrc);
++  if (input.transport_sequence_number.has_value() &&
++      !packet.SetExtension<webrtc::TransportSequenceNumber>(
++          *input.transport_sequence_number)) {
++    return false;
++  }
++  packet.SetPayload(std::span<const uint8_t>(input.payload,
++                                             input.payload_size));
++
++  auto packet_buffer = packet.buffer();
++  out->assign(packet_buffer.begin(), packet_buffer.end());
++  return true;
++}
++
++bool ParseRtpPacket(const uint8_t* data,
++                    size_t size,
++                    const RtpPacketAdapterConfig& config,
++                    RtpPacketAdapterParsedPacket* out) {
++  if (data == nullptr || size == 0 || out == nullptr) {
++    return false;
++  }
++
++  webrtc::RtpHeaderExtensionMap extensions = MakeExtensionMap(config);
++  webrtc::RtpPacket packet(&extensions);
++  if (!packet.Parse(data, size)) {
++    return false;
++  }
++
++  out->payload_type = packet.PayloadType();
++  out->marker = packet.Marker();
++  out->sequence_number = packet.SequenceNumber();
++  out->timestamp = packet.Timestamp();
++  out->ssrc = packet.Ssrc();
++  out->transport_sequence_number =
++      packet.GetExtension<webrtc::TransportSequenceNumber>();
++  auto payload = packet.payload();
++  out->payload.assign(payload.begin(), payload.end());
++  return true;
++}
++
++}  // namespace webrtc_qos
+diff --git a/sdk_qos/rtp_packet_adapter.h b/sdk_qos/rtp_packet_adapter.h
+new file mode 100644
+index 0000000..b426535
+--- /dev/null
++++ b/sdk_qos/rtp_packet_adapter.h
+@@ -0,0 +1,49 @@
++#ifndef SDK_QOS_RTP_PACKET_ADAPTER_H_
++#define SDK_QOS_RTP_PACKET_ADAPTER_H_
++
++#include <cstddef>
++#include <cstdint>
++#include <optional>
++#include <vector>
++
++namespace webrtc_qos {
++
++struct RtpPacketAdapterConfig {
++  uint8_t payload_type = 96;
++  uint8_t transport_sequence_extension_id = 1;
++  bool enable_transport_sequence_extension = true;
++};
++
++struct RtpPacketAdapterBuildInput {
++  uint8_t payload_type = 96;
++  bool marker = false;
++  uint16_t sequence_number = 0;
++  uint32_t timestamp = 0;
++  uint32_t ssrc = 0;
++  std::optional<uint16_t> transport_sequence_number;
++  const uint8_t* payload = nullptr;
++  size_t payload_size = 0;
++};
++
++struct RtpPacketAdapterParsedPacket {
++  uint8_t payload_type = 0;
++  bool marker = false;
++  uint16_t sequence_number = 0;
++  uint32_t timestamp = 0;
++  uint32_t ssrc = 0;
++  std::optional<uint16_t> transport_sequence_number;
++  std::vector<uint8_t> payload;
++};
++
++bool BuildRtpPacket(const RtpPacketAdapterBuildInput& input,
++                    const RtpPacketAdapterConfig& config,
++                    std::vector<uint8_t>* out);
++
++bool ParseRtpPacket(const uint8_t* data,
++                    size_t size,
++                    const RtpPacketAdapterConfig& config,
++                    RtpPacketAdapterParsedPacket* out);
++
++}  // namespace webrtc_qos
++
++#endif  // SDK_QOS_RTP_PACKET_ADAPTER_H_
+diff --git a/sdk_qos/rtp_packet_adapter_smoke.cc b/sdk_qos/rtp_packet_adapter_smoke.cc
+new file mode 100644
+index 0000000..e4970eb
+--- /dev/null
++++ b/sdk_qos/rtp_packet_adapter_smoke.cc
+@@ -0,0 +1,62 @@
++#include <cstdint>
++#include <iostream>
++#include <vector>
++
++#include "sdk_qos/rtp_packet_adapter.h"
++
++namespace {
++
++bool Check(bool condition, const char* message) {
++  if (!condition) {
++    std::cerr << "FAIL: " << message << "\n";
++    return false;
++  }
++  return true;
++}
++
++}  // namespace
++
++int main() {
++  const std::vector<uint8_t> payload = {0x65, 0x88, 0x99, 0xaa};
++  std::vector<uint8_t> bytes;
++  webrtc_qos::RtpPacketAdapterConfig config;
++  config.payload_type = 96;
++  config.transport_sequence_extension_id = 1;
++  config.enable_transport_sequence_extension = true;
++
++  webrtc_qos::RtpPacketAdapterBuildInput input;
++  input.payload_type = 96;
++  input.marker = true;
++  input.sequence_number = 77;
++  input.timestamp = 90000;
++  input.ssrc = 0x12345678;
++  input.transport_sequence_number = 300;
++  input.payload = payload.data();
++  input.payload_size = payload.size();
++
++  bool ok = true;
++  ok &= Check(webrtc_qos::BuildRtpPacket(input, config, &bytes),
++              "build rtp packet");
++  ok &= Check(bytes.size() > payload.size(), "rtp header exists");
++
++  webrtc_qos::RtpPacketAdapterParsedPacket parsed;
++  ok &= Check(webrtc_qos::ParseRtpPacket(bytes.data(), bytes.size(), config,
++                                         &parsed),
++              "parse rtp packet");
++  ok &= Check(parsed.payload_type == 96, "payload type");
++  ok &= Check(parsed.marker, "marker");
++  ok &= Check(parsed.sequence_number == 77, "rtp sequence");
++  ok &= Check(parsed.timestamp == 90000, "rtp timestamp");
++  ok &= Check(parsed.ssrc == 0x12345678, "ssrc");
++  ok &= Check(parsed.transport_sequence_number.has_value() &&
++                  *parsed.transport_sequence_number == 300,
++              "transport sequence extension");
++  ok &= Check(parsed.payload == payload, "payload bytes");
++
++  if (!ok) {
++    return 1;
++  }
++  std::cout << "rtp_packet_adapter_smoke passed bytes=" << bytes.size()
++            << "\n";
++  return 0;
++}

@@ -42,11 +42,13 @@ class FfmpegH264Decoder {
                       size_t size,
                       int64_t pts,
                       std::vector<DecodedVideoFrame>* decoded_frames);
+  Status Flush(std::vector<DecodedVideoFrame>* decoded_frames);
   FfmpegH264DecoderStats GetStats() const;
   void Close();
 
  private:
   struct Impl;
+  Status ReceiveAvailableFrames(std::vector<DecodedVideoFrame>* decoded_frames);
   std::unique_ptr<Impl> impl_;
 };
 

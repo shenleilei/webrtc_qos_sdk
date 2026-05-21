@@ -5,6 +5,7 @@ project(webrtc_qos_sdk
   LANGUAGES CXX)
 
 include(CMakePackageConfigHelpers)
+find_package(Threads REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,7 +13,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(WEBRTC_QOS_PUBLIC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 option(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER
-  "Build optional FFmpeg/libavcodec H264 encoder/decoder adapters" ON)
+  "Build optional FFmpeg/libavcodec H264 encoder/decoder adapters" OFF)
+option(WEBRTC_QOS_INSTALL_FFMPEG_ENCODER
+  "Install optional FFmpeg/libavcodec H264 encoder/decoder adapters" OFF)
+option(WEBRTC_QOS_ENABLE_WEBRTC_FACADE
+  "Build WebRTC-backed VideoPushClient/VideoPlayClient facade implementation" OFF)
+set(WEBRTC_QOS_WEBRTC_MODULE_PREFIX "" CACHE PATH
+  "Prefix containing packaged WebRTC QoS module headers/libs")
 
 function(webrtc_qos_object_library target)
   add_library(${target} OBJECT ${ARGN})
@@ -35,47 +42,120 @@ function(webrtc_qos_static_library target object_target)
 endfunction()
 
 webrtc_qos_object_library(webrtc_qos_core_obj
-  src/h264_annexb.cc)
-
-webrtc_qos_object_library(webrtc_qos_rtp_obj
-  src/rtp_packet.cc)
-
-webrtc_qos_object_library(webrtc_qos_rtcp_obj
-  src/rtcp_packets.cc)
-
-webrtc_qos_object_library(webrtc_qos_feedback_obj
-  src/sender_qos_controller.cc
-  src/transport_feedback.cc)
+  src/sdk_version.cc)
 
 webrtc_qos_object_library(webrtc_qos_transport_obj
   src/production_transport_adapter.cc
   src/transport_port.cc)
 
-webrtc_qos_object_library(webrtc_qos_nack_obj
-  src/receiver_qos_observer.cc
-  src/retransmission_cache.cc)
-
-webrtc_qos_object_library(webrtc_qos_pacer_obj
-  src/sender_pacer.cc)
-
-webrtc_qos_object_library(webrtc_qos_video_obj
-  src/video_jitter_player.cc
-  src/video_receiver.cc
-  src/video_sender.cc)
+webrtc_qos_object_library(webrtc_qos_transport_packet_history_obj
+  src/transport_packet_history.cc)
 
 webrtc_qos_static_library(webrtc_qos_core webrtc_qos_core_obj)
-webrtc_qos_static_library(webrtc_qos_rtp webrtc_qos_rtp_obj)
-webrtc_qos_static_library(webrtc_qos_rtcp webrtc_qos_rtcp_obj)
-webrtc_qos_static_library(webrtc_qos_feedback webrtc_qos_feedback_obj)
 webrtc_qos_static_library(webrtc_qos_transport webrtc_qos_transport_obj)
-webrtc_qos_static_library(webrtc_qos_nack webrtc_qos_nack_obj)
-webrtc_qos_static_library(webrtc_qos_pacer webrtc_qos_pacer_obj)
-webrtc_qos_static_library(webrtc_qos_video webrtc_qos_video_obj)
+webrtc_qos_static_library(webrtc_qos_transport_packet_history
+  webrtc_qos_transport_packet_history_obj)
 
-target_link_libraries(webrtc_qos_video INTERFACE webrtc_qos_core)
-
-set(WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS)
+set(WEBRTC_QOS_WEBRTC_FACADE_INSTALL_TARGETS)
+set(WEBRTC_QOS_FFMPEG_INSTALL_TARGETS)
 set(WEBRTC_QOS_OPTIONAL_DEMO_TARGETS)
+if(WEBRTC_QOS_ENABLE_WEBRTC_FACADE)
+  if(NOT WEBRTC_QOS_WEBRTC_MODULE_PREFIX)
+    message(FATAL_ERROR
+      "WEBRTC_QOS_ENABLE_WEBRTC_FACADE requires WEBRTC_QOS_WEBRTC_MODULE_PREFIX")
+  endif()
+  set(WEBRTC_QOS_WEBRTC_MODULE_INCLUDE_DIR
+    "${WEBRTC_QOS_WEBRTC_MODULE_PREFIX}/include")
+  set(WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR
+    "${WEBRTC_QOS_WEBRTC_MODULE_PREFIX}/lib")
+  foreach(_archive IN ITEMS
+      libwebrtc_qos_webrtc_googcc.a
+      libwebrtc_qos_webrtc_rtp_rtcp.a
+      libwebrtc_qos_webrtc_pacing.a
+      libwebrtc_qos_webrtc_nack_requester.a
+      libwebrtc_qos_webrtc_video_jitter.a)
+    if(NOT EXISTS "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/${_archive}")
+      message(FATAL_ERROR
+        "missing required WebRTC module archive: ${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/${_archive}")
+    endif()
+  endforeach()
+  foreach(_header IN ITEMS
+      googcc_adapter.h
+      h264_rtp_adapter.h
+      rtcp_adapter.h
+      pacing_adapter.h
+      rtp_packet_adapter.h
+      video_jitter_adapter.h)
+    if(NOT EXISTS "${WEBRTC_QOS_WEBRTC_MODULE_INCLUDE_DIR}/webrtc_qos/${_header}")
+      message(FATAL_ERROR
+        "missing required WebRTC module header: ${WEBRTC_QOS_WEBRTC_MODULE_INCLUDE_DIR}/webrtc_qos/${_header}")
+    endif()
+  endforeach()
+
+  add_library(webrtc_qos_facade_video STATIC
+    src/server_qos_router_webrtc.cc
+    src/video_play_client_webrtc.cc
+    src/video_push_client_webrtc.cc)
+  target_include_directories(webrtc_qos_facade_video
+    PUBLIC
+      $<BUILD_INTERFACE:${WEBRTC_QOS_PUBLIC_INCLUDE_DIR}>
+      $<INSTALL_INTERFACE:include>
+    PRIVATE
+      "${WEBRTC_QOS_WEBRTC_MODULE_INCLUDE_DIR}"
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_options(webrtc_qos_facade_video
+    PRIVATE -Wall -Wextra -Wpedantic)
+  list(APPEND WEBRTC_QOS_WEBRTC_FACADE_INSTALL_TARGETS
+    webrtc_qos_facade_video)
+
+  add_executable(webrtc_qos_webrtc_first_loopback_demo
+    demo/webrtc_first_loopback/main.cc)
+  target_include_directories(webrtc_qos_webrtc_first_loopback_demo
+    PRIVATE
+      "${WEBRTC_QOS_PUBLIC_INCLUDE_DIR}")
+  target_compile_options(webrtc_qos_webrtc_first_loopback_demo
+    PRIVATE -Wall -Wextra -Wpedantic)
+  target_link_libraries(webrtc_qos_webrtc_first_loopback_demo
+    PRIVATE
+      webrtc_qos_facade_video
+      webrtc_qos_transport
+      webrtc_qos_transport_packet_history
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_googcc.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_pacing.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_rtp_rtcp.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_video_jitter.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_nack_requester.a"
+      Threads::Threads
+      dl
+      rt
+      atomic)
+  list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS
+    webrtc_qos_webrtc_first_loopback_demo)
+
+  add_executable(webrtc_qos_webrtc_first_udp_demo
+    demo/webrtc_first_udp/main.cc)
+  target_include_directories(webrtc_qos_webrtc_first_udp_demo
+    PRIVATE
+      "${WEBRTC_QOS_PUBLIC_INCLUDE_DIR}")
+  target_compile_options(webrtc_qos_webrtc_first_udp_demo
+    PRIVATE -Wall -Wextra -Wpedantic)
+  target_link_libraries(webrtc_qos_webrtc_first_udp_demo
+    PRIVATE
+      webrtc_qos_facade_video
+      webrtc_qos_transport
+      webrtc_qos_transport_packet_history
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_googcc.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_pacing.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_rtp_rtcp.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_video_jitter.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_nack_requester.a"
+      Threads::Threads
+      dl
+      rt
+      atomic)
+  list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS
+    webrtc_qos_webrtc_first_udp_demo)
+endif()
 if(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER)
   find_path(FFMPEG_INCLUDE_DIR
     NAMES libavcodec/avcodec.h
@@ -113,7 +193,7 @@ if(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER)
       PRIVATE -Wall -Wextra -Wpedantic)
     target_link_libraries(webrtc_qos_ffmpeg_decoder
       INTERFACE ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
-    list(APPEND WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS
+    list(APPEND WEBRTC_QOS_FFMPEG_INSTALL_TARGETS
       webrtc_qos_ffmpeg_encoder
       webrtc_qos_ffmpeg_decoder)
   else()
@@ -123,112 +203,62 @@ endif()
 
 add_library(webrtc_qos STATIC
   $<TARGET_OBJECTS:webrtc_qos_core_obj>
-  $<TARGET_OBJECTS:webrtc_qos_rtp_obj>
-  $<TARGET_OBJECTS:webrtc_qos_rtcp_obj>
-  $<TARGET_OBJECTS:webrtc_qos_feedback_obj>
   $<TARGET_OBJECTS:webrtc_qos_transport_obj>
-  $<TARGET_OBJECTS:webrtc_qos_nack_obj>
-  $<TARGET_OBJECTS:webrtc_qos_pacer_obj>
-  $<TARGET_OBJECTS:webrtc_qos_video_obj>)
+  $<TARGET_OBJECTS:webrtc_qos_transport_packet_history_obj>)
 target_include_directories(webrtc_qos
   PUBLIC
     $<BUILD_INTERFACE:${WEBRTC_QOS_PUBLIC_INCLUDE_DIR}>
     $<INSTALL_INTERFACE:include>)
 
-add_executable(qos_loopback_demo demo/loopback/main.cc)
-target_link_libraries(qos_loopback_demo PRIVATE webrtc_qos)
-
-add_executable(capture_push_demo demo/capture_push/main.cc)
-target_link_libraries(capture_push_demo PRIVATE webrtc_qos)
-
-add_executable(receive_play_demo demo/receive_play/main.cc)
-target_link_libraries(receive_play_demo PRIVATE webrtc_qos)
-
-add_executable(transport_port_demo demo/transport_port/main.cc)
-target_link_libraries(transport_port_demo PRIVATE webrtc_qos)
-
-add_executable(production_transport_demo demo/production_transport/main.cc)
-target_link_libraries(production_transport_demo PRIVATE webrtc_qos)
-
-add_executable(dynamic_qos_demo demo/dynamic_qos/main.cc)
-target_link_libraries(dynamic_qos_demo PRIVATE webrtc_qos)
-
-if(TARGET webrtc_qos_ffmpeg_encoder)
-  add_executable(ffmpeg_encoder_demo demo/ffmpeg_encoder/main.cc)
-  target_link_libraries(ffmpeg_encoder_demo PRIVATE
-    webrtc_qos_ffmpeg_encoder
-    webrtc_qos_video
-    webrtc_qos_pacer
-    ${AVCODEC_LIBRARY}
-    ${AVUTIL_LIBRARY})
-  add_executable(long_stream_qoe_demo demo/long_stream_qoe/main.cc)
-  target_link_libraries(long_stream_qoe_demo PRIVATE
-    webrtc_qos_ffmpeg_encoder
-    webrtc_qos_ffmpeg_decoder
-    webrtc_qos
-    ${AVCODEC_LIBRARY}
-    ${AVUTIL_LIBRARY}
-    ${SWSCALE_LIBRARY})
-  add_executable(udp_long_sender_demo demo/udp_long_sender/main.cc)
-  target_include_directories(udp_long_sender_demo PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(udp_long_sender_demo PRIVATE
-    webrtc_qos_ffmpeg_encoder
-    webrtc_qos
-    ${AVCODEC_LIBRARY}
-    ${AVUTIL_LIBRARY})
-  add_executable(udp_long_server_demo demo/udp_long_server/main.cc)
-  target_include_directories(udp_long_server_demo PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(udp_long_server_demo PRIVATE webrtc_qos)
-  add_executable(udp_long_receiver_demo demo/udp_long_receiver/main.cc)
-  target_include_directories(udp_long_receiver_demo PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(udp_long_receiver_demo PRIVATE
-    webrtc_qos_ffmpeg_decoder
-    webrtc_qos
-    ${AVCODEC_LIBRARY}
-    ${AVUTIL_LIBRARY}
-    ${SWSCALE_LIBRARY})
-  list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS
-    ffmpeg_encoder_demo
-    long_stream_qoe_demo
-    udp_long_sender_demo
-    udp_long_server_demo
-    udp_long_receiver_demo)
-endif()
-
 add_executable(webrtc_qos_selftest tests/selftest.cc)
 target_link_libraries(webrtc_qos_selftest PRIVATE webrtc_qos)
+
+if(WEBRTC_QOS_OPTIONAL_DEMO_TARGETS)
+  add_custom_target(webrtc_qos_demos
+    DEPENDS ${WEBRTC_QOS_OPTIONAL_DEMO_TARGETS})
+endif()
 
 install(TARGETS
   webrtc_qos
   webrtc_qos_core
-  webrtc_qos_rtp
-  webrtc_qos_rtcp
-  webrtc_qos_feedback
   webrtc_qos_transport
-  webrtc_qos_nack
-  webrtc_qos_pacer
-  webrtc_qos_video
+  webrtc_qos_transport_packet_history
   EXPORT WebRtcQosSdkTargets
   ARCHIVE DESTINATION lib)
-if(WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS)
+if(WEBRTC_QOS_WEBRTC_FACADE_INSTALL_TARGETS)
   install(TARGETS
-    ${WEBRTC_QOS_OPTIONAL_INSTALL_TARGETS}
+    ${WEBRTC_QOS_WEBRTC_FACADE_INSTALL_TARGETS}
+    EXPORT WebRtcQosSdkTargets
     ARCHIVE DESTINATION lib)
 endif()
-install(DIRECTORY include/ DESTINATION include)
-install(TARGETS
-  qos_loopback_demo
-  capture_push_demo
-  receive_play_demo
-  transport_port_demo
-  production_transport_demo
-  dynamic_qos_demo
-  ${WEBRTC_QOS_OPTIONAL_DEMO_TARGETS}
-  RUNTIME DESTINATION demo)
-
+if(WEBRTC_QOS_INSTALL_FFMPEG_ENCODER AND WEBRTC_QOS_FFMPEG_INSTALL_TARGETS)
+  install(TARGETS
+    ${WEBRTC_QOS_FFMPEG_INSTALL_TARGETS}
+    EXPORT WebRtcQosSdkTargets
+    ARCHIVE DESTINATION lib)
+endif()
+if(WEBRTC_QOS_INSTALL_FFMPEG_ENCODER AND WEBRTC_QOS_ENABLE_FFMPEG_ENCODER)
+  install(FILES
+    include/webrtc_qos/ffmpeg_h264_decoder.h
+    include/webrtc_qos/ffmpeg_h264_encoder.h
+    DESTINATION include/webrtc_qos)
+endif()
+set(WEBRTC_QOS_PUBLIC_HEADERS
+  include/webrtc_qos/control_messages.h
+  include/webrtc_qos/production_transport_adapter.h
+  include/webrtc_qos/qos_metrics.h
+  include/webrtc_qos/rate_cap.h
+  include/webrtc_qos/server_qos_router.h
+  include/webrtc_qos/session_config.h
+  include/webrtc_qos/status.h
+  include/webrtc_qos/transport_io.h
+  include/webrtc_qos/transport_packet_history.h
+  include/webrtc_qos/transport_port.h
+  include/webrtc_qos/types.h
+  include/webrtc_qos/video_play_client.h
+  include/webrtc_qos/video_push_client.h)
+install(FILES ${WEBRTC_QOS_PUBLIC_HEADERS}
+  DESTINATION include/webrtc_qos)
 install(EXPORT WebRtcQosSdkTargets
   FILE WebRtcQosSdkTargets.cmake
   NAMESPACE WebRtcQosSdk::

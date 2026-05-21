@@ -1,8 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace webrtc_qos {
@@ -15,12 +16,7 @@ constexpr uint8_t kTransportWideCcExtensionId = 1;
 constexpr const char* kTransportWideCcUri =
     "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
 
-constexpr int kPacerTickMs = 5;
-constexpr int kPacerMaxQueueMs = 500;
-constexpr size_t kPacerMaxQueueBytes = 512 * 1024;
 constexpr uint32_t kUnlimitedRateCapBps = 0xffffffffu;
-
-using ClockNowUs = std::function<int64_t()>;
 
 enum class StatusCode {
   kOk = 0,
@@ -49,46 +45,6 @@ struct TransportIds {
   uint32_t sender_ssrc = 0;
   uint32_t receiver_id = 0;
 };
-
-struct RtpPacket {
-  uint8_t payload_type = kH264PayloadType;
-  bool marker = false;
-  uint16_t sequence_number = 0;
-  uint32_t timestamp = 0;
-  uint32_t ssrc = 0;
-  uint16_t transport_sequence_number = 0;
-  int64_t capture_time_us = 0;
-  int64_t receive_time_us = 0;
-  std::vector<uint8_t> payload;
-};
-
-enum class VideoFrameType {
-  kUnknown = 0,
-  kIdr,
-  kP,
-  kParameterSet,
-};
-
-struct EncodedVideoFrame {
-  std::vector<uint8_t> annexb_access_unit;
-  uint32_t rtp_timestamp = 0;
-  uint16_t rtp_sequence_start = 0;
-  uint16_t rtp_sequence_end = 0;
-  int64_t capture_time_us = 0;
-  int64_t first_packet_receive_time_us = 0;
-  int64_t completed_time_us = 0;
-  VideoFrameType frame_type = VideoFrameType::kUnknown;
-  bool keyframe = false;
-};
-
-struct SendPacket {
-  RtpPacket packet;
-  VideoFrameType frame_type = VideoFrameType::kUnknown;
-  bool retransmission = false;
-  uint32_t media_duration_ms = 0;
-};
-
-using SendPacketCallback = std::function<Status(const RtpPacket&)>;
 
 struct RtcpReceiverReport {
   uint32_t sender_ssrc = 0;
@@ -158,24 +114,6 @@ struct EncoderAdaptation {
   uint32_t target_bitrate_bps = 1200000;
   uint32_t max_fps = 30;
   bool request_keyframe = false;
-};
-
-struct RetransmissionCacheConfig {
-  uint32_t hold_ms = 1000;
-  uint32_t max_hold_ms = 3000;
-};
-
-struct RecoveryRequest {
-  enum class Type {
-    kNone = 0,
-    kNack,
-    kPli,
-  };
-
-  Type type = Type::kNone;
-  uint32_t sender_ssrc = 0;
-  std::vector<uint16_t> missing_rtp_sequence_numbers;
-  std::string reason;
 };
 
 }  // namespace webrtc_qos

@@ -10,22 +10,26 @@ function(_webrtc_qos_sdk_add_optional_archive target archive)
     add_library("${target}" STATIC IMPORTED)
     set_target_properties("${target}" PROPERTIES
       IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/${archive}"
-      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include")
+      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include"
+      INTERFACE_LINK_LIBRARIES "Threads::Threads;dl;rt;atomic")
   endif()
 endfunction()
 
 _webrtc_qos_sdk_add_optional_archive(
-  WebRtcQosSdk::webrtc_qos_googcc_adapter
-  libwebrtc_qos_googcc_adapter.a)
+  WebRtcQosSdk::webrtc_googcc
+  libwebrtc_qos_webrtc_googcc.a)
 _webrtc_qos_sdk_add_optional_archive(
-  WebRtcQosSdk::webrtc_qos_googcc_bridge
-  libwebrtc_qos_googcc_bridge.a)
+  WebRtcQosSdk::webrtc_pacing
+  libwebrtc_qos_webrtc_pacing.a)
 _webrtc_qos_sdk_add_optional_archive(
-  WebRtcQosSdk::webrtc_qos_video_jitter_adapter
-  libwebrtc_qos_video_jitter_adapter.a)
+  WebRtcQosSdk::webrtc_rtp_rtcp
+  libwebrtc_qos_webrtc_rtp_rtcp.a)
 _webrtc_qos_sdk_add_optional_archive(
-  WebRtcQosSdk::webrtc_qos_video_jitter_bridge
-  libwebrtc_qos_video_jitter_bridge.a)
+  WebRtcQosSdk::webrtc_video_jitter
+  libwebrtc_qos_webrtc_video_jitter.a)
+_webrtc_qos_sdk_add_optional_archive(
+  WebRtcQosSdk::webrtc_nack_requester
+  libwebrtc_qos_webrtc_nack_requester.a)
 
 function(_webrtc_qos_sdk_add_optional_ffmpeg_archive target archive)
   if(TARGET "${target}" OR NOT EXISTS "${PACKAGE_PREFIX_DIR}/lib/${archive}")
@@ -87,26 +91,48 @@ endfunction()
 _webrtc_qos_sdk_add_role(WebRtcQosSdk::role_transport
   WebRtcQosSdk::webrtc_qos_transport)
 
-_webrtc_qos_sdk_add_role(WebRtcQosSdk::role_server
-  WebRtcQosSdk::webrtc_qos_rtp
-  WebRtcQosSdk::webrtc_qos_rtcp
-  WebRtcQosSdk::webrtc_qos_feedback
-  WebRtcQosSdk::webrtc_qos_nack)
+_webrtc_qos_sdk_add_role(WebRtcQosSdk::transport_packet_history
+  WebRtcQosSdk::webrtc_qos_transport_packet_history)
+
+if(TARGET WebRtcQosSdk::webrtc_qos_facade_video)
+  _webrtc_qos_sdk_have_targets(_webrtc_qos_sdk_can_wire_facade_video
+    WebRtcQosSdk::webrtc_googcc
+    WebRtcQosSdk::webrtc_pacing
+    WebRtcQosSdk::webrtc_rtp_rtcp
+    WebRtcQosSdk::webrtc_video_jitter
+    WebRtcQosSdk::webrtc_nack_requester
+    WebRtcQosSdk::transport_packet_history)
+  if(_webrtc_qos_sdk_can_wire_facade_video)
+    set_property(TARGET WebRtcQosSdk::webrtc_qos_facade_video APPEND PROPERTY
+      INTERFACE_LINK_LIBRARIES
+        WebRtcQosSdk::webrtc_googcc
+        WebRtcQosSdk::webrtc_pacing
+        WebRtcQosSdk::webrtc_rtp_rtcp
+        WebRtcQosSdk::webrtc_video_jitter
+        WebRtcQosSdk::webrtc_nack_requester
+        WebRtcQosSdk::transport_packet_history
+        Threads::Threads
+        dl
+        rt
+        atomic)
+  endif()
+endif()
 
 _webrtc_qos_sdk_have_targets(_webrtc_qos_sdk_can_add_push_role
-  WebRtcQosSdk::webrtc_qos_googcc_bridge
-  WebRtcQosSdk::webrtc_qos_googcc_adapter)
+  WebRtcQosSdk::webrtc_qos_facade_video
+  WebRtcQosSdk::webrtc_googcc
+  WebRtcQosSdk::webrtc_pacing
+  WebRtcQosSdk::webrtc_rtp_rtcp
+  WebRtcQosSdk::transport_packet_history
+  WebRtcQosSdk::role_transport)
 if(_webrtc_qos_sdk_can_add_push_role)
   _webrtc_qos_sdk_add_role(WebRtcQosSdk::role_push
-    WebRtcQosSdk::webrtc_qos_googcc_bridge
-    WebRtcQosSdk::webrtc_qos_video
-    WebRtcQosSdk::webrtc_qos_pacer
-    WebRtcQosSdk::webrtc_qos_feedback
-    WebRtcQosSdk::webrtc_qos_nack
-    WebRtcQosSdk::webrtc_qos_rtcp
-    WebRtcQosSdk::webrtc_qos_rtp
-    WebRtcQosSdk::webrtc_qos_core
-    WebRtcQosSdk::webrtc_qos_googcc_adapter
+    WebRtcQosSdk::webrtc_qos_facade_video
+    WebRtcQosSdk::webrtc_googcc
+    WebRtcQosSdk::webrtc_pacing
+    WebRtcQosSdk::webrtc_rtp_rtcp
+    WebRtcQosSdk::transport_packet_history
+    WebRtcQosSdk::role_transport
     Threads::Threads
     dl
     rt
@@ -114,36 +140,35 @@ if(_webrtc_qos_sdk_can_add_push_role)
 endif()
 
 _webrtc_qos_sdk_have_targets(_webrtc_qos_sdk_can_add_play_role
-  WebRtcQosSdk::webrtc_qos_video_jitter_bridge
-  WebRtcQosSdk::webrtc_qos_video_jitter_adapter)
+  WebRtcQosSdk::webrtc_qos_facade_video
+  WebRtcQosSdk::webrtc_rtp_rtcp
+  WebRtcQosSdk::webrtc_video_jitter
+  WebRtcQosSdk::webrtc_nack_requester
+  WebRtcQosSdk::role_transport)
 if(_webrtc_qos_sdk_can_add_play_role)
   _webrtc_qos_sdk_add_role(WebRtcQosSdk::role_play
-    WebRtcQosSdk::webrtc_qos_video_jitter_bridge
-    WebRtcQosSdk::webrtc_qos_video
-    WebRtcQosSdk::webrtc_qos_nack
-    WebRtcQosSdk::webrtc_qos_feedback
-    WebRtcQosSdk::webrtc_qos_rtcp
-    WebRtcQosSdk::webrtc_qos_rtp
-    WebRtcQosSdk::webrtc_qos_core
-    WebRtcQosSdk::webrtc_qos_video_jitter_adapter
+    WebRtcQosSdk::webrtc_qos_facade_video
+    WebRtcQosSdk::webrtc_rtp_rtcp
+    WebRtcQosSdk::webrtc_video_jitter
+    WebRtcQosSdk::webrtc_nack_requester
+    WebRtcQosSdk::role_transport
     Threads::Threads
     dl
     rt
     atomic)
 endif()
 
-_webrtc_qos_sdk_have_targets(_webrtc_qos_sdk_can_add_prototype_role
-  WebRtcQosSdk::webrtc_qos_googcc_bridge
-  WebRtcQosSdk::webrtc_qos_googcc_adapter
-  WebRtcQosSdk::webrtc_qos_video_jitter_bridge
-  WebRtcQosSdk::webrtc_qos_video_jitter_adapter)
-if(_webrtc_qos_sdk_can_add_prototype_role)
-  _webrtc_qos_sdk_add_role(WebRtcQosSdk::role_prototype
-    WebRtcQosSdk::webrtc_qos
-    WebRtcQosSdk::webrtc_qos_googcc_bridge
-    WebRtcQosSdk::webrtc_qos_googcc_adapter
-    WebRtcQosSdk::webrtc_qos_video_jitter_bridge
-    WebRtcQosSdk::webrtc_qos_video_jitter_adapter
+_webrtc_qos_sdk_have_targets(_webrtc_qos_sdk_can_add_server_role
+  WebRtcQosSdk::webrtc_qos_facade_video
+  WebRtcQosSdk::webrtc_rtp_rtcp
+  WebRtcQosSdk::transport_packet_history
+  WebRtcQosSdk::role_transport)
+if(_webrtc_qos_sdk_can_add_server_role)
+  _webrtc_qos_sdk_add_role(WebRtcQosSdk::role_server
+    WebRtcQosSdk::webrtc_qos_facade_video
+    WebRtcQosSdk::webrtc_rtp_rtcp
+    WebRtcQosSdk::transport_packet_history
+    WebRtcQosSdk::role_transport
     Threads::Threads
     dl
     rt
