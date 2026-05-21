@@ -1,80 +1,98 @@
 # WebRTC QoS SDK Phase-1a
 
-This is the first implementation slice for `webrtc_qos_sdk_design.md`.
+这是 `webrtc_qos_sdk_design.md` 的第一阶段实现。项目目标不是做完整
+WebRTC Client、PeerConnection 或 SFU，而是在 Linux native C/S 架构里，把
+WebRTC 里真正需要的 QoS、拥塞控制、RTP/RTCP、NACK 恢复、视频 jitter 能力拆成
+可按需链接的小库。业务侧仍然负责真实传输、安全、鉴权、会话和服务端策略。
 
-The current scope is intentionally narrow:
+根目录 `README.md` 默认使用中文；`dist/linux-x86_64/README.md` 是随发布包安装出来
+的说明文件。
 
-- H264 video only.
-- Annex-B access unit input and output.
-- RTP payload type `96`, 90 kHz clock, `packetization-mode=1`.
-- Single NALU and FU-A only.
-- SDK lightweight sender pacer.
-- Sender-side QoS facade with `uplink_twcc`, RTCP RR RTT, and sender rate cap inputs.
-- Receiver-side jitter and downlink quality facade.
-- No audio, NetEq, Opus, capture device, renderer, ICE, DTLS, SRTP, SDP, or PeerConnection.
+## 当前范围
 
-Code map:
+Phase-1a 已收敛为 H264 视频闭环：
 
-- `include/webrtc_qos/`: public SDK headers that applications include.
-- `src/h264_annexb.cc`: Annex-B NALU split/join, H264 AU classification, SPS/PPS/IDR/B-frame checks.
-- `src/rtp_packet.cc`: lightweight RTP parse/serialize and transport-wide sequence number header extension.
-- `src/rtcp_packets.cc`: RTCP SR, RR, TWCC transport feedback, Generic NACK, and PLI packet helpers.
-- `src/transport_feedback.cc`: SDK binary helpers for downlink quality and sender rate cap messages.
-- `src/sender_qos_controller.cc`: sender QoS facade, lightweight fallback estimator, encoder bitrate/FPS adaptation, rate-cap handling, and backend hook for WebRTC GoogCC.
-- `src/sender_pacer.cc`: SDK lightweight token-bucket sender pacer with retransmission priority and bounded queue behavior.
-- `src/video_sender.cc`: H264 Annex-B AU to RTP packetization, Single NALU/FU-A output, RTP timestamp and transport sequence assignment.
-- `src/video_receiver.cc` and `src/video_jitter_player.cc`: H264 RTP depacketization, jitter assembly facade, and complete Annex-B AU output.
-- `src/receiver_qos_observer.cc` and `src/retransmission_cache.cc`: receiver gap detection, NACK candidates, downlink reports, and sender/server retransmission cache.
-- `src/production_transport_adapter.cc` and `include/webrtc_qos/transport_port.h`: business transport boundary and owned async message adapter.
-- `src/sender_qos_googcc_bridge.cc`: optional bridge from the SDK sender QoS facade to the WebRTC `network_control/goog_cc` adapter.
-- `src/video_jitter_bridge.cc`: optional bridge from the SDK video jitter facade to the WebRTC-backed H264 PacketBuffer adapter.
-- `src/ffmpeg_h264_encoder.cc` and `src/ffmpeg_h264_decoder.cc`: optional real H264 encode/decode adapters used by demos and QoE validation, not required by the core QoS/jitter SDK.
+- 只做 H264 视频，不做音频、NetEq、Opus。
+- 发送端输入 Annex-B access unit，接收端输出完整 Annex-B access unit。
+- RTP payload type 固定为 `96`，视频时钟固定为 `90000 Hz`。
+- H264 固定 `profile-level-id=42e01f`，目标验证规格为 `720p30`。
+- RTP H264 `packetization-mode=1`，只支持 Single NALU 和 FU-A，禁用 STAP-A。
+- 禁用 B 帧，只允许 I/P 帧；IDR 作为关键帧，SPS/PPS 随 IDR 发送。
+- 所有参与 QoS 的 RTP 包携带 transport-wide sequence number，header extension id 固定为 `1`。
+- 发送端 QoS 只消费 server 或 receiver 生成的 `uplink_twcc` 与 RTCP RR RTT。
+- `uplink_twcc` 周期目标为 `50ms`；RTCP SR/RR 周期目标为 `1000ms`。
+- Pacing 使用 SDK 自研轻量 `SenderPacer`，不直接引入 WebRTC pacer。
+- 接收端生成 downlink quality、NACK、PLI；downlink quality 不直接喂 sender GoogCC。
+- 多播放端或服务端下行策略只通过 `SENDER_RATE_CAP_V1` 压 sender 上限。
+- 不包含 ICE、DTLS、SRTP、SDP、PeerConnection、完整 RTP/RTCP 栈或完整 WebRTC media pipeline。
 
-Build:
+## 已实现能力
+
+- H264 Annex-B 解析、SPS/PPS/IDR/B-frame 校验、Annex-B access unit 归一化输出。
+- RTP 解析/序列化、transport-wide CC RTP header extension。
+- RTCP SR、RR、TWCC transport feedback、Generic NACK、PLI。
+- `SenderQosController` facade，支持轻量 fallback estimator 与 WebRTC GoogCC adapter 后端。
+- SDK 轻量 `SenderPacer`，支持 token bucket、5ms tick、重传优先、AU 原子入队、队列上限和 P 帧丢弃。
+- H264 `VideoSender`，将 Annex-B AU packetize 为 Single NALU/FU-A RTP 包。
+- H264 `VideoReceiver` 与 `VideoJitterPlayer`，输出完整 Annex-B AU。
+- `ReceiverQosObserver` 与 `RetransmissionCache`，支持 NACK 候选、重传缓存和 downlink report。
+- WebRTC GoogCC 被单独打包为 `libwebrtc_qos_googcc_adapter.a`。
+- WebRTC H264 PacketBuffer 视频 jitter 路径被单独打包为 `libwebrtc_qos_video_jitter_adapter.a`。
+- FFmpeg/libx264 编码器和 FFmpeg H264 解码器作为可选 demo/QoE 验证模块，不进入核心 SDK 依赖闭包。
+- 提供本地 loopback、两端直连 UDP、三进程 UDP relay harness、长流 QoE、720p 稳定性等测试入口。
+
+## 代码目录
+
+- `include/webrtc_qos/`：对外公开的 SDK 头文件。
+- `src/h264_annexb.cc`：Annex-B NALU split/join、H264 AU 分类、SPS/PPS/IDR/B-frame 检查。
+- `src/rtp_packet.cc`：轻量 RTP 解析/序列化和 TWCC header extension。
+- `src/rtcp_packets.cc`：RTCP SR/RR/TWCC/NACK/PLI wire format。
+- `src/transport_feedback.cc`：`DownlinkQuality` 和 `SenderRateCap` 的 SDK 二进制消息。
+- `src/sender_qos_controller.cc`：发送端 QoS facade、fallback estimator、rate cap、编码码率/FPS 决策。
+- `src/sender_pacer.cc`：SDK 轻量 pacer，负责发送节奏、队列控制和重传优先级。
+- `src/video_sender.cc`：H264 AU 到 RTP packetization，负责 RTP timestamp 和 transport sequence 分配。
+- `src/video_receiver.cc`、`src/video_jitter_player.cc`：H264 RTP depacketize、jitter 组帧、Annex-B AU 输出。
+- `src/receiver_qos_observer.cc`、`src/retransmission_cache.cc`：接收端丢包观测、NACK、重传缓存。
+- `src/production_transport_adapter.cc`：业务传输适配模板，将 SDK payload 拷贝为业务自有消息后异步发送。
+- `src/sender_qos_googcc_bridge.cc`：`SenderQosController` 到 WebRTC GoogCC adapter 的可选桥接。
+- `src/video_jitter_bridge.cc`：`VideoJitterPlayer` 到 WebRTC H264 PacketBuffer adapter 的可选桥接。
+- `src/ffmpeg_h264_encoder.cc`、`src/ffmpeg_h264_decoder.cc`：真实 H264 编解码验证模块，可选。
+- `demo/`：loopback、push、receive_play、UDP、long stream、QoE 验证 demo。
+- `scripts/`：构建、打包、弱网矩阵、QoE 矩阵和发布包校验脚本。
+
+## 快速构建
 
 ```bash
+cd /root
 cmake -S webrtc_qos_sdk -B webrtc_qos_sdk/build -DCMAKE_BUILD_TYPE=Release
-cmake --build webrtc_qos_sdk/build
-cmake --install webrtc_qos_sdk/build --prefix output
+cmake --build webrtc_qos_sdk/build -j"$(nproc)"
+cmake --install webrtc_qos_sdk/build --prefix /root/output
 ```
 
-Full Phase-1a verification:
+基础自测：
 
 ```bash
+cd /root/webrtc_qos_sdk
+./build/webrtc_qos_selftest
+```
+
+完整 Phase-1a 验证入口：
+
+```bash
+cd /root
 bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 ```
 
-CMake package consumer verification:
+外部 CMake 消费验证：
 
 ```bash
-bash webrtc_qos_sdk/scripts/verify_cmake_package.sh
+cd /root/webrtc_qos_sdk
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 bash scripts/verify_cmake_package.sh
 ```
 
-Installed layout:
+## 发布包
 
-```text
-output/
-  include/webrtc_qos/
-  lib/
-    libwebrtc_qos.a
-    libwebrtc_qos_core.a
-    libwebrtc_qos_rtp.a
-    libwebrtc_qos_rtcp.a
-    libwebrtc_qos_feedback.a
-    libwebrtc_qos_transport.a
-    libwebrtc_qos_nack.a
-    libwebrtc_qos_googcc_adapter.a
-    libwebrtc_qos_video_jitter_adapter.a
-    libwebrtc_qos_googcc_bridge.a
-    libwebrtc_qos_video_jitter_bridge.a
-    libwebrtc_qos_pacer.a
-    libwebrtc_qos_video.a
-    libwebrtc_qos_ffmpeg_encoder.a  # optional, when FFmpeg/libx264 is present
-    libwebrtc_qos_ffmpeg_decoder.a  # optional, when FFmpeg/libavcodec is present
-  demo/
-```
-
-Repository release bundle:
+仓库内已提交 Linux x86_64 发布包：
 
 ```text
 dist/linux-x86_64/
@@ -85,36 +103,362 @@ dist/linux-x86_64/
   README.md
 ```
 
-The source-tree `include/webrtc_qos/` directory is the editable public API. The
-`dist/linux-x86_64/` directory is the checked-in Linux x86_64 SDK bundle for
-direct application integration: it contains the exported headers, static
-archives, and CMake package files produced from `/root/output`. Build outputs
-under `build/` remain ignored; only this explicit `dist/` bundle is intended to
-carry `.a` files in Git.
+当前发布包包含 19 个公开头文件和 15 个静态库：
 
-The checked-in bundle currently contains 19 public headers and 15 static
-archives. The WebRTC-built archives are included:
-`libwebrtc_qos_googcc_adapter.a` for `network_control/goog_cc` and
-`libwebrtc_qos_video_jitter_adapter.a` for the H264 PacketBuffer-based video
-jitter path.
+```text
+libwebrtc_qos.a
+libwebrtc_qos_core.a
+libwebrtc_qos_feedback.a
+libwebrtc_qos_ffmpeg_decoder.a
+libwebrtc_qos_ffmpeg_encoder.a
+libwebrtc_qos_googcc_adapter.a
+libwebrtc_qos_googcc_bridge.a
+libwebrtc_qos_nack.a
+libwebrtc_qos_pacer.a
+libwebrtc_qos_rtcp.a
+libwebrtc_qos_rtp.a
+libwebrtc_qos_transport.a
+libwebrtc_qos_video.a
+libwebrtc_qos_video_jitter_adapter.a
+libwebrtc_qos_video_jitter_bridge.a
+```
 
-Release bundle portability:
+发布包内已包含两个从 WebRTC 源码编译并裁剪出来的核心能力：
 
-- Supported binary target: Linux x86_64, ELF64, System V ABI.
-- The CMake package uses relative paths through `_IMPORT_PREFIX`; it must not contain `/root/output`, `/root/webrtc_qos_sdk`, `/root/src`, or `/usr/lib64` as fixed SDK paths.
-- Core SDK, WebRTC GoogCC, and WebRTC H264 jitter adapter consumers need `pthread`, `dl`, `rt`, and `atomic` in addition to the selected SDK archives.
-- FFmpeg encoder/decoder archives are optional demo/QoE validation pieces. Their CMake targets are created only when the target server can find `avcodec`, `avutil`, and `swscale`; the core QoS/jitter role targets do not require FFmpeg.
-- This package is not guaranteed to be independent of every Linux version. Static `.a` archives still depend on the target machine's libc/libstdc++ ABI at final link/runtime. For production, build the bundle on the oldest supported distro/toolchain or ship a container/toolchain profile.
-- A server can consume the bundle without the source tree by pointing CMake at `dist/linux-x86_64` and linking role targets such as `WebRtcQosSdk::role_push` and `WebRtcQosSdk::role_play`.
+- `libwebrtc_qos_googcc_adapter.a`：WebRTC `network_control/goog_cc` 适配库。
+- `libwebrtc_qos_video_jitter_adapter.a`：基于 WebRTC H264 PacketBuffer 的视频 jitter 适配库。
 
-Public C++ ABI rule for split static libraries:
+### 其他服务器能否直接使用
 
-- Public stateful classes that own STL containers, `std::function`, `std::unique_ptr`, pimpl objects, or backend interfaces must not rely on header-generated lifecycle code when they are consumed from split `.a` libraries.
-- `SenderQosController`, `TransportPort`, and `VideoJitterPlayer` provide out-of-line destructor/move definitions in the SDK archives so external applications do not generate incompatible lifecycle code from headers.
-- `scripts/verify_cmake_package.sh` is the release gate for this class of issue: it builds an external project against only `dist/linux-x86_64`, links role targets, then constructs, moves, calls, and destroys push/play/transport/prototype objects.
-- If a new public stateful class is added, add it to the external CMake consumer test before shipping the dist bundle.
+可以在 Linux x86_64 机器上直接作为静态 SDK 使用，但它不是“与 Linux 版本完全无关”的二进制：
 
-Regenerate the source install and checked-in release bundle:
+- 二进制目标是 Linux x86_64、ELF64、System V ABI。
+- 静态 `.a` 在最终链接和运行时仍然依赖目标机的 libc、libstdc++、编译器 ABI 与系统库版本。
+- 生产发布建议在“最老支持发行版”或固定容器/toolchain 中构建发布包，再分发到更高版本环境。
+- CMake package 使用 `_IMPORT_PREFIX` 相对路径，不应固化 `/root/output`、`/root/webrtc_qos_sdk`、`/root/src` 或 `/usr/lib64`。
+- 核心 SDK、WebRTC GoogCC adapter、WebRTC H264 jitter adapter 消费方需要链接 `pthread`、`dl`、`rt`、`atomic`。
+- FFmpeg encoder/decoder 目标是可选目标，只有目标机器能找到 `avcodec`、`avutil`、`swscale` 时才创建；核心 push/play/transport 角色不要求 FFmpeg。
+
+检查发布包是否带入本机绝对路径：
+
+```bash
+cd /root/webrtc_qos_sdk
+if rg -n "/root/output|/root/webrtc_qos_sdk|/root/src|/usr/lib64" \
+  dist/linux-x86_64/lib/cmake/WebRtcQosSdk; then
+  echo "unexpected absolute path in release CMake package"
+  exit 1
+fi
+```
+
+## 外部项目集成
+
+外部项目只需要指向 `dist/linux-x86_64`：
+
+```cmake
+find_package(WebRtcQosSdk REQUIRED CONFIG)
+
+add_executable(app main.cc)
+target_link_libraries(app PRIVATE WebRtcQosSdk::role_push)
+```
+
+构建示例：
+
+```bash
+cmake -S app -B app/build \
+  -DCMAKE_PREFIX_PATH=/path/to/webrtc_qos_sdk/dist/linux-x86_64
+cmake --build app/build -j"$(nproc)"
+```
+
+可用的角色 target：
+
+- `WebRtcQosSdk::role_transport`：只接入业务传输边界。
+- `WebRtcQosSdk::role_server`：轻量 relay/test harness 需要的 RTP、RTCP、feedback、NACK。
+- `WebRtcQosSdk::role_push`：发送端 push，包含 video、pacer、feedback、NACK、RTCP/RTP、GoogCC bridge/adapter。
+- `WebRtcQosSdk::role_play`：播放端 receive，包含 video、NACK、feedback、RTCP/RTP、video jitter bridge/adapter。
+- `WebRtcQosSdk::role_prototype`：原型期单进程集成，包含 facade 与可选 WebRTC adapter。
+
+也可以按模块单独链接 `WebRtcQosSdk::webrtc_qos_rtp`、`WebRtcQosSdk::webrtc_qos_rtcp`、
+`WebRtcQosSdk::webrtc_qos_pacer` 等小库。
+
+## 库边界
+
+- `libwebrtc_qos_core.a`：公共类型和 H264 Annex-B helper。
+- `libwebrtc_qos_rtp.a`：轻量 RTP 与 TWCC header extension。
+- `libwebrtc_qos_rtcp.a`：SR、RR、TWCC、NACK、PLI。
+- `libwebrtc_qos_feedback.a`：downlink quality、sender rate cap、sender QoS facade。
+- `libwebrtc_qos_transport.a`：业务传输集成边界。
+- `libwebrtc_qos_nack.a`：轻量 RTP gap detection、NACK、重传缓存。
+- `libwebrtc_qos_pacer.a`：SDK 轻量发送 pacer。
+- `libwebrtc_qos_video.a`：H264 video sender、receiver、jitter player。
+- `libwebrtc_qos_googcc_adapter.a`：WebRTC GoogCC adapter。
+- `libwebrtc_qos_googcc_bridge.a`：QoS facade 到 GoogCC adapter 的桥接。
+- `libwebrtc_qos_video_jitter_adapter.a`：WebRTC H264 PacketBuffer 视频 jitter adapter。
+- `libwebrtc_qos_video_jitter_bridge.a`：video jitter facade 到 WebRTC adapter 的桥接。
+- `libwebrtc_qos_ffmpeg_encoder.a`：可选 FFmpeg/libx264 编码器 demo/QoE 验证库。
+- `libwebrtc_qos_ffmpeg_decoder.a`：可选 FFmpeg H264 解码器 demo/QoE 验证库。
+- `libwebrtc_qos.a`：Phase-1a SDK facade 聚合库，便于原型期单库链接。
+
+设计原则是不要发布一个巨大的 `libwebrtc.a`。每个保留下来的 WebRTC 能力都单独出库、单独出头文件，应用按需集成。
+
+## WebRTC 裁剪边界
+
+Phase-1a 中保留的 WebRTC 能力：
+
+- `network_control/goog_cc`：用于发送端拥塞控制。
+- H264 parsing 与 `modules/video_coding::PacketBuffer`：用于视频 jitter 组帧。
+
+明确没有进入 Phase-1a WebRTC 闭包的能力：
+
+- WebRTC pacer：当前使用 SDK 自研轻量 `SenderPacer`。
+- 完整 WebRTC RTP/RTCP 模块：当前使用 SDK 轻量 RTP/RTCP helpers。
+- `api/video:rtp_video_frame_assembler` 全量 target：依赖过重，当前只保留 H264 PacketBuffer 所需闭包。
+- WebRTC `NackRequester`：当前使用 SDK 轻量 NACK 与重传缓存。
+- protobuf、Perfetto、examples、tools、Rust、gRPC、Opus、NetEq、libyuv、完整 PeerConnection 相关能力。
+
+构建 WebRTC adapter 的入口：
+
+```bash
+cd /root
+bash webrtc_qos_sdk/scripts/package_webrtc_googcc.sh
+bash webrtc_qos_sdk/scripts/build_googcc_bridge.sh
+bash webrtc_qos_sdk/scripts/build_video_jitter_bridge.sh
+```
+
+## 协议和反馈方向
+
+发送方向：
+
+- `sender -> receiver/server`：H264 RTP，携带 RTP sequence number、RTP timestamp、transport sequence number。
+- `sender -> receiver/server`：RTCP SR，用于 RTT 计算。
+
+上行 QoS：
+
+- `receiver/server -> sender`：标准 RTCP TWCC transport feedback，即 `uplink_twcc`。
+- `receiver/server -> sender`：RTCP RR，sender 通过 LSR/DLSR 语义得到 RTT，SDK 内部暴露为 `RtcpReceiverReport::rtt_ms`。
+- `receiver/server -> sender`：`SENDER_RATE_CAP_V1`，限制最终发送码率上限。
+
+下行质量：
+
+- `receive_play -> server` 或直连测试里的 `receiver -> sender`：`DownlinkQuality`、NACK、PLI。
+- `downlink_quality.rtt_ms` 来自业务可靠控制通道 ping/pong 或测试 harness 观测，只服务服务端策略和日志，不作为 sender GoogCC RTT 主输入。
+
+重传语义：
+
+- NACK 针对 RTP sequence number。
+- TWCC 针对 transport sequence number。
+- 重传包保持原 RTP sequence number，重新分配新的 transport sequence number。
+- jitter buffer 按 RTP sequence number 去重，拥塞控制按新的 transport sequence number 统计重传发送事件。
+
+## 轻量 SenderPacer
+
+Phase-1a 默认使用 SDK 自研轻量 pacer，原因是 WebRTC pacer 依赖闭包较重，而当前目标是先跑通 C/S 自定义传输里的端上 QoS 闭环。
+
+当前硬参数：
+
+- tick 间隔：`5ms`。
+- token bucket 按 `final_target_bps` 或 pacing target 增加预算。
+- 队列上限：`500ms` 媒体时长或 `512KB`。
+- 最大媒体包年龄：默认 `1400ms`。
+- 重传包优先于普通媒体包。
+- IDR 可以短时 burst，但仍受预算和队列上限约束。
+- 队列满时普通 P 帧可丢。
+- 丢弃 P 帧后进入等待 IDR 状态，避免后续参考链持续污染。
+
+后续如果 WebRTC pacer 的依赖闭包可控，可以作为单独 adapter 库替换或对比，但不阻塞 Phase-1a。
+
+## Demo 和测试入口
+
+基础 demo：
+
+```bash
+cd /root
+./webrtc_qos_sdk/build/demo/loopback/loopback_demo
+./webrtc_qos_sdk/build/demo/dynamic_qos/dynamic_qos_demo
+```
+
+两端直连 UDP 长流矩阵：
+
+```bash
+cd /root
+bash webrtc_qos_sdk/scripts/run_udp_direct_long_stream_matrix.sh
+```
+
+三进程 UDP relay harness 矩阵：
+
+```bash
+cd /root
+bash webrtc_qos_sdk/scripts/run_udp_long_stream_matrix.sh
+```
+
+720p 端到端稳定性矩阵：
+
+```bash
+cd /root
+bash webrtc_qos_sdk/scripts/run_udp_long_stream_720p_profile.sh
+bash webrtc_qos_sdk/scripts/run_udp_long_stream_720p_stability.sh
+```
+
+策略对比 QoE 矩阵：
+
+```bash
+cd /root
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_profile.sh
+bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_stability.sh
+```
+
+UDP netem 类弱网矩阵：
+
+```bash
+cd /root
+RUNS=3 bash webrtc_qos_sdk/scripts/run_udp_netem_matrix.sh
+```
+
+soak 入口：
+
+```bash
+cd /root
+DURATION_SEC=60 MATRIX_RUNS=1 bash webrtc_qos_sdk/scripts/run_udp_soak.sh
+```
+
+## 弱网场景
+
+当前测试不是只覆盖单一 happy path，已经覆盖：
+
+- `walking_dead_zone`：正常网络进入无覆盖/弱覆盖，再恢复到好网络。
+- `bandwidth_cliff_recover`：带宽突然跌到 `<100kbps` 级别，然后恢复。
+- `jitter_loss_recover`：高 jitter、丢包、乱序混合，再恢复。
+- `rtt_jitter_spike_recover`：RTT 和 jitter 激增但没有显式高丢包，再恢复。
+- `loss_burst_recover`：突发丢包后恢复。
+- `oscillating_edge`：边缘网络反复震荡。
+
+内容 profile 覆盖：
+
+- `motion`：基础运动内容。
+- `low_motion`：低运动、低细节内容，用于观察不必要降质。
+- `detail_motion`：高细节加运动，用于压测过激降码率/降帧。
+
+指标体系分为 QoS 和 QoE：
+
+- QoS：sender target bitrate、pacing bitrate、final target bitrate、FPS、RTT、loss、rate cap、NACK、PLI、RTX、TWCC、队列丢包。
+- QoE：完成帧数、解码帧数、decode errors、PSNR avg/min、completion gap、media gap、frame latency、jitter buffer residence、deadline drops、freeze proxy。
+
+## 当前测试结果摘要
+
+### 直连两端动态弱网矩阵
+
+最新本地结果：`MATRIX_CONTENTS="motion low_motion detail_motion"`，`MATRIX_RUNS=3`，默认 `FRAMES=300`。
+
+| 指标 | 结果 |
+| --- | ---: |
+| 通过用例 | 27 / 27 |
+| 完成帧 / 解码帧 | 6300 / 6300 |
+| 解码错误 | 0 |
+| sender target 最低 / 恢复最高 | 80000 / 2500000 bps |
+| sender FPS 最低 / 恢复最高 | 5 / 30 |
+| receiver drop / delay / jitter 事件 | 372 / 1878 / 743 |
+| receiver 最大 completion gap | 943 ms |
+| receiver 最大 media gap | 1600 ms |
+| PSNR avg/min floor | 50.11 / 32.37 dB |
+| NACK / PLI / sender RTX | 399 / 45 / 3480 |
+| sender rate cap 次数 | 304 |
+| pacer 丢 AU / enqueue 丢 AU | 137 / 0 |
+| sender source frame skips | 1257 |
+
+结论：直连端到端路径已经证明 sender 会在严重弱网下降到 `80kbps/5fps`，并在网络恢复后回到 `2500000bps/30fps`。该测试不依赖服务端重传或 SFU 行为，重点验证端上 QoS、pacing、NACK、jitter 和恢复。
+
+### 三进程 UDP 动态弱网矩阵
+
+最新本地 320x180 真实 UDP 结果：`MATRIX_CONTENTS=motion`，`MATRIX_RUNS=1`。
+
+| 场景 | 完成 / 解码 | sender 最低 target | sender 最低 FPS | sender 最终 target / FPS | 最大 frame gap | PSNR avg/min | NACK / RTX | 结果 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `walking_dead_zone` | 156 / 154 | 90000 bps | 8 | 2500000 bps / 30 | 380 ms | 61.34 / 30.50 dB | 25 / 176 | PASS |
+| `bandwidth_cliff_recover` | 154 / 150 | 180000 bps | 8 | 2500000 bps / 30 | 101 ms | 59.24 / 30.16 dB | 28 / 132 | PASS |
+| `jitter_loss_recover` | 180 / 166 | 500000 bps | 15 | 2500000 bps / 30 | 230 ms | 60.55 / 24.08 dB | 13 / 64 | PASS |
+
+汇总：3/3 通过，`decode_errors=0`，所有场景结束时 sender 都恢复到 `2500000bps/30fps`，server rate cap 都恢复到 unlimited。
+
+### 720p 真实 UDP 端到端稳定性
+
+最新本地结果：`MATRIX_CONTENTS="motion low_motion detail_motion"`，`MATRIX_RUNS=3`，1280x720，起始 2.5Mbps。
+
+| 指标 | 结果 |
+| --- | ---: |
+| 通过用例 | 27 / 27 |
+| network seeds | 1, 2, 3 |
+| 解码错误 | 0 |
+| 完成帧 / 解码帧 | 4414 / 4372 |
+| sender target 最低 | 90000 bps |
+| sender FPS 最低 | 5 |
+| sender FPS 恢复 | 30 |
+| sender target 恢复最高 | 2500000 bps |
+| 最大 completion gap | 575 ms |
+| 最大 media gap | 667 ms |
+| PSNR avg/min floor | 38.23 / 16.18 dB |
+| NACK / RTX | 1209 / 6089 |
+
+结论：720p 端到端测试已经覆盖三类内容、三组 deterministic seed、三种动态弱网 profile，证明 live 编码器码率/FPS 可下探和恢复，接收端可通过 NACK/jitter 输出可解码 Annex-B AU。
+
+### 策略对比 QoE 矩阵
+
+长流 QoE 矩阵比较 `adaptive`、`balanced`、`bitrate_only`、`fixed` 策略，并比较 `lightweight` 与 `webrtc` 后端。它不是单纯看“能跑”，而是用定义好的目标函数衡量是否更优。
+
+最新 320x180 聚合排名：
+
+| 后端/策略 | balanced QoE | PSNR avg/min | latency avg/max ms | jitter avg/max ms | decode errors | drops | deadline drops | failed cases |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `webrtc/adaptive` | 455.336 | 56.84 / 15.33 | 131.9 / 1480 | 41.1 / 730 | 0 | 67 | 0 | 0 |
+| `webrtc/balanced` | 3342.996 | 56.85 / 15.33 | 138.8 / 1480 | 41.4 / 665 | 0 | 67 | 0 | 0 |
+| `lightweight/adaptive` | 11001.106 | 27.47 / 14.30 | 103.0 / 1790 | 9.0 / 435 | 74 | 67 | 7 | 3 |
+| `webrtc/bitrate_only` | 41023.278 | 52.95 / 15.46 | 165.6 / 890 | 48.4 / 430 | 0 | 104 | 0 | 0 |
+| `webrtc/fixed` | 166487.944 | 59.16 / 14.97 | 302.7 / 1800 | 48.1 / 1175 | 0 | 8565 | 1437 | 0 |
+
+当前结论是有边界的：在已定义场景、内容、候选策略、seed、视频规格和目标函数内，`webrtc/adaptive` 是当前最优候选；这不等价于生产全局最优。
+
+### 720p QoE 稳定性
+
+最新 720p 多 seed 稳定性结果：`MATRIX_RUNS=3`，3 类内容，5 个场景，共 45 个 case。
+
+| 后端/策略 | cases | balanced QoE | PSNR avg/min | max latency/jitter ms | decode errors | drops | deadline drops | failed cases | validation failures |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `webrtc/adaptive` | 45 | 3668.548 | 56.140 / 15.673 | 1800 / 895 | 0 | 212 | 3 | 0 | 0 |
+
+该结果比一次 demo pass 更可信，但仍有风险边界：
+
+- 最坏 case 的最大 latency 会触到 `1800ms` 验证门限，裕量不大。
+- `detail_motion/bandwidth_staircase` 仍是最难恢复场景。
+- `detail_motion/rtt_jitter_spike_recover` 的 `psnr_min` 可低到约 `15.67 dB`，高于当前硬门限但视觉上仍偏脆弱。
+
+## 当前服务端/测试拓扑
+
+服务端目前不是生产 SFU。测试里有两类拓扑：
+
+- 两端直连：`udp_long_sender_demo <-> udp_long_receiver_demo`。receiver 直接回传 TWCC、RR、NACK、PLI、rate cap，sender 自己缓存并重传 RTP。
+- 三进程 relay harness：`sender -> udp_long_server_demo -> receiver`。server 只负责本地 UDP relay、弱网模拟、feedback plumbing、重传缓存和 rate cap 转发/生成。
+
+这符合当前优先级：先把 SDK 端上的 QoS、pacing、jitter、NACK、编码器适配跑通。生产服务端的 SSRC 映射、多播放端汇总、最差接收端策略、防抖、鉴权、加密和公网抗攻击不在 Phase-1a 代码闭包内。
+
+## 已知边界和后续工作
+
+当前可控但还没有证明生产最优的部分：
+
+- 还没有在真实 `tc/netem`、真实 NIC queue、真实公网移动网络下完成完整 720p 多 seed 矩阵。
+- 还没有真实 renderer，因此 freeze、glass-to-glass latency、render queue depth 仍主要依赖 proxy 指标。
+- 还没有多 receive client 的 SFU 汇总策略和 worst-receiver 防抖验证。
+- 还没有音频 Opus + NetEq；这放到 Phase-1b。
+- SDK 轻量 pacer 已能满足当前矩阵，但还没有和 WebRTC pacer adapter 做生产级 A/B。
+- 当前 QoE “最优”只在已定义目标函数和场景集内成立，不是全局最优证明。
+
+建议下一阶段：
+
+- Phase-1b：补 Opus + NetEq 音频闭环。
+- Phase-2：真实 Linux `tc/netem`/容器网络矩阵、真实 renderer 指标、多接收端 rate cap 汇总、防抖和生产传输加密接入。
+- Phase-3：WebRTC pacer adapter 可选库、更多移动网络 trace、长时间 soak、跨发行版 ABI profile。
+
+## 发布流程
+
+重新生成安装目录和仓库发布包：
 
 ```bash
 cd /root
@@ -124,6 +468,7 @@ cmake --install webrtc_qos_sdk/build --prefix /root/output
 bash webrtc_qos_sdk/scripts/package_webrtc_googcc.sh
 bash webrtc_qos_sdk/scripts/build_googcc_bridge.sh
 bash webrtc_qos_sdk/scripts/build_video_jitter_bridge.sh
+
 cd /root/webrtc_qos_sdk
 rm -rf dist/linux-x86_64/include dist/linux-x86_64/lib dist/linux-x86_64/README.md
 mkdir -p dist/linux-x86_64
@@ -134,600 +479,31 @@ find dist/linux-x86_64/include/webrtc_qos -maxdepth 1 -type f | wc -l
 find dist/linux-x86_64/lib -maxdepth 1 -name '*.a' -type f | wc -l
 ```
 
-Verify the release bundle before committing it:
+发布前至少执行：
 
 ```bash
 cd /root/webrtc_qos_sdk
-if rg -n "/root/output|/root/webrtc_qos_sdk|/root/src|/usr/lib64" \
-  dist/linux-x86_64/lib/cmake/WebRtcQosSdk; then
-  echo "unexpected absolute path in release CMake package"
-  exit 1
-fi
-find dist/linux-x86_64/lib -maxdepth 1 -name '*.a' -type f -print | sort | xargs file
+./build/webrtc_qos_selftest
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 bash scripts/verify_cmake_package.sh
+git diff --check
 ```
 
-Library boundaries:
-
-- `libwebrtc_qos_core.a`: shared types and H264 Annex-B helpers.
-- `libwebrtc_qos_rtp.a`: lightweight RTP parse/serialize with TWCC header extension support.
-- `libwebrtc_qos_rtcp.a`: RTCP SR/RR/TWCC/NACK/PLI helpers.
-- `libwebrtc_qos_feedback.a`: downlink quality, sender rate cap, and sender QoS facade.
-- `libwebrtc_qos_transport.a`: production transport integration port; applications map SDK message types to their own wire protocol.
-- `production_transport_adapter.h`: production integration template that copies borrowed SDK payloads into owned messages and routes them to media/control/reliable-control lanes.
-- `libwebrtc_qos_nack.a`: lightweight RTP gap detection, NACK candidates, and retransmission cache.
-- `libwebrtc_qos_googcc_adapter.a`: distributable WebRTC `network_control/goog_cc` adapter.
-- `libwebrtc_qos_video_jitter_adapter.a`: distributable WebRTC video jitter adapter using the minimal H264 `PacketBuffer` closure.
-- `libwebrtc_qos_googcc_bridge.a`: optional facade bridge from `SenderQosController` to `GoogCcAdapter`.
-- `libwebrtc_qos_video_jitter_bridge.a`: optional facade bridge from `VideoJitterPlayer` to `VideoJitterAdapter`.
-- `libwebrtc_qos_pacer.a`: SDK lightweight sender pacer.
-- `libwebrtc_qos_video.a`: H264 video sender, receiver, and jitter player.
-- `libwebrtc_qos_ffmpeg_encoder.a`: optional basic FFmpeg/libx264 H264 encoder adapter. It is deliberately outside the core SDK closure.
-- `libwebrtc_qos_ffmpeg_decoder.a`: optional FFmpeg H264 decoder adapter used by QoE validation to prove receiver Annex-B AU output is actually decodable.
-- `libwebrtc_qos.a`: facade archive containing all Phase-1a SDK objects for simple single-library linking.
-
-Optional integration sets:
-
-- Push client: `core`, `rtp`, `rtcp`, `feedback`, `nack`, `pacer`, `video`, `googcc_bridge`, `googcc_adapter`.
-- Optional relay harness: `rtp`, `rtcp`, `feedback`, `transport`, `nack`.
-- Play client: `core`, `rtp`, `rtcp`, `feedback`, `nack`, `video`, `video_jitter_bridge`, `video_jitter_adapter`.
-- Simple single-library prototype: `libwebrtc_qos.a` plus `libwebrtc_qos_googcc_bridge.a`, `libwebrtc_qos_googcc_adapter.a`, `libwebrtc_qos_video_jitter_bridge.a`, and `libwebrtc_qos_video_jitter_adapter.a` as needed.
-
-The intent is not to ship one monolithic WebRTC archive. Each WebRTC capability that survives trimming gets its own adapter archive and public header, and the application links only the pieces it needs.
-
-Current integration boundary:
-
-- The facade SDK and standalone demos already run the H264 RTP/QoS/jitter/retransmission loopback.
-- `SenderQosController` keeps a default lightweight estimator for builds that do not link WebRTC.
-- `libwebrtc_qos_googcc_bridge.a` is packaged and smoke-tested; it connects the `SenderQosController` facade to `GoogCcAdapter` when applications opt in.
-- `libwebrtc_qos_video_jitter_bridge.a` is packaged and smoke-tested; it connects the `VideoJitterPlayer` facade to `VideoJitterAdapter` when applications opt in.
-- WebRTC `NackRequester` was dependency-audited and is intentionally not in Phase-1a; `libwebrtc_qos_nack.a` is the Phase-1a recovery module.
-
-Build and package the WebRTC adapter libraries:
+更完整的门禁：
 
 ```bash
-bash webrtc_qos_sdk/scripts/package_webrtc_googcc.sh
+cd /root
+bash webrtc_qos_sdk/scripts/verify_phase1a.sh
 ```
 
-The packaging script builds the WebRTC `//sdk_qos` GN target with:
+## C++ ABI 规则
 
-- no protobuf, Perfetto, examples, tools, Rust, gRPC, Opus, NetEq, full WebRTC RTP/RTCP, full WebRTC video frame assembler, libyuv, or WebRTC pacer in the shipped adapter dependency paths;
-- `use_custom_libcxx=false`, `use_lld=false`, `use_safe_libstdcxx=false`;
-- a complete non-thin archive suitable for redistribution.
+拆分静态库时，公开的有状态 C++ 类不能依赖 header 内联生成析构和 move 生命周期代码。尤其是持有 STL 容器、`std::function`、`std::unique_ptr`、pimpl 或 backend interface 的类。
 
-The video jitter adapter intentionally does not link `api/video:rtp_video_frame_assembler` directly. That full target pulls unrelated WebRTC media infrastructure for this Phase-1a H264-only scope. The shipped adapter keeps the useful WebRTC pieces: H264 parsing and `modules/video_coding::PacketBuffer`, then normalizes output to complete Annex-B access units.
+当前 `SenderQosController`、`TransportPort`、`VideoJitterPlayer` 已提供 out-of-line destructor/move 定义。`scripts/verify_cmake_package.sh` 会构造、移动、调用并销毁 push/play/transport/prototype 对象，防止外部消费者只拿 `dist` 包链接时出现生命周期符号或 ABI 问题。
 
-External link check:
+新增公开有状态类时，必须先把它加入外部 CMake consumer 验证，再发布 `dist`。
 
-```bash
-g++ -std=c++20 -Ioutput/include app.cc \
-  output/lib/libwebrtc_qos_googcc_adapter.a \
-  -lpthread -ldl -lrt -latomic
-```
+## 参考指标
 
-Video jitter adapter link check:
-
-```bash
-g++ -std=c++20 -Ioutput/include app.cc \
-  output/lib/libwebrtc_qos_video_jitter_adapter.a \
-  -lpthread -ldl -lrt -latomic
-```
-
-Quick loopback check:
-
-```bash
-./webrtc_qos_sdk/build/qos_loopback_demo
-```
-
-Protocol selftest:
-
-```bash
-./webrtc_qos_sdk/build/webrtc_qos_selftest
-```
-
-WebRTC adapter smoke checks:
-
-```bash
-./output/demo/webrtc_qos_googcc_smoke
-./output/demo/webrtc_qos_video_jitter_smoke
-```
-
-Installed-output integration check:
-
-```bash
-bash webrtc_qos_sdk/scripts/build_output_integration_demo.sh
-./output/demo/output_integration_demo
-```
-
-This integration demo compiles only against `output/include` and `output/lib`. It links the small libraries by role, runs synthetic H264 Annex-B access units through `VideoSender`, SDK lightweight `SenderPacer`, server-side retransmission cache, `SenderQosController` with the GoogCC bridge, receiver QoS observation, and `VideoJitterPlayer` with the WebRTC video jitter bridge, then verifies NACK-style recovery and complete Annex-B AU output.
-
-Real UDP C/S demo:
-
-```bash
-bash webrtc_qos_sdk/scripts/build_udp_demos.sh
-bash webrtc_qos_sdk/scripts/run_udp_loopback_demo.sh
-```
-
-The UDP demo starts `udp_sender_demo`, `udp_server_demo`, and `udp_receiver_demo` as separate processes on local UDP ports. It intentionally drops one RTP packet at the server, triggers receiver NACK, retransmits from the server cache, feeds uplink TWCC back to the sender, and verifies two complete Annex-B frames at the receiver.
-
-The UDP demo uses `DEMO_TRANSPORT_V1` as a scoped demo envelope carrying `session_id`, `stream_id`, `sender_ssrc`, and `receiver_id` outside RTP/RTCP payloads. It also supports weak-network parameters:
-
-```bash
-DROP_RTP_SEQ=2 REORDER_RTP_SEQ=4 DELAY_MS=30 \
-  bash webrtc_qos_sdk/scripts/run_udp_loopback_demo.sh
-```
-
-Real UDP endpoint QoE smoke:
-
-```bash
-bash webrtc_qos_sdk/scripts/run_udp_direct_long_stream_smoke.sh
-bash webrtc_qos_sdk/scripts/run_udp_direct_long_stream_matrix.sh
-bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
-```
-
-The primary Phase-1a topology is two endpoint processes only: `udp_long_sender_demo <-> udp_long_receiver_demo`. In this direct mode, the receiver sends standard TWCC, RTCP RR, RTCP NACK, downlink quality, and `SENDER_RATE_CAP_V1` directly back to the sender; the sender retransmits from its own RTP cache. This verifies the endpoint SDK QoS loop itself instead of relying on server-side retransmission or SFU behavior.
-
-`run_udp_direct_long_stream_matrix.sh` keeps the same two-process direct topology and moves the weak-network profile into the receiver endpoint. It runs `walking_dead_zone`, `bandwidth_cliff_recover`, and `jitter_loss_recover` with receiver-side drop/delay/jitter/rate-cap generation, so the sender adaptation and receiver jitter/NACK behavior are validated without any relay process. The profile is driven by a receiver-local accelerated test clock instead of RTP media time, so the simulated network still enters and leaves outage phases even if the sender temporarily reduces FPS or skips source frames.
-
-`run_udp_long_stream_smoke.sh` starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. The server process is intentionally minimal: it is a local UDP relay/test harness for forwarding RTP, producing sender-side TWCC/RR feedback, injecting deterministic weak-network phases, and retransmitting from a cache after receiver NACK. It is not a production SFU, not a long-term server SDK target, and not a Linux `tc/netem` deployment. The optimization focus remains endpoint SDK behavior on the sender and receiver.
-
-The direct endpoint feedback topology is:
-
-- `sender -> receiver`: H264 RTP plus periodic RTCP SR.
-- `receiver -> sender`: standard RTCP TWCC generated from received RTP arrivals, RTCP RR generated from sender SR, RTCP NACK/PLI, downlink quality, and `SENDER_RATE_CAP_V1`.
-- Retransmission cache: sender-side, with original RTP sequence number and new transport-wide sequence number on resend.
-
-The optional relay harness feedback topology is:
-
-- `sender -> server`: H264 RTP plus periodic RTCP SR.
-- `server -> sender`: standard RTCP TWCC generated from sender uplink RTP arrivals, RTCP RR generated from sender SR, and `SENDER_RATE_CAP_V1` when receiver downlink quality indicates impairment.
-- `server -> receiver`: RTP forwarding with optional drop/delay/jitter and server-side retransmission from cache.
-- `receiver -> server`: `DOWNLINK_QUALITY_V1` reports, RTCP NACK for missing RTP sequence numbers, and BYE.
-
-The optional relay harness smoke uses real FFmpeg/libx264 encoding, live encoder bitrate/FPS reconfiguration from `SenderQosController::GetEncoderAdaptation`, RTP packetization, SDK pacer, real UDP sockets, server retransmission cache, receiver jitter assembly, FFmpeg H264 decode, source-aligned PSNR, max frame gap, and hard checks that TWCC/RR/downlink-quality feedback crossed process boundaries. It intentionally exercises periodic downlink jitter by default:
-
-```bash
-LOG_DIR=/tmp/webrtc_qos_udp_long_stream_smoke \
-  bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
-```
-
-Latest local relay-harness result:
-
-| Metric | Value |
-| --- | ---: |
-| Source frames | 90 |
-| Sender encoded frames | 90 |
-| Sender RTP packets | 295 |
-| Sender TWCC feedback packets | 295 |
-| Sender RTCP RR packets | 3 |
-| Sender rate caps | 1 |
-| Sender adaptation target min/max | 1200000 / 2500000 bps |
-| Sender adaptation FPS min/max | 30 / 30 |
-| Server RTP in / forwarded | 295 / 295 |
-| Server retransmissions | 17 |
-| Server downlink quality reports received | 6 |
-| Receiver RTP packets | 312 |
-| Receiver completed / decoded frames | 90 / 85 |
-| Receiver decode errors | 0 |
-| Receiver PSNR avg / min | 47.46 / 26.84 dB |
-| Receiver max completion / media gap | 28 / 67 ms |
-| Receiver NACK / downlink reports | 17 / 7 |
-
-Latest local two-process direct result:
-
-| Metric | Value |
-| --- | ---: |
-| Sender encoded frames | 82 |
-| Sender RTP packets | 313 |
-| Sender TWCC / RR / rate-cap feedback | 60 / 3 / 2 |
-| Sender NACK feedback / retransmissions | 17 / 17 |
-| Sender adaptation target min/max | 500000 / 2500000 bps |
-| Sender adaptation FPS min/max | 15 / 30 |
-| Receiver RTP packets | 313 |
-| Receiver intentional direct drops | 17 |
-| Receiver direct TWCC / RR / rate-caps | 61 / 3 / 2 |
-| Receiver completed / decoded frames | 82 / 79 |
-| Receiver decode errors | 0 |
-| Receiver PSNR avg / min | 43.73 / 24.67 dB |
-| Receiver max completion / media gap | 50 / 67 ms |
-| Receiver NACK / downlink reports | 17 / 7 |
-
-Latest local two-process direct dynamic matrix result (`MATRIX_CONTENTS="motion low_motion detail_motion"`, `MATRIX_RUNS=3`, default `FRAMES=300`):
-
-| Metric | Value |
-| --- | ---: |
-| Cases | 27 / 27 passed |
-| Completed / decoded frames | 6300 / 6300 |
-| Decode errors | 0 |
-| Sender target min / recovered max | 80000 / 2500000 bps |
-| Sender FPS min / recovered max | 5 / 30 |
-| Receiver direct drop / delay / jitter events | 372 / 1878 / 743 |
-| Receiver max completion gap | 943 ms |
-| Receiver max media gap | 1600 ms |
-| Receiver PSNR avg/min floor | 50.11 / 32.37 dB |
-| NACK / PLI / sender retransmissions | 399 / 45 / 3480 |
-| Sender rate caps | 304 |
-| Sender max encode gap | 200 ms |
-| Sender pacer dropped AUs / enqueue dropped AUs | 137 / 0 |
-| Sender source frame skips | 1257 |
-
-Per-case direct matrix samples:
-
-| Scenario / content | Completed / decoded | Sender min target | Sender min FPS | Sender last target / FPS | Max media / completion gap | PSNR avg/min | NACK / RTX / PLI |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `walking_dead_zone` / `motion` | 220 / 220 | 80000 bps | 5 | 2500000 bps / 30 | 1300 / 738 ms | 62.61 / 53.23 dB | 26 / 184 / 2 |
-| `bandwidth_cliff_recover` / `motion` | 258 / 258 | 80000 bps | 5 | 2500000 bps / 30 | 134 / 294 ms | 62.67 / 53.34 dB | 11 / 61 / 1 |
-| `jitter_loss_recover` / `motion` | 264 / 264 | 500000 bps | 10 | 2500000 bps / 30 | 533 / 236 ms | 62.88 / 55.22 dB | 9 / 83 / 1 |
-| `walking_dead_zone` / `low_motion` | 223 / 223 | 80000 bps | 5 | 2500000 bps / 30 | 1166 / 785 ms | 65.64 / 54.36 dB | 27 / 191 / 2 |
-| `bandwidth_cliff_recover` / `low_motion` | 270 / 270 | 80000 bps | 5 | 2500000 bps / 30 | 200 / 356 ms | 65.86 / 54.12 dB | 18 / 101 / 1 |
-| `jitter_loss_recover` / `low_motion` | 232 / 232 | 500000 bps | 10 | 2500000 bps / 30 | 933 / 250 ms | 66.30 / 58.65 dB | 8 / 130 / 2 |
-| `walking_dead_zone` / `detail_motion` | 181 / 181 | 80000 bps | 5 | 2500000 bps / 30 | 1067 / 709 ms | 50.62 / 32.64 dB | 27 / 240 / 2 |
-| `bandwidth_cliff_recover` / `detail_motion` | 240 / 240 | 80000 bps | 5 | 2500000 bps / 30 | 667 / 547 ms | 50.73 / 32.93 dB | 19 / 52 / 2 |
-| `jitter_loss_recover` / `detail_motion` | 242 / 242 | 500000 bps | 10 | 2500000 bps / 30 | 733 / 257 ms | 50.65 / 42.34 dB | 17 / 133 / 1 |
-
-Direct matrix interpretation: the endpoint-only path proves downshift, recovery, real H264 decode, direct receiver feedback, and sender-side retransmission without server relay behavior. The test explicitly verifies both directions of adaptation: the sender drops to `80kbps/5fps` in the hardest outage phases and returns to `2500000bps/30fps` after the receiver removes the rate cap. `max_completion_gap_ms` remains the primary low-latency smoothness gate, while `max_frame_gap_ms`, `source_frame_skips`, and `pacer_drop_aus` record the continuity cost of intentionally discarding old media to avoid queue buildup. The current direct profile still uses a local synthetic link emulator, not Linux `tc/netem` and not a production SFU.
-
-The direct matrix now treats `completion_gap` and media-time `frame_gap`
-separately. `completion_gap` is the wall-clock interval between successfully
-decoded receiver frames and is the low-latency smoothness gate. `frame_gap`
-records continuity cost from FPS reduction, stale-frame dropping, and keyframe
-recovery; it is allowed to be larger during severe synthetic jitter/loss as long
-as decode errors remain zero, completion gaps stay bounded, and the sender
-recovers bitrate/FPS after the route becomes healthy. Receiver PLI now forces an
-immediate sender keyframe instead of being throttled by the normal 2s periodic
-keyframe interval.
-
-Real UDP long-stream dynamic weak-network matrix:
-
-```bash
-bash webrtc_qos_sdk/scripts/run_udp_long_stream_matrix.sh
-MATRIX_CONTENTS="motion low_motion" MATRIX_RUNS=2 \
-  bash webrtc_qos_sdk/scripts/run_udp_long_stream_matrix.sh
-bash webrtc_qos_sdk/scripts/run_udp_long_stream_720p_profile.sh
-bash webrtc_qos_sdk/scripts/run_udp_long_stream_720p_stability.sh
-```
-
-This matrix runs the same three-process UDP topology through media-time-driven weak-network phases. The server only supplies deterministic link impairment and standard feedback plumbing; the behavior under test is endpoint-side QoS: sender encoder bitrate/FPS adaptation, sender pacing, route-recovery handling, receiver jitter assembly, receiver NACK generation, interval downlink-quality reporting, and real decoder/PSNR output. The scenario is repeatable because impairment changes by RTP media time rather than wall clock.
-
-Latest local 320x180 real UDP matrix result (`MATRIX_CONTENTS=motion`, `MATRIX_RUNS=1`):
-
-| Scenario | Completed / decoded | Sender min target | Sender min FPS | Sender last target / FPS | Max frame gap | PSNR avg/min | NACK / RTX | Result |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `walking_dead_zone` | 156 / 154 | 90000 bps | 8 | 2500000 bps / 30 | 380 ms | 61.34 / 30.50 dB | 25 / 176 | PASS |
-| `bandwidth_cliff_recover` | 154 / 150 | 180000 bps | 8 | 2500000 bps / 30 | 101 ms | 59.24 / 30.16 dB | 28 / 132 | PASS |
-| `jitter_loss_recover` | 180 / 166 | 500000 bps | 15 | 2500000 bps / 30 | 230 ms | 60.55 / 24.08 dB | 13 / 64 | PASS |
-
-Aggregate: 3/3 cases passed, `decode_errors=0`, completed frames `490`, decoded frames `470`, sender target reached as low as `90000 bps`, sender FPS reached as low as `8`, sender recovered to `2500000 bps / 30 fps` in every case, max frame gap stayed at or below `380 ms`, PSNR average floor was `59.24 dB`, and all server caps recovered to unlimited at the end of each profile.
-
-Latest local 720p real UDP endpoint stability profile (`MATRIX_CONTENTS="motion low_motion detail_motion"`, `MATRIX_RUNS=3`, 1280x720, 2.5Mbps start):
-
-`Max completion gap` is the receiver wall-clock interval between completed access units and is the primary low-latency QoE smoothness gate. `Max media gap` is the RTP media-time gap between completed frames; in this live profile it is recorded and bounded separately because the sender may intentionally skip old frames around recovery boundaries to keep latency low instead of preserving file-like continuity. `MATRIX_RUNS>1` now maps each run to a deterministic `network_seed`, so repeated runs shift drop/jitter positions instead of replaying the same impairment pattern.
-
-| Scenario / content | Seeds | Completed / decoded | Sender min target | Sender min FPS | Sender last target floor / FPS | Max completion gap | Max media gap | PSNR avg/min floor | NACK / RTX |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `walking_dead_zone` / `motion` | 1,2,3 | 411 / 411 | 90000 bps | 5 | 1501936 bps / 30 | 456 ms | 666 ms | 57.72 / 24.21 dB | 138 / 988 |
-| `bandwidth_cliff_recover` / `motion` | 1,2,3 | 461 / 457 | 180000 bps | 8 | 1530305 bps / 30 | 186 ms | 400 ms | 56.02 / 26.33 dB | 191 / 865 |
-| `jitter_loss_recover` / `motion` | 1,2,3 | 549 / 537 | 500000 bps | 15 | 1776997 bps / 30 | 242 ms | 367 ms | 52.00 / 25.18 dB | 109 / 182 |
-| `walking_dead_zone` / `low_motion` | 1,2,3 | 462 / 460 | 90000 bps | 5 | 1403619 bps / 30 | 575 ms | 667 ms | 70.77 / 23.76 dB | 118 / 909 |
-| `bandwidth_cliff_recover` / `low_motion` | 1,2,3 | 477 / 475 | 180000 bps | 8 | 1417638 bps / 30 | 169 ms | 267 ms | 65.85 / 29.19 dB | 165 / 821 |
-| `jitter_loss_recover` / `low_motion` | 1,2,3 | 555 / 550 | 500000 bps | 15 | 1404020 bps / 30 | 277 ms | 67 ms | 66.25 / 37.57 dB | 87 / 170 |
-| `walking_dead_zone` / `detail_motion` | 1,2,3 | 447 / 447 | 90000 bps | 5 | 1563794 bps / 30 | 442 ms | 200 ms | 41.55 / 36.20 dB | 121 / 1103 |
-| `bandwidth_cliff_recover` / `detail_motion` | 1,2,3 | 485 / 481 | 180000 bps | 8 | 1588013 bps / 30 | 247 ms | 267 ms | 38.23 / 16.18 dB | 165 / 881 |
-| `jitter_loss_recover` / `detail_motion` | 1,2,3 | 567 / 554 | 500000 bps | 15 | 1748315 bps / 30 | 282 ms | 333 ms | 38.94 / 16.25 dB | 115 / 170 |
-
-Aggregate: 27/27 seeded cases passed, `network_seeds=[1,2,3]`, `decode_errors=0`, completed frames `4414`, decoded frames `4372`, sender target reached as low as `90000 bps`, sender FPS reached as low as `5`, sender recovered to `30 fps`, sender recovered as high as `2500000 bps`, max completion gap stayed at or below `575 ms`, max media gap stayed at or below `667 ms`, PSNR average floor was `38.23 dB`, PSNR minimum floor was `16.18 dB`, NACK count was `1209`, and retransmissions were `6089`.
-
-The key endpoint-side changes validated by this profile are: access units are enqueued to the pacer atomically so weak-network drops do not send half of a FU-A frame; the UDP long-stream sender uses a live low-latency pacer mode that can continue with P frames after stale P-frame drops; recovery keyframes are rate-limited instead of repeatedly injected during a recovery window; and the very weak `<100kbps` class drops to `5fps` before recovering to `30fps` when the route becomes healthy.
-
-Boundary of these UDP long-stream tests: they prove real process separation, core feedback wiring, live encoder adaptation, weak-network downshift, good-network recovery, receiver jitter/NACK, and real H264 decode/PSNR in a local relay-assisted topology. The relay is intentionally minimal and exists only to provide feedback plumbing, seeded deterministic impairment, and retransmission cache behavior. These tests still do not prove production-global optimum because they do not yet use Linux `tc/netem`, real NIC queues, multiple concurrent play clients, real renderer freeze metrics, or the full 5-scenario strategy comparison in the real UDP topology.
-
-Role-based link verification:
-
-```bash
-bash webrtc_qos_sdk/scripts/verify_role_linking.sh
-```
-
-This compiles separate push/server/play toy applications against `/root/output/include + /root/output/lib` and links only the small libraries required by each role.
-
-CMake consumers can either link individual module targets or use role targets:
-
-- `WebRtcQosSdk::role_transport`
-- `WebRtcQosSdk::role_server`
-- `WebRtcQosSdk::role_push`
-- `WebRtcQosSdk::role_play`
-- `WebRtcQosSdk::role_prototype`
-
-`verify_cmake_package.sh` builds external consumers for each role target through `find_package(WebRtcQosSdk CONFIG REQUIRED)`.
-
-Transport integration boundary:
-
-```bash
-./output/demo/transport_port_demo
-./output/demo/production_transport_demo
-./output/demo/dynamic_qos_demo
-./output/demo/ffmpeg_encoder_demo
-./output/demo/long_stream_qoe_demo --strategy=adaptive
-```
-
-Production transport code should implement the `TransportPort` send/deliver callbacks and map SDK message types to the business wire protocol. `TransportMessage::payload` is a borrowed view valid only during the callback, so async socket/reliable-channel code must copy it before returning. `DEMO_TRANSPORT_V1` is only the UDP demo envelope; it is not required by the SDK.
-
-`ProductionTransportAdapter` is the recommended starting template for production integration. It keeps `TransportPort` as the SDK boundary, copies payloads into `OwnedTransportMessage`, and classifies messages as:
-
-- RTP: unreliable media.
-- RTCP SR/RR/TWCC/NACK/PLI: unreliable control.
-- `DOWNLINK_QUALITY_V1` / `SENDER_RATE_CAP_V1` / `BYE`: reliable control.
-
-`dynamic_qos_demo` runs multiple dynamic weak-network transitions, not a single happy-path case. It covers walking into an outage and recovering, bandwidth cliff below 100kbps, RTT/jitter spike, oscillating edge coverage, and burst loss recovery. It verifies that SDK encoder adaptation decisions reduce bitrate/FPS under impairment, suppress sender-side loss-driven IDR when the sender cap is too low to carry a useful keyframe, avoid RTT-only keyframe storms, and restore bitrate/FPS after the network becomes good again.
-
-Dynamic QoS/QoE adaptation matrix:
-
-```bash
-bash webrtc_qos_sdk/scripts/run_dynamic_qos_matrix.sh
-```
-
-The matrix is driven by `scripts/dynamic_qos_scenarios.json` and writes:
-
-- `${LOG_DIR}/metrics.jsonl`: one row per scenario phase with estimate bitrate, final bitrate, RTT, loss, encoder target bitrate, max FPS, and keyframe request.
-- `${LOG_DIR}/summary.json`: aggregate FPS/bitrate range, keyframe count, threshold failures, and per-phase expected-vs-actual quantitative checks.
-- Threshold checks cover explicit per-phase bitrate ranges, FPS ranges, keyframe expectation, degraded bitrate drop, and recovery bitrate rise.
-
-Latest local dynamic QoS result:
-
-| Scenario | Phase | Network | Expected encoder bps | Actual encoder bps | Expected FPS | Actual FPS | Expected keyframe | Actual keyframe | Result |
-| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
-| walk_outage_recover | good | 10000kbps / 20ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| walk_outage_recover | outage | 80kbps / 1000ms / loss 0.45 | 80000-200000 | 156250 | 8-8 | 8 | false | false | PASS |
-| walk_outage_recover | poor | 120kbps / 650ms / loss 0.25 | 80000-150000 | 80000 | 8-8 | 8 | false | false | PASS |
-| walk_outage_recover | recovering | 1200kbps / 180ms / loss 0.03 | 800000-1200000 | 931187 | 15-30 | 15 | false | false | PASS |
-| walk_outage_recover | good_again | 10000kbps / 40ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| bandwidth_cliff_recover | bandwidth_cliff | 90kbps / 80ms / loss 0.02 | 80000-150000 | 118549 | 8-8 | 8 | false | false | PASS |
-| bandwidth_cliff_recover | recovered | 8000kbps / 30ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| rtt_jitter_spike_recover | rtt_spike | 700kbps / 900ms / loss 0.08 | 1000000-1500000 | 1305015 | 10-10 | 10 | false | false | PASS |
-| rtt_jitter_spike_recover | recovered | 5000kbps / 45ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| oscillating_edge | poor_1 | 180kbps / 550ms / loss 0.18 | 700000-950000 | 857500 | 10-10 | 10 | false | false | PASS |
-| oscillating_edge | poor_2 | 130kbps / 700ms / loss 0.22 | 700000-950000 | 857500 | 10-10 | 10 | true | true | PASS |
-| oscillating_edge | good_3 | 5000kbps / 35ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-| loss_burst_recover | loss_burst | 500kbps / 220ms / loss 0.60 | 120000-200000 | 156250 | 8-8 | 8 | false | false | PASS |
-| loss_burst_recover | recovered | 6000kbps / 35ms / loss 0.0 | 2000000-2500000 | 2500000 | 30-30 | 30 | false | false | PASS |
-
-The dynamic QoS summary from the latest run was: 5 scenarios, 19 phase rows, `encoder_bps` range `80000..2500000`, FPS range `8..30`, keyframe requests `1`, threshold failures `0`.
-
-When FFmpeg/libx264 is available, `ffmpeg_encoder_demo` encodes generated I420 frames into real H264 Annex-B access units, feeds them into `VideoSender + SenderPacer`, then applies a degraded `EncoderAdaptation` decision to the encoder. This keeps real encoder proof separate from the core QoS library and avoids forcing FFmpeg into push/server/play roles that do not need it.
-
-When FFmpeg's H264 decoder is available, the long-stream QoE matrix also decodes receiver Annex-B AUs before counting rendered receiver frames. The decoder runs in low-latency single-thread mode, receives the RTP timestamp as packet PTS, outputs I420 frames, and the matrix compares decoded PTS/RTP timestamp with the generated source I420 frame to produce PSNR. The demo also records frame latency from generated source frame to receiver AU output, plus a jitter-buffer residence proxy from first packet arrival to complete AU output. `decode_errors` only counts real FFmpeg send/receive failures; legal decoder buffering with no immediate output is not misclassified as a bad frame. `decode_errors`, `decoded_frames`, `quality_samples`, `psnr_avg`, `psnr_min`, `frame_latency_*`, and `jitter_buffer_*` are therefore hard QoE inputs, not log-only diagnostics.
-
-Long-stream encoder QoE strategy matrix:
-
-```bash
-bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
-MATRIX_RUNS=2 bash webrtc_qos_sdk/scripts/run_long_stream_qoe_matrix.sh
-bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_profile.sh
-bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_stability.sh
-```
-
-This matrix is the first quantitative answer to whether the current QoS policy is merely "working" or actually preferable under a defined objective. It runs a real FFmpeg/libx264 H264 long stream through `VideoSender -> SenderPacer -> server-like cache/NACK -> VideoReceiver/VideoJitterPlayer` across multiple mobile weak-network transitions:
-
-The long-stream runner is still an in-process SFU-like model, not a standalone production SFU process. It models the C/S server responsibilities needed for this phase: sender-side uplink TWCC generation, RTCP RR RTT input, downlink weak-network capacity/delay/jitter/loss, retransmission cache, NACK/PLI handling, and server-generated sender rate caps. The separate UDP demos prove the libraries can cross process boundaries on local sockets, but the long-stream QoE numbers below are not yet a `sender -> real SFU -> receiver` netem deployment result.
-
-- `walking_dead_zone`: good network, sudden outage below 100kbps with high RTT/loss/jitter, poor edge coverage, then recovery to good network.
-- `jitter_loss_oscillation`: moderate capacity with heavy jitter, periodic loss/reorder, then recovery.
-- `bandwidth_staircase`: medium bandwidth, step-down to poor edge bandwidth, then recovery.
-- `rtt_jitter_spike_recover`: high RTT and heavy jitter without explicit packet loss, then recovery.
-- `loss_burst_recover`: burst packet loss with recovery, separated from the RTT/jitter-only case.
-
-Each scenario is now tested against three generated content profiles, because QoS that passes on one easy synthetic picture is not enough:
-
-- `motion`: baseline gradient plus a moving object.
-- `low_motion`: low-detail, slow-motion content that should preserve quality and avoid unnecessary drops.
-- `detail_motion`: stable high-detail texture plus motion, used to catch over-aggressive FPS/bitrate decisions without turning the input into an unrealistic per-frame flashing stress pattern.
-
-The matrix now compares two backend families:
-
-- `lightweight`: SDK fallback estimator plus SDK H264 jitter player.
-- `webrtc`: WebRTC GoogCC bridge plus WebRTC H264 video jitter bridge, while keeping SDK pacer/NACK/server recovery.
-
-For each backend, it compares:
-
-- `adaptive`: current QoS decision applies bitrate and FPS reduction.
-- `balanced`: bitrate adapts, FPS is kept at least 10fps.
-- `bitrate_only`: bitrate adapts, FPS remains 30fps.
-- `fixed`: no bitrate/FPS adaptation.
-
-The script writes `${LOG_DIR}/metrics.jsonl` and `${LOG_DIR}/summary.json`. `MATRIX_RUNS=N` repeats every content/scenario pair with deterministic weak-network seeds (`network_seed=run`) so failures are reproducible and the summary can report both aggregate and worst-case behavior. It reports two objective functions rather than a single ambiguous "best":
-
-- `smoothness_score`: freezes, max freeze duration, network drops, weak-phase receiver FPS, and recovery FPS.
-- `balanced_qoe_score`: `smoothness_score` plus stronger penalties for duplicate output frames, network drops, render deadline misses, real FFmpeg H264 decode errors, decoded-frame gaps, low decoded-frame PSNR, high receiver frame latency, high jitter-buffer residence time, weak-network non-adaptation, slow adaptation response, and failure to recover target bitrate/FPS when the route becomes good again. This prevents a strategy that repeats low-information frames, misses the playout deadline, outputs undecodable frames, visibly degrades picture quality, builds seconds of queue, reacts too slowly, or refuses to adapt from being marked best just because it does not visibly freeze.
-
-The matrix now has hard validation rules when the WebRTC backend is available:
-
-- `webrtc/adaptive` must produce `decode_errors=0` in every run/content/scenario.
-- `webrtc/adaptive` must produce one source-aligned PSNR sample for every receiver frame in every run/content/scenario.
-- `webrtc/adaptive` must keep `psnr_avg >= 20.0 dB` and `psnr_min >= 14.0 dB` in every run/content/scenario.
-- `webrtc/adaptive` must produce one frame-latency and jitter-buffer sample for every receiver frame, with `frame_latency_max_ms <= 1800` and `jitter_buffer_max_ms <= 1200`.
-- `webrtc/adaptive` must keep `freeze_count <= 3` and `max_freeze_ms <= 2000` in every run/content/scenario.
-- `webrtc/adaptive` must keep render deadline misses within `<= 3` frames and `<= 2%` of render candidates per run/content/scenario.
-- `webrtc/adaptive` must meet per-run/per-content/per-scenario weak-network downshift and good-network recovery thresholds for bitrate and FPS.
-- `webrtc/adaptive` must meet per-phase adaptation response-time thresholds after entering outage, poor, and good-again phases.
-- `webrtc/adaptive` must be the best or tied-best `balanced_qoe_score` candidate in every run/content/scenario.
-- The aggregate best `balanced_qoe_score` across all seeded cases must also be `webrtc/adaptive`.
-- Negative controls such as `bitrate_only` and `fixed` are allowed to fail their individual demo thresholds, but their summaries are still collected and scored.
-
-Latest local seeded long-stream QoE result (`MATRIX_RUNS=1`, 320x180, 3 content profiles, 5 scenarios, 15 cases per backend/strategy):
-
-| Content | Scenario | WebRTC/adaptive score | Freeze / max ms | Drops | PSNR avg/min | Max latency/jitter ms | Decode errors |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| motion | walking_dead_zone | 0.000 | 0 / 0 | 0 | 58.57 / 23.66 | 1280 / 730 | 0 |
-| motion | jitter_loss_oscillation | 30.000 | 0 / 0 | 10 | 58.06 / 29.31 | 445 / 420 | 0 |
-| motion | bandwidth_staircase | 0.000 | 0 / 0 | 0 | 62.03 / 54.11 | 885 / 330 | 0 |
-| motion | rtt_jitter_spike_recover | 0.000 | 0 / 0 | 0 | 59.44 / 24.49 | 710 / 415 | 0 |
-| motion | loss_burst_recover | 33.000 | 0 / 0 | 11 | 61.02 / 25.95 | 455 / 320 | 0 |
-| low_motion | walking_dead_zone | 241.000 | 1 / 1410 | 0 | 60.54 / 24.78 | 930 / 495 | 0 |
-| low_motion | jitter_loss_oscillation | 30.000 | 0 / 0 | 10 | 59.96 / 26.69 | 430 / 410 | 0 |
-| low_motion | bandwidth_staircase | 0.000 | 0 / 0 | 0 | 61.34 / 26.02 | 765 / 410 | 0 |
-| low_motion | rtt_jitter_spike_recover | 0.000 | 0 / 0 | 0 | 61.24 / 25.84 | 680 / 350 | 0 |
-| low_motion | loss_burst_recover | 36.000 | 0 / 0 | 12 | 62.33 / 28.20 | 445 / 250 | 0 |
-| detail_motion | walking_dead_zone | 0.000 | 0 / 0 | 0 | 49.59 / 42.48 | 1445 / 485 | 0 |
-| detail_motion | jitter_loss_oscillation | 43.336 | 0 / 0 | 10 | 46.36 / 15.33 | 950 / 435 | 0 |
-| detail_motion | bandwidth_staircase | 0.000 | 0 / 0 | 0 | 49.58 / 41.90 | 1480 / 345 | 0 |
-| detail_motion | rtt_jitter_spike_recover | 0.000 | 0 / 0 | 0 | 49.75 / 22.62 | 1305 / 535 | 0 |
-| detail_motion | loss_burst_recover | 42.000 | 0 / 0 | 14 | 50.70 / 43.13 | 1060 / 410 | 0 |
-
-Latest aggregate ranking:
-
-| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Latency avg/max ms | Jitter-buffer avg/max ms | Decode errors | Drops | Deadline drops | Failed cases |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 455.336 | 56.84 / 15.33 | 131.9 / 1480 | 41.1 / 730 | 0 | 67 | 0 | 0 |
-| webrtc/balanced | 3342.996 | 56.85 / 15.33 | 138.8 / 1480 | 41.4 / 665 | 0 | 67 | 0 | 0 |
-| lightweight/adaptive | 11001.106 | 27.47 / 14.30 | 103.0 / 1790 | 9.0 / 435 | 74 | 67 | 7 | 3 |
-| lightweight/balanced | 14101.567 | 26.11 / 7.65 | 100.7 / 1795 | 8.5 / 240 | 80 | 64 | 3 | 0 |
-| webrtc/bitrate_only | 41023.278 | 52.95 / 15.46 | 165.6 / 890 | 48.4 / 430 | 0 | 104 | 0 | 0 |
-| lightweight/bitrate_only | 53477.620 | 25.98 / 14.30 | 135.9 / 1595 | 6.3 / 75 | 69 | 105 | 0 | 0 |
-| lightweight/fixed | 146617.730 | 25.14 / 10.98 | 179.6 / 1800 | 5.5 / 105 | 64 | 8284 | 492 | 0 |
-| webrtc/fixed | 166487.944 | 59.16 / 14.97 | 302.7 / 1800 | 48.1 / 1175 | 0 | 8565 | 1437 | 0 |
-
-The current conclusion is deliberately bounded: this proves the best strategy only inside the defined scenario set, content set, candidate set, backend set, seed set, video profiles, and objective function. It does not prove a global production optimum. It does show that the target `webrtc` backend now closes the required control loops: periodic GoogCC process ticks, `data_in_flight`, probe clusters, route-change recovery with a server-declared healthy-route start bitrate, capacity-aware server `SENDER_RATE_CAP_V1`, smoothed loss-driven FPS adaptation, WebRTC H264 jitter output that survives real FFmpeg decoding with source-aligned PSNR checks, and receiver-side render deadline accounting. Under the current 3-content/5-scenario synthetic dynamic weak-network matrix, `webrtc/adaptive` is the best aggregate balanced-QoE candidate with `decode_errors=0` and `failed_cases=0`.
-
-720p targeted profile status:
-
-```bash
-bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_profile.sh
-```
-
-This profile intentionally raises the validation bar to 1280x720, start 2.5Mbps, max 5Mbps, and recovered-route start 3.5Mbps. The latest local run passed with `validation_failures=0`; `webrtc/adaptive` is the best aggregate balanced-QoE candidate. The important fix was making the server rate cap capacity-aware for all downlink capacities below the sender maximum, not only for sub-1Mbps links. Without that, the sender could recover to 5Mbps while the simulated server->receiver route could only carry 4Mbps.
-
-| Content | Scenario | Freeze / max ms | Drops | Deadline drops | PSNR avg/min | Max latency/jitter ms | Decode errors |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| motion | walking_dead_zone | 0 / 0 | 0 | 0 | 54.92 / 24.99 | 1725 / 755 | 0 |
-| motion | jitter_loss_oscillation | 0 / 0 | 10 | 0 | 54.39 / 26.57 | 940 / 695 | 0 |
-| motion | bandwidth_staircase | 0 / 0 | 0 | 0 | 57.59 / 45.09 | 1700 / 435 | 0 |
-| motion | rtt_jitter_spike_recover | 0 / 0 | 0 | 0 | 58.44 / 49.93 | 1420 / 735 | 0 |
-| motion | loss_burst_recover | 0 / 0 | 15 | 0 | 58.44 / 45.96 | 1040 / 520 | 0 |
-| low_motion | walking_dead_zone | 0 / 0 | 0 | 0 | 65.59 / 23.83 | 1490 / 345 | 0 |
-| low_motion | jitter_loss_oscillation | 0 / 0 | 10 | 0 | 66.37 / 24.57 | 680 / 415 | 0 |
-| low_motion | bandwidth_staircase | 0 / 0 | 0 | 0 | 70.51 / 48.58 | 1480 / 430 | 0 |
-| low_motion | rtt_jitter_spike_recover | 0 / 0 | 0 | 0 | 69.72 / 24.01 | 955 / 505 | 0 |
-| low_motion | loss_burst_recover | 1 / 1095 | 15 | 0 | 72.01 / 32.39 | 840 / 370 | 0 |
-| detail_motion | walking_dead_zone | 2 / 1220 | 0 | 2 | 41.33 / 29.35 | 1720 / 740 | 0 |
-| detail_motion | jitter_loss_oscillation | 0 / 0 | 12 | 0 | 32.92 / 15.19 | 990 / 640 | 0 |
-| detail_motion | bandwidth_staircase | 1 / 1140 | 0 | 1 | 41.81 / 23.16 | 1790 / 860 | 0 |
-| detail_motion | rtt_jitter_spike_recover | 1 / 1440 | 0 | 0 | 41.06 / 24.84 | 1550 / 730 | 0 |
-| detail_motion | loss_burst_recover | 0 / 0 | 16 | 0 | 42.12 / 35.32 | 975 / 625 | 0 |
-
-720p aggregate ranking:
-
-| Backend/strategy | Aggregate balanced QoE | PSNR avg/min | Latency avg/max ms | Jitter-buffer avg/max ms | Decode errors | Drops | Deadline drops | Failed cases |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 1553.297 | 55.52 / 15.19 | 194.9 / 1790 | 60.2 / 860 | 0 | 78 | 3 | 0 |
-| webrtc/balanced | 4623.130 | 55.75 / 15.19 | 192.0 / 1790 | 60.2 / 860 | 0 | 78 | 3 | 0 |
-| webrtc/bitrate_only | 41478.500 | 51.19 / 17.02 | 195.5 / 1280 | 61.7 / 615 | 0 | 95 | 1 | 0 |
-| webrtc/fixed | 278640.500 | 58.19 / 39.31 | 141.3 / 1650 | 52.5 / 1190 | 0 | 46374 | 1001 | 0 |
-
-This is still not a production-global optimum. The tightest 720p cases are `detail_motion/walking_dead_zone` and `detail_motion/bandwidth_staircase`: they pass, but their max latency is close to the 1800ms threshold and they can require render deadline drops. The most important fix after this profile was correcting video RTP timestamp generation to follow capture time at 90kHz rather than always incrementing as if the source were fixed 30fps. Without that, FPS downshift during weak-network phases made receiver/jitter timing less faithful and pushed the hardest `detail_motion/bandwidth_staircase` recovery case over the freeze/deadline gates.
-
-720p multi-seed stability profile:
-
-```bash
-bash webrtc_qos_sdk/scripts/run_long_stream_qoe_720p_stability.sh
-```
-
-This profile fixes the candidate set to `webrtc/adaptive` and repeats the 720p content/scenario matrix across three deterministic network seeds. It is not a strategy comparison; it is a stability gate for checking whether the 720p single-run pass was accidental.
-
-Latest local stability result (`MATRIX_RUNS=3`, 3 content profiles, 5 scenarios, 45 total cases):
-
-| Backend/strategy | Cases | Aggregate balanced QoE | PSNR avg/min | Max latency/jitter ms | Decode errors | Drops | Deadline drops | Failed cases | Validation failures |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| webrtc/adaptive | 45 | 3668.548 | 56.140 / 15.673 | 1800 / 895 | 0 | 212 | 3 | 0 | 0 |
-
-Important boundary samples from the stability run:
-
-- The maximum frame latency still reaches the 1800ms gate in one seeded case, so latency margin is not yet generous.
-- `detail_motion/bandwidth_staircase` remains the hardest recovery case after the RTP timestamp fix: worst seeded run is `run=2`, `freeze=1`, `max_freeze_ms=1765`, `render_deadline_drops=3`, `frame_latency_max_ms=1710`, `jitter_buffer_max_ms=895`, and `psnr_avg=42.341`.
-- `detail_motion/rtt_jitter_spike_recover` can drop to `psnr_min ~= 15.67 dB`, which is above the current hard floor but still visually fragile.
-
-The current 720p evidence is therefore stronger than a one-off demo pass: hard validation passes across 45 seeded cases with no decode errors, no duplicate output frames, no validation failures, and only 3 total render deadline drops. It still does not prove global optimum. The migration from in-process SFU-like validation to a real process topology has started: `run_udp_long_stream_smoke.sh` proves `sender -> server -> receiver` over UDP with real TWCC/RR/downlink-quality/NACK/rate-cap feedback and real H264 decode/PSNR, and `run_udp_long_stream_matrix.sh` now proves live encoder bitrate/FPS downshift and recovery across three real UDP weak-network profiles. The next proof step is to move the full seeded 720p QoE matrix into this real UDP topology with UDP/netem or an equivalent link emulator, then add longer mobile traces, multiple receive clients, renderer freeze metrics, and stricter recovery-margin metrics rather than only checking whether the current thresholds pass.
-
-UDP weak-network matrix:
-
-```bash
-RUNS=3 bash webrtc_qos_sdk/scripts/run_udp_netem_matrix.sh
-```
-
-This runs baseline/drop, burst loss, reorder, delay, jitter, and mixed damage scenarios repeatedly and checks TWCC, RTCP RR, NACK, retransmission, PLI forwarding, IDR resend, sender rate cap, and recovered frame count from the logs.
-It also writes machine-readable metrics:
-
-- `${LOG_DIR}/metrics.jsonl`: one JSON object per scenario run.
-- `${LOG_DIR}/summary.json`: aggregate min/max/avg values for frames, RTT, final bitrate, retransmission success ratio, observed loss, reported loss, and jitter.
-- Threshold failures include missing feedback/RR/rate-cap/PLI/NACK/retransmission, insufficient recovered frames, missing keyframes, max frame gap above 34ms, missing reorder/delay/jitter observation, and failed rate-cap application.
-
-Latest local UDP QoE/QoS result:
-
-| Scenario | Observed impairment | Expected frames | Actual frames | Expected keyframes | Actual keyframes | Expected max frame gap | Actual max frame gap | Expected retransmit ratio | Actual retransmit ratio | Result |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| baseline_single_loss | drop=1 reorder=0 delay=0 jitter=0 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.00 | PASS |
-| burst_loss | drop=2 reorder=0 delay=0 jitter=0 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 2.00 | PASS |
-| reorder_only | drop=1 reorder=1 delay=0 jitter=0 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.00 | PASS |
-| delay_only | drop=1 reorder=0 delay=2 jitter=0 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.50 | PASS |
-| jitter_periodic | drop=1 reorder=0 delay=0 jitter=3 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.33 | PASS |
-| mixed_loss_reorder_delay_jitter | drop=2 reorder=2 delay=1 jitter=3 | >=3 | 3 | >=1 | 3 | <=34ms | 33.33ms | >=1.0 | 1.67 | PASS |
-
-This UDP Phase-1a QoE definition is intentionally minimal and measurable before a real renderer exists: the receiver must recover frames, output keyframes, keep RTP timestamp frame gaps within one 30fps frame interval, and complete retransmission-based recovery. The long-stream QoE matrix above already adds real H264 decode, PSNR, frame-latency proxy, and jitter-buffer residence proxy; after renderer integration these proxy metrics should be replaced or supplemented with real freeze duration, render queue depth, and glass-to-glass latency.
-
-The predefined weak-network scenario file is `scripts/udp_netem_scenarios.json`. It currently covers:
-
-- `baseline_single_loss`: one RTP loss.
-- `burst_loss`: two close RTP losses.
-- `reorder_only`: out-of-order RTP arrival.
-- `delay_only`: fixed downlink delay.
-- `jitter_periodic`: periodic extra delay.
-- `mixed_loss_reorder_delay_jitter`: burst loss, reorder, fixed delay, and periodic jitter combined.
-
-Each scenario carries its expected metrics threshold, so the matrix validates behavior against explicit expectations instead of only grepping for log lines.
-
-UDP soak entry:
-
-```bash
-DURATION_SEC=60 MATRIX_RUNS=1 bash webrtc_qos_sdk/scripts/run_udp_soak.sh
-```
-
-This repeatedly runs the weak-network matrix for the requested duration, stores per-iteration logs, and reports pass/fail counts.
-
-`verify_phase1a.sh` runs the build/install path, standalone demos, WebRTC adapter smokes, output integration demo, UDP weak-network matrix, short soak, role-linking check, GN dependency checks, and required artifact checks.
-It also runs the dynamic QoS adaptation matrix and, when present, the FFmpeg/libx264 encoder demo plus the long-stream QoE strategy matrix.
-
-`verify_cmake_package.sh` verifies external projects can consume `/root/output` via `find_package(WebRtcQosSdk CONFIG REQUIRED)` and link module targets such as `WebRtcQosSdk::webrtc_qos_transport`.
-It also verifies optional WebRTC adapter targets such as `WebRtcQosSdk::webrtc_qos_googcc_adapter` and `WebRtcQosSdk::webrtc_qos_video_jitter_adapter` when those archives are present, plus optional FFmpeg encoder/decoder targets when FFmpeg is installed.
-
-The loopback demo intentionally drops one RTP packet, triggers a NACK-style recovery event, retransmits from the server-side cache with the original RTP sequence number and a new transport sequence number, and still outputs two Annex-B access units.
-
-Implementation boundary in this slice:
-
-- H264 Annex-B parsing, RTP packetization/depacketization, TWCC RTP header extension, lightweight pacer, wire-format helpers, and loopback demos are implemented.
-- Retransmission cache keeps RTP identity stable and assigns a new transport sequence number on resend.
-- Standard RTCP helpers are provided for SR, RR, TWCC transport feedback, Generic NACK, and PLI.
-- `libwebrtc_qos_nack.a` packages the Phase-1a lightweight NACK and retransmission recovery path without WebRTC task queue dependencies.
-- WebRTC `sdk_qos` now packages `network_control/goog_cc` as `libwebrtc_qos_googcc_adapter.a` with a clean public C++ header.
-- WebRTC `sdk_qos` now packages H264 video jitter as `libwebrtc_qos_video_jitter_adapter.a` with a clean public C++ header.
-- `libwebrtc_qos_googcc_bridge.a` packages the optional facade bridge from `SenderQosController` to `GoogCcAdapter`.
-- `libwebrtc_qos_video_jitter_bridge.a` packages the optional facade bridge from `VideoJitterPlayer` to `VideoJitterAdapter`.
-- `output_integration_demo` proves an application can consume the installed `include + lib` layout without depending on the source tree.
-- `transport_port_demo` proves the business transport boundary can be implemented without the UDP demo envelope.
-- `production_transport_demo` proves the recommended production adapter template owns payload copies before async transport queues and separates media/control/reliable-control lanes.
-- `udp_*_demo` proves the same small libraries work across a real local UDP C/S chain.
-- `udp_*_demo` also verifies `PLI -> server forward -> sender IDR resend -> receiver keyframe output`.
-- `run_udp_long_stream_smoke.sh` proves a real three-process UDP long-stream path with H264 encode/decode, TWCC, RTCP RR, receiver downlink quality, NACK retransmission, sender rate cap, PSNR, and duplicate completed-frame rejection.
-- `run_udp_direct_long_stream_smoke.sh` proves the same endpoint QoS loop without the relay: receiver-generated TWCC/RR/NACK/rate-cap feedback goes directly to the sender, and sender-side RTP cache retransmission recovers intentionally dropped packets.
-- `run_udp_direct_long_stream_matrix.sh` proves the relay-free endpoint path across dynamic weak-network profiles, with receiver-side drop/delay/jitter/rate-cap generation and explicit completion-gap, media-gap, PSNR, NACK, retransmission, and adaptation gates.
-- `run_udp_long_stream_matrix.sh` proves real three-process dynamic weak-network adaptation with the server kept as a minimal relay/test harness: sender bitrate/FPS downshift under weak phases, cap removal and FPS recovery under good phases, receiver interval quality reporting, no decoder errors, seeded deterministic drop/jitter variation, and quantitative PSNR/completion-gap/media-gap gates.
-- `run_udp_long_stream_720p_profile.sh` provides the faster 1280x720 endpoint QoS gate, while `run_udp_long_stream_720p_stability.sh` repeats it across 3 content profiles and 3 deterministic network seeds with live encoder reconfiguration, atomic access-unit pacing, NACK recovery, PSNR validation, and separate low-latency completion-gap versus media-gap accounting.
-- `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.
-- `run_dynamic_qos_matrix.sh` proves the sender adaptation surface reacts in both directions: it degrades under bandwidth/RTT/loss impairment and climbs back when the network recovers.
-- `ffmpeg_encoder_demo` proves real H264 encoder output can enter the same Annex-B -> RTP -> pacer path used by synthetic/file demos.
-- `libwebrtc_qos_ffmpeg_decoder.a` and `run_long_stream_qoe_matrix.sh` prove receiver Annex-B AU output can be decoded by a real H264 decoder before it is counted as a QoE receiver frame, and compute source-aligned I420 PSNR for objective picture quality.
-- `run_long_stream_qoe_matrix.sh` compares adaptive, balanced, bitrate-only, and fixed strategies with real H264 output over dynamic weak-network transitions and separates smoothness-only scoring from balanced QoE scoring with decode-error and PSNR penalties.
-- `run_udp_soak.sh` repeats the weak-network matrix by duration and provides the local soak/stress entry point before replacing `DEMO_TRANSPORT_V1`.
-- `verify_role_linking.sh` proves role-based integration can avoid a monolithic `libwebrtc.a`.
-
-Metric references:
-
-- W3C WebRTC Stats defines receiver-side video freeze, total freeze duration, jitter buffer delay, packet discard, NACK, and sender-side target bitrate, FPS, encoded frames, keyframes, QP, encode time, packet send delay, and quality-limitation fields: https://www.w3.org/TR/webrtc-stats/
-- LiveKit's connection-quality calculation is a useful SFU-side reference: its knowledge-base article describes packet loss, video layer delivery, and bitrates as the active quality components, with jitter/RTT currently disabled in that packet-score path: https://kb.livekit.io/articles/2455399507-how-is-connection-quality-determined
+- W3C WebRTC Stats：定义 receiver video freeze、total freeze duration、jitter buffer delay、packet discard、NACK，以及 sender target bitrate、FPS、encoded frames、keyframes、QP、encode time、packet send delay、quality limitation 等指标。https://www.w3.org/TR/webrtc-stats/
+- LiveKit connection quality：可作为 SFU 侧质量评分参考，主要考虑 packet loss、video layer delivery 和 bitrate。https://kb.livekit.io/articles/2455399507-how-is-connection-quality-determined
