@@ -129,6 +129,8 @@ int main(int argc, char** argv) {
   uint32_t applied_bitrate_bps = bitrate_bps;
   uint32_t applied_fps = 30;
   bool force_keyframe_next = true;
+  int64_t route_recovery_until_us = 0;
+  uint32_t route_recovery_bps = 0;
   std::unordered_map<uint16_t, PacketFeedback> sent_packet_feedback;
   int64_t pacer_time_us = 0;
   SenderPacer pacer(
@@ -178,8 +180,19 @@ int main(int argc, char** argv) {
   uint32_t last_sr_lsr = 0;
   const auto apply_adaptation = [&]() -> Status {
     const TargetRates rates = qos.GetTargetRates(pacer_time_us);
-    pacer.SetTargetBitrate(rates.pacing_bps);
+    const bool in_route_recovery =
+        route_recovery_until_us > 0 && pacer_time_us < route_recovery_until_us;
+    const uint32_t effective_pacing_bps =
+        in_route_recovery ? std::max(route_recovery_bps, rates.pacing_bps)
+                          : rates.pacing_bps;
+    pacer.SetTargetBitrate(effective_pacing_bps);
     EncoderAdaptation adaptation = qos.GetEncoderAdaptation(pacer_time_us);
+    if (in_route_recovery) {
+      adaptation.target_bitrate_bps =
+          std::max(route_recovery_bps, adaptation.target_bitrate_bps);
+      adaptation.max_fps = 30;
+      adaptation.request_keyframe = true;
+    }
     adaptation.target_bitrate_bps =
         std::max<uint32_t>(qos_config.min_bitrate_bps,
                            adaptation.target_bitrate_bps);
@@ -276,6 +289,14 @@ int main(int argc, char** argv) {
       status = qos.OnSenderRateCap(cap);
       if (!status) {
         return status;
+      }
+      if (cap.cap_bps == kUnlimitedRateCapBps) {
+        route_recovery_bps = std::max<uint32_t>(bitrate_bps, 2000000);
+        route_recovery_until_us = pacer_time_us + 1500000;
+        status = qos.OnNetworkRouteChange(route_recovery_bps, pacer_time_us);
+        if (!status) {
+          return status;
+        }
       }
       ++rate_caps;
     }

@@ -8,7 +8,11 @@ FRAMES="${FRAMES:-210}"
 WIDTH="${WIDTH:-320}"
 HEIGHT="${HEIGHT:-180}"
 BITRATE="${BITRATE:-1200000}"
-CONTENT="${CONTENT:-motion}"
+MATRIX_CONTENTS="${MATRIX_CONTENTS:-motion}"
+MATRIX_RUNS="${MATRIX_RUNS:-1}"
+MIN_RECONFIGS_WALKING="${MIN_RECONFIGS_WALKING:-10}"
+MIN_RECONFIGS_BANDWIDTH="${MIN_RECONFIGS_BANDWIDTH:-8}"
+MIN_RECONFIGS_JITTER="${MIN_RECONFIGS_JITTER:-4}"
 
 rm -rf "${LOG_DIR}"
 mkdir -p "${LOG_DIR}"
@@ -17,22 +21,24 @@ run_case() {
   local name="$1"
   local profile="$2"
   local base_port="$3"
-  local expect_frames="$4"
-  local min_completed="$5"
-  local min_decoded="$6"
-  local min_target_max="$7"
-  local min_fps_max="$8"
-  local min_reconfigs="$9"
-  local max_gap_ms="${10}"
-  local min_psnr_avg="${11}"
-  local min_psnr_min="${12}"
-  local min_phase_changes="${13}"
-  local min_rate_caps="${14}"
-  local min_nack="${15}"
-  local min_retransmitted="${16}"
+  local content="$4"
+  local run="$5"
+  local expect_frames="$6"
+  local min_completed="$7"
+  local min_decoded="$8"
+  local min_target_max="$9"
+  local min_fps_max="${10}"
+  local min_reconfigs="${11}"
+  local max_gap_ms="${12}"
+  local min_psnr_avg="${13}"
+  local min_psnr_min="${14}"
+  local min_phase_changes="${15}"
+  local min_rate_caps="${16}"
+  local min_nack="${17}"
+  local min_retransmitted="${18}"
   local case_dir="${LOG_DIR}/${name}"
 
-  echo "running udp long stream case ${name}"
+  echo "running udp long stream case ${name} content=${content} run=${run}"
   SDK_ROOT="${SDK_ROOT}" \
   BASE_PORT="${base_port}" \
   LOG_DIR="${case_dir}" \
@@ -42,14 +48,15 @@ run_case() {
   WIDTH="${WIDTH}" \
   HEIGHT="${HEIGHT}" \
   BITRATE="${BITRATE}" \
-  CONTENT="${CONTENT}" \
+  CONTENT="${content}" \
   JITTER_MS=0 \
   JITTER_EVERY_N=0 \
     bash "${SDK_ROOT}/scripts/run_udp_long_stream_smoke.sh" \
       >"${case_dir}.stdout" 2>&1
 
   python3 - "${case_dir}/summary.json" "${LOG_DIR}/metrics.jsonl" \
-    "${name}" "${profile}" "${min_completed}" "${min_decoded}" \
+    "${name}" "${profile}" "${content}" "${run}" \
+    "${min_completed}" "${min_decoded}" \
     "${min_target_max}" "${min_fps_max}" "${min_reconfigs}" \
     "${max_gap_ms}" "${min_psnr_avg}" "${min_psnr_min}" \
     "${min_phase_changes}" "${min_rate_caps}" "${min_nack}" \
@@ -62,19 +69,21 @@ summary_path = Path(sys.argv[1])
 jsonl_path = Path(sys.argv[2])
 name = sys.argv[3]
 profile = sys.argv[4]
+content = sys.argv[5]
+run = int(sys.argv[6])
 thresholds = {
-    "min_completed": int(sys.argv[5]),
-    "min_decoded": int(sys.argv[6]),
-    "min_target_max": int(sys.argv[7]),
-    "min_fps_max": int(sys.argv[8]),
-    "min_reconfigs": int(sys.argv[9]),
-    "max_gap_ms": int(sys.argv[10]),
-    "min_psnr_avg": float(sys.argv[11]),
-    "min_psnr_min": float(sys.argv[12]),
-    "min_phase_changes": int(sys.argv[13]),
-    "min_rate_caps": int(sys.argv[14]),
-    "min_nack": int(sys.argv[15]),
-    "min_retransmitted": int(sys.argv[16]),
+    "min_completed": int(sys.argv[7]),
+    "min_decoded": int(sys.argv[8]),
+    "min_target_max": int(sys.argv[9]),
+    "min_fps_max": int(sys.argv[10]),
+    "min_reconfigs": int(sys.argv[11]),
+    "max_gap_ms": int(sys.argv[12]),
+    "min_psnr_avg": float(sys.argv[13]),
+    "min_psnr_min": float(sys.argv[14]),
+    "min_phase_changes": int(sys.argv[15]),
+    "min_rate_caps": int(sys.argv[16]),
+    "min_nack": int(sys.argv[17]),
+    "min_retransmitted": int(sys.argv[18]),
 }
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 sender = summary["sender"]
@@ -123,6 +132,8 @@ check(receiver["nack"] >= thresholds["min_nack"], "nack_low")
 check(receiver["downlink_reports"] > 0, "downlink_reports_missing")
 
 summary["case"] = name
+summary["content"] = content
+summary["run"] = run
 summary["thresholds"] = thresholds
 summary["validation_failures"] = failures
 with jsonl_path.open("a", encoding="utf-8") as handle:
@@ -131,10 +142,12 @@ if failures:
     print(json.dumps(summary, indent=2, sort_keys=True), file=sys.stderr)
     raise SystemExit(f"{name} failed: {', '.join(failures)}")
 print(
-    "case={case} completed={completed} decoded={decoded} "
+    "case={case} content={content} run={run} completed={completed} decoded={decoded} "
     "target_min={target_min} fps_min={fps_min} target_last={target_last} "
     "gap={gap} psnr_avg={psnr_avg:.2f}".format(
         case=name,
+        content=content,
+        run=run,
         completed=receiver["completed"],
         decoded=receiver["decoded"],
         target_min=sender["adapt_target_min"],
@@ -148,12 +161,23 @@ PY
 }
 
 : >"${LOG_DIR}/metrics.jsonl"
-run_case walking_dead_zone walking_dead_zone "$((BASE_PORT + 0))" \
-  80 100 100 100000 8 10 500 40.0 20.0 4 4 1 1
-run_case bandwidth_cliff_recover bandwidth_cliff_recover "$((BASE_PORT + 100))" \
-  100 100 100 200000 8 8 300 40.0 20.0 4 4 1 1
-run_case jitter_loss_recover jitter_loss_recover "$((BASE_PORT + 200))" \
-  100 120 120 500000 15 8 300 35.0 20.0 3 4 1 1
+case_index=0
+for content in ${MATRIX_CONTENTS}; do
+  for run in $(seq 1 "${MATRIX_RUNS}"); do
+    run_case "walking_dead_zone_${content}_run${run}" walking_dead_zone \
+      "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
+      80 100 100 100000 8 "${MIN_RECONFIGS_WALKING}" 500 35.0 18.0 4 4 1 1
+    case_index=$((case_index + 1))
+    run_case "bandwidth_cliff_recover_${content}_run${run}" bandwidth_cliff_recover \
+      "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
+      100 100 100 200000 8 "${MIN_RECONFIGS_BANDWIDTH}" 300 35.0 18.0 4 4 1 1
+    case_index=$((case_index + 1))
+    run_case "jitter_loss_recover_${content}_run${run}" jitter_loss_recover \
+      "$((BASE_PORT + case_index * 100))" "${content}" "${run}" \
+      100 120 120 500000 15 "${MIN_RECONFIGS_JITTER}" 300 30.0 18.0 3 4 1 1
+    case_index=$((case_index + 1))
+  done
+done
 
 python3 - "${LOG_DIR}/metrics.jsonl" "${LOG_DIR}/summary.json" <<'PY'
 import json
@@ -172,6 +196,8 @@ failures = [
 ]
 summary = {
     "cases": len(rows),
+    "contents": sorted({row["content"] for row in rows}),
+    "runs": sorted({row["run"] for row in rows}),
     "validation_failures": failures,
     "all_passed": not failures,
     "min_sender_target_bps": min(row["sender"]["adapt_target_min"] for row in rows),

@@ -30,6 +30,10 @@ class ReceiverQosObserver {
   uint32_t received_packets_ = 0;
   uint32_t lost_packets_ = 0;
   uint32_t reordered_packets_ = 0;
+  uint32_t report_received_packets_ = 0;
+  uint32_t report_lost_packets_ = 0;
+  uint32_t report_reordered_packets_ = 0;
+  uint64_t report_received_bytes_ = 0;
   uint32_t decoded_frames_ = 0;
   uint32_t report_seq_ = 0;
   uint16_t rtt_ms_ = 0;

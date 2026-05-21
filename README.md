@@ -173,7 +173,7 @@ Real UDP long-stream QoE smoke:
 bash webrtc_qos_sdk/scripts/run_udp_long_stream_smoke.sh
 ```
 
-This starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. It is the current closest executable model to the intended C/S/SFU shape, but it is still a local SFU-like demo process, not a production SFU or Linux `tc/netem` deployment.
+This starts three independent local UDP processes: `udp_long_sender_demo`, `udp_long_server_demo`, and `udp_long_receiver_demo`. The server process is intentionally minimal: it is a local UDP relay/test harness for forwarding RTP, producing sender-side TWCC/RR feedback, injecting deterministic weak-network phases, and retransmitting from a cache after receiver NACK. It is not a production SFU, not a long-term server SDK target, and not a Linux `tc/netem` deployment. The optimization focus is endpoint SDK behavior on the sender and receiver.
 
 The feedback topology in this smoke is:
 
@@ -215,21 +215,34 @@ Real UDP long-stream dynamic weak-network matrix:
 
 ```bash
 bash webrtc_qos_sdk/scripts/run_udp_long_stream_matrix.sh
+MATRIX_CONTENTS="motion low_motion" MATRIX_RUNS=2 \
+  bash webrtc_qos_sdk/scripts/run_udp_long_stream_matrix.sh
+bash webrtc_qos_sdk/scripts/run_udp_long_stream_720p_profile.sh
 ```
 
-This matrix runs the same three-process UDP topology through media-time-driven weak-network phases. The server changes downlink cap/loss/delay/jitter by RTP timestamp rather than wall clock, so the scenario is repeatable even when local scheduling speed changes. It validates both directions of adaptation: entering weak network must reduce sender target bitrate/FPS, and recovery must remove the server cap and restore sender FPS.
+This matrix runs the same three-process UDP topology through media-time-driven weak-network phases. The server only supplies deterministic link impairment and standard feedback plumbing; the behavior under test is endpoint-side QoS: sender encoder bitrate/FPS adaptation, sender pacing, route-recovery handling, receiver jitter assembly, receiver NACK generation, interval downlink-quality reporting, and real decoder/PSNR output. The scenario is repeatable because impairment changes by RTP media time rather than wall clock.
 
-Latest local matrix result:
+Latest local 320x180 real UDP matrix result (`MATRIX_CONTENTS=motion`, `MATRIX_RUNS=1`):
 
 | Scenario | Completed / decoded | Sender min target | Sender min FPS | Sender last target / FPS | Max frame gap | PSNR avg/min | NACK / RTX | Result |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `walking_dead_zone` | 138 / 138 | 90000 bps | 8 | 1588359 bps / 30 | 403 ms | 59.85 / 53.87 dB | 10 / 62 | PASS |
-| `bandwidth_cliff_recover` | 145 / 140 | 180000 bps | 8 | 1668845 bps / 30 | 92 ms | 60.16 / 22.60 dB | 23 / 114 | PASS |
-| `jitter_loss_recover` | 173 / 170 | 500000 bps | 15 | 1814932 bps / 30 | 229 ms | 59.49 / 30.55 dB | 10 / 69 | PASS |
+| `walking_dead_zone` | 156 / 154 | 90000 bps | 8 | 2500000 bps / 30 | 380 ms | 61.34 / 30.50 dB | 25 / 176 | PASS |
+| `bandwidth_cliff_recover` | 154 / 150 | 180000 bps | 8 | 2500000 bps / 30 | 101 ms | 59.24 / 30.16 dB | 28 / 132 | PASS |
+| `jitter_loss_recover` | 180 / 166 | 500000 bps | 15 | 2500000 bps / 30 | 230 ms | 60.55 / 24.08 dB | 13 / 64 | PASS |
 
-Aggregate: 3/3 cases passed, `decode_errors=0`, completed frames `456`, decoded frames `448`, sender target reached as low as `90000 bps`, sender FPS reached as low as `8`, sender recovered to `30 fps` in every case, and all server caps recovered to unlimited at the end of each profile.
+Aggregate: 3/3 cases passed, `decode_errors=0`, completed frames `490`, decoded frames `470`, sender target reached as low as `90000 bps`, sender FPS reached as low as `8`, sender recovered to `2500000 bps / 30 fps` in every case, max frame gap stayed at or below `380 ms`, PSNR average floor was `59.24 dB`, and all server caps recovered to unlimited at the end of each profile.
 
-Boundary of these UDP long-stream tests: they prove real process separation, core feedback wiring, live encoder adaptation, weak-network downshift, and good-network recovery in a local C/S/SFU-like topology. They still do not prove production-global optimum because they do not yet use Linux `tc/netem`, real NIC queues, multiple concurrent play clients, real renderer freeze metrics, or the full 720p multi-seed content matrix in the real UDP topology.
+Latest local 720p real UDP endpoint profile (`MATRIX_CONTENTS=motion`, `MATRIX_RUNS=1`, 1280x720, 2.5Mbps start):
+
+| Scenario | Completed / decoded | Sender min target | Sender min FPS | Sender last target / FPS | Max frame gap | PSNR avg/min | NACK / RTX | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `walking_dead_zone` | 138 / 138 | 90000 bps | 8 | 1216095 bps / 30 | 434 ms | 54.75 / 45.42 dB | 38 / 221 | PASS |
+| `bandwidth_cliff_recover` | 138 / 137 | 180000 bps | 8 | 1248604 bps / 30 | 176 ms | 54.66 / 24.81 dB | 44 / 178 | PASS |
+| `jitter_loss_recover` | 177 / 170 | 500000 bps | 15 | 1345413 bps / 30 | 278 ms | 52.62 / 25.51 dB | 25 / 40 | PASS |
+
+Aggregate: 3/3 cases passed, `decode_errors=0`, completed frames `453`, decoded frames `445`, sender target reached as low as `90000 bps`, sender FPS reached as low as `8`, sender recovered to `30 fps`, max frame gap stayed at or below `434 ms`, and PSNR average floor was `52.62 dB`.
+
+Boundary of these UDP long-stream tests: they prove real process separation, core feedback wiring, live encoder adaptation, weak-network downshift, good-network recovery, receiver jitter/NACK, and real H264 decode/PSNR in a local relay-assisted topology. They still do not prove production-global optimum because they do not yet use Linux `tc/netem`, real NIC queues, multiple concurrent play clients, real renderer freeze metrics, or the full 720p multi-content/multi-seed matrix in the real UDP topology.
 
 Role-based link verification:
 
@@ -525,7 +538,8 @@ Implementation boundary in this slice:
 - `udp_*_demo` proves the same small libraries work across a real local UDP C/S chain.
 - `udp_*_demo` also verifies `PLI -> server forward -> sender IDR resend -> receiver keyframe output`.
 - `run_udp_long_stream_smoke.sh` proves a real three-process UDP long-stream path with H264 encode/decode, TWCC, RTCP RR, receiver downlink quality, NACK retransmission, sender rate cap, PSNR, and duplicate completed-frame rejection.
-- `run_udp_long_stream_matrix.sh` proves real three-process dynamic weak-network adaptation: sender bitrate/FPS downshift under weak phases, cap removal and FPS recovery under good phases, no decoder errors, and quantitative PSNR/frame-gap gates.
+- `run_udp_long_stream_matrix.sh` proves real three-process dynamic weak-network adaptation with the server kept as a minimal relay/test harness: sender bitrate/FPS downshift under weak phases, cap removal and FPS recovery under good phases, receiver interval quality reporting, no decoder errors, and quantitative PSNR/frame-gap gates.
+- `run_udp_long_stream_720p_profile.sh` raises the same endpoint QoS gate to 1280x720 real H264 encode/decode with live encoder reconfiguration, pacing, NACK recovery, and PSNR validation.
 - `run_udp_netem_matrix.sh` proves the UDP C/S chain survives repeated drop/reorder/delay scenarios and catches duplicate-frame regressions.
 - `run_dynamic_qos_matrix.sh` proves the sender adaptation surface reacts in both directions: it degrades under bandwidth/RTT/loss impairment and climbs back when the network recovers.
 - `ffmpeg_encoder_demo` proves real H264 encoder output can enter the same Annex-B -> RTP -> pacer path used by synthetic/file demos.

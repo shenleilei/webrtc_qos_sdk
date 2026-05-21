@@ -301,6 +301,30 @@ int main() {
   loss_receiver.OnRtpPacket(third_loss_packet, 2);
   ok &= Expect(nack_events == 1, "missing RTP sequence triggers NACK");
 
+  ReceiverQosObserver observer(
+      ReceiverQosObserverConfig{TransportIds{1, 2, 3, 0x33333333, 5}, 200});
+  RtpPacket quality_first;
+  quality_first.sequence_number = 10;
+  quality_first.payload.assign(100, 0);
+  observer.OnRtpPacketReceived(quality_first, 1000000);
+  RtpPacket quality_third = quality_first;
+  quality_third.sequence_number = 12;
+  observer.OnRtpPacketReceived(quality_third, 1100000);
+  DownlinkQuality interval_quality = observer.BuildReport(1200000);
+  ok &= Expect(interval_quality.fraction_lost_q8 > 0,
+               "interval quality reports current loss");
+  RtpPacket quality_second = quality_first;
+  quality_second.sequence_number = 11;
+  observer.OnRtpPacketReceived(quality_second, 1300000);
+  RtpPacket quality_fourth = quality_first;
+  quality_fourth.sequence_number = 13;
+  observer.OnRtpPacketReceived(quality_fourth, 1400000);
+  interval_quality = observer.BuildReport(1500000);
+  ok &= Expect(interval_quality.fraction_lost_q8 == 0,
+               "interval quality clears recovered loss");
+  ok &= Expect(interval_quality.recv_bitrate_bps > 0,
+               "interval quality reports receive bitrate");
+
   RetransmissionCache cache;
   RtpPacket cached_packet;
   cached_packet.sequence_number = 42;

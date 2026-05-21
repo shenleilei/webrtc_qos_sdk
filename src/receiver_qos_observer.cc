@@ -23,15 +23,21 @@ void ReceiverQosObserver::OnRtpPacketReceived(const RtpPacket& packet,
       while (missing != packet.sequence_number) {
         missing_.insert(missing);
         ++lost_packets_;
+        ++report_lost_packets_;
         ++missing;
       }
       max_seq_ = packet.sequence_number;
     } else {
       ++reordered_packets_;
-      missing_.erase(packet.sequence_number);
+      ++report_reordered_packets_;
+      if (missing_.erase(packet.sequence_number) > 0 && report_lost_packets_ > 0) {
+        --report_lost_packets_;
+      }
     }
   }
   ++received_packets_;
+  ++report_received_packets_;
+  report_received_bytes_ += packet.payload.size() + 12;
 }
 
 void ReceiverQosObserver::OnFrameDecoded(uint32_t /*rtp_timestamp*/) {
@@ -54,17 +60,26 @@ DownlinkQuality ReceiverQosObserver::BuildReport(int64_t now_us) {
   report.report_seq = ++report_seq_;
   report.report_time_us = static_cast<uint64_t>(now_us);
   report.rtt_ms = rtt_ms_;
-  const uint32_t total = std::max<uint32_t>(1, received_packets_ + lost_packets_);
+  const uint32_t total =
+      std::max<uint32_t>(1, report_received_packets_ + report_lost_packets_);
   report.fraction_lost_q8 =
-      static_cast<uint16_t>(std::min<uint32_t>(255, lost_packets_ * 256 / total));
+      static_cast<uint16_t>(
+          std::min<uint32_t>(255, report_lost_packets_ * 256 / total));
   report.reorder_ratio_q8 = static_cast<uint16_t>(
-      std::min<uint32_t>(255, reordered_packets_ * 256 / total));
-  const int64_t elapsed_us = std::max<int64_t>(1, now_us - first_packet_time_us_);
+      std::min<uint32_t>(255, report_reordered_packets_ * 256 / total));
+  const int64_t elapsed_us = std::max<int64_t>(
+      1, now_us - (last_report_time_us_ > 0 ? last_report_time_us_
+                                            : first_packet_time_us_));
   report.recv_bitrate_bps =
-      static_cast<uint32_t>((received_packets_ * 1200ull * 8ull * 1000000ull) /
+      static_cast<uint32_t>((report_received_bytes_ * 8ull * 1000000ull) /
                             static_cast<uint64_t>(elapsed_us));
-  report.video_drop_frames = static_cast<uint16_t>(lost_packets_);
+  report.video_drop_frames = static_cast<uint16_t>(
+      std::min<uint32_t>(report_lost_packets_, 0xffff));
   last_report_time_us_ = now_us;
+  report_received_packets_ = 0;
+  report_lost_packets_ = 0;
+  report_reordered_packets_ = 0;
+  report_received_bytes_ = 0;
   return report;
 }
 
