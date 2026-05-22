@@ -190,9 +190,12 @@ readiness 和 debug bundle 门禁，然后调用底层
 `run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
 正式 capture library、evidence bundle 和 completion audit。默认输出目录为
 `artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
-`phase5_release_evidence.json`、`phase5_release_evidence.txt`、`files.txt` 和
-`manifest.sha256`；`phase5_implementation_gate/` 固定在 production gate 目录内，
-保证正式证据自包含。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
+`phase5_release_evidence.json`、`phase5_release_evidence.txt`、
+`phase5_production_gate_metrics.prom`、`files.txt` 和 `manifest.sha256`；
+`phase5_implementation_gate/` 固定在 production gate 目录内，保证正式证据自包含。
+`phase5_production_gate_metrics.prom` 是顶层 gate 的 Prometheus/textfile 指标出口：
+导出 pass/fail/dry_run、各 step 状态、failure debug bundle 状态和 release evidence
+状态，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
 implementation gate、production readiness、debug bundle SLO、底层 Phase-2
 production gate、production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、
 正式 capture library、capture manifest summary、capture QoE CSV、capture QoE summary、
@@ -209,8 +212,9 @@ manifest 可离线校验；如果 implementation gate 已经 pass，即使后续
 在 gate 成功时会离线复验
 `phase5_implementation_gate/` 的实现证据、`phase5_debug_bundle/` 的日志、metrics、
 alerts、timeline 和 runtime config，离线复验
-`phase5_production_readiness/` 的 ready 状态和 readiness `.prom` 指标，并直接复验
-底层 Phase-2 evidence bundle manifest、`phase2_completion_audit=pass` 和
+`phase5_production_readiness/` 的 ready 状态、production gate `.prom` 指标和
+readiness `.prom` 指标，并直接复验底层 Phase-2 evidence bundle manifest、
+`phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`，同时强制复验 `phase5_release_evidence.json` 和
 release evidence 里索引的 production soak archive、真实 renderer metrics 和 capture QoE
 CSV，避免只相信 summary。
@@ -1352,6 +1356,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
   capture QoE CSV。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
+- 顶层 `phase5_production_gate_metrics.prom` 必须覆盖 gate status、step status、
+  failure debug bundle status 和 release evidence status。
 - production wrapper 必须在进入 readiness/soak 前复验 implementation gate，不能只
   运行不校验。
 - 成功路径必须离线复验 `phase5_implementation_gate/`，确认实现证据在 production

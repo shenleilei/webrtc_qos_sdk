@@ -293,6 +293,14 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'evidence=production_soak status=pass' production_gate_release_evidence_soak
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'step=phase5_release_evidence status=pass' production_gate_release_evidence_step
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_production_gate_metrics.prom' production_gate_metrics_collector
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_gate_metrics' production_gate_metrics_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'webrtc_qos_phase5_production_gate_step_status' production_gate_metrics_step_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'webrtc_qos_phase5_production_gate_failure_debug_bundle_status' production_gate_metrics_failure_bundle_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'phase5_production_readiness_status=' production_readiness_status_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \

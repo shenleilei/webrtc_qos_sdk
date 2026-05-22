@@ -22,6 +22,7 @@ require_file "${GATE_DIR}/metadata.txt"
 require_file "${SUMMARY_FILE}"
 require_file "${GATE_DIR}/files.txt"
 require_file "${GATE_DIR}/manifest.sha256"
+require_file "${GATE_DIR}/phase5_production_gate_metrics.prom"
 
 [[ -x "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" ]] ||
   fail "missing debug bundle verifier: ${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh"
@@ -40,6 +41,107 @@ require_file "${GATE_DIR}/manifest.sha256"
 summary_has() {
   local pattern="$1"
   rg -q "${pattern}" "${SUMMARY_FILE}"
+}
+
+verify_gate_metrics() {
+  local expected_status="$1"
+  python3 - "${GATE_DIR}/phase5_production_gate_metrics.prom" "${expected_status}" <<'PY'
+import pathlib
+import re
+import sys
+
+path, expected_status = sys.argv[1:3]
+text = pathlib.Path(path).read_text(encoding="utf-8")
+for required_text in (
+    "# TYPE webrtc_qos_phase5_production_gate_info gauge",
+    "webrtc_qos_phase5_production_gate_info",
+    "webrtc_qos_phase5_production_gate_steps_total",
+    "webrtc_qos_phase5_production_gate_step_status",
+    "webrtc_qos_phase5_production_gate_failure_debug_bundle_status",
+    "webrtc_qos_phase5_production_gate_release_evidence_status",
+):
+    if required_text not in text:
+        raise SystemExit(f"production gate metrics missing {required_text}")
+
+line_re = re.compile(
+    r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{([^{}]*)\})?\s+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[+-]?Inf|NaN)$"
+)
+label_re = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"')
+records = []
+for line_no, line in enumerate(text.splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    match = line_re.match(line)
+    if not match:
+        raise SystemExit(
+            f"production gate metrics line {line_no} is invalid: {line}"
+        )
+    labels = {}
+    raw_labels = match.group(3) or ""
+    position = 0
+    while position < len(raw_labels):
+        label_match = label_re.match(raw_labels, position)
+        if not label_match:
+            raise SystemExit(
+                f"production gate metrics line {line_no} has invalid labels"
+            )
+        labels[label_match.group(1)] = label_match.group(2)
+        position = label_match.end()
+        if position < len(raw_labels):
+            if raw_labels[position] != ",":
+                raise SystemExit(
+                    f"production gate metrics line {line_no} has malformed labels"
+                )
+            position += 1
+    records.append({
+        "name": match.group(1),
+        "labels": labels,
+        "value": float(match.group(4)),
+    })
+if not records:
+    raise SystemExit("production gate metrics file has no samples")
+
+def has(name, value=None, **labels):
+    for record in records:
+        if record["name"] != name:
+            continue
+        if not all(record["labels"].get(key) == label for key, label in labels.items()):
+            continue
+        if value is not None and record["value"] != value:
+            continue
+        return True
+    return False
+
+if not has(
+    "webrtc_qos_phase5_production_gate_info",
+    value=1,
+    status=expected_status,
+):
+    raise SystemExit("production gate metrics missing expected gate status")
+for step in ("phase5_implementation_gate", "phase5_release_contract", "phase5_production_readiness"):
+    if not has("webrtc_qos_phase5_production_gate_step_status", step=step):
+        raise SystemExit(f"production gate metrics missing step {step}")
+if expected_status == "fail":
+    if not has("webrtc_qos_phase5_production_gate_steps_total", status="fail"):
+        raise SystemExit("failed gate metrics missing failed step count")
+    if not has(
+        "webrtc_qos_phase5_production_gate_failure_debug_bundle_status",
+        value=1,
+        status="pass",
+    ):
+        raise SystemExit("failed gate metrics missing verified failure bundle marker")
+elif expected_status == "pass":
+    if not has(
+        "webrtc_qos_phase5_production_gate_release_evidence_status",
+        value=1,
+        status="pass",
+    ):
+        raise SystemExit("passed gate metrics missing release evidence pass marker")
+elif expected_status == "dry_run":
+    if not has("webrtc_qos_phase5_production_gate_steps_total", status="planned"):
+        raise SystemExit("dry-run gate metrics missing planned step count")
+PY
 }
 
 verify_readiness_json() {
@@ -993,6 +1095,7 @@ fi
 if [[ "${REQUIRE_PASS}" == "1" ]]; then
   summary_has '^phase5_production_gate_status=pass$' ||
     fail "phase5 production gate did not pass"
+  verify_gate_metrics "pass"
   summary_has '^step=phase5_implementation_gate status=pass ' ||
     fail "implementation gate step did not pass"
   summary_has '^step=verify_phase5_implementation_gate status=pass ' ||
@@ -1020,6 +1123,7 @@ else
   summary_has '^phase5_production_gate_status=(dry_run|pass|fail)$' ||
     fail "summary missing dry_run/pass/fail status"
   if summary_has '^phase5_production_gate_status=fail$'; then
+    verify_gate_metrics "fail"
     summary_has '^step=[^ ]+ status=fail ' ||
       fail "failed gate summary missing failed step"
     if summary_has '^step=phase5_implementation_gate status=pass '; then
@@ -1029,11 +1133,14 @@ else
     require_failed_readiness_evidence
     require_failed_gate_debug_bundle
   elif summary_has '^phase5_production_gate_status=pass$'; then
+    verify_gate_metrics "pass"
     require_success_implementation_gate
     require_success_readiness
     require_success_debug_bundle
     require_phase2_completion_evidence
     require_release_evidence
+  elif summary_has '^phase5_production_gate_status=dry_run$'; then
+    verify_gate_metrics "dry_run"
   fi
 fi
 

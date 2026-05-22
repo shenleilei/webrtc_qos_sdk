@@ -19,6 +19,7 @@ FILES_FILE="${FILES_FILE:-${OUTPUT_ROOT}/files.txt}"
 MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_ROOT}/manifest.sha256}"
 RELEASE_EVIDENCE_JSON="${RELEASE_EVIDENCE_JSON:-${OUTPUT_ROOT}/phase5_release_evidence.json}"
 RELEASE_EVIDENCE_SUMMARY="${RELEASE_EVIDENCE_SUMMARY:-${OUTPUT_ROOT}/phase5_release_evidence.txt}"
+PHASE5_GATE_METRICS_PROM="${PHASE5_GATE_METRICS_PROM:-${OUTPUT_ROOT}/phase5_production_gate_metrics.prom}"
 
 SOAK_MINUTES="${SOAK_MINUTES:-120}"
 MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-${SOAK_MINUTES}}"
@@ -80,6 +81,84 @@ write_manifest() {
       sha256sum "${file}"
     done <"${FILES_FILE}" >"${MANIFEST_FILE}"
   )
+}
+
+write_gate_metrics() {
+  python3 - "${SUMMARY_FILE}" "${PHASE5_GATE_METRICS_PROM}" <<'PY'
+import collections
+import re
+import sys
+
+summary_path, metrics_path = sys.argv[1:3]
+status = "unknown"
+steps = []
+failure_bundle_status = "missing"
+release_evidence_status = "missing"
+step_re = re.compile(r"^step=([^ ]+) status=([^ ]+)")
+with open(summary_path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        line = line.strip()
+        if line.startswith("phase5_production_gate_status="):
+            status = line.split("=", 1)[1]
+        match = step_re.match(line)
+        if match:
+            step, step_status = match.groups()
+            steps.append((step, step_status))
+            if step == "phase5_release_evidence":
+                release_evidence_status = step_status
+        if line.startswith("failure_debug_bundle_status="):
+            value = line.split("=", 1)[1].split()[0]
+            failure_bundle_status = value
+
+
+def prom_escape(value):
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def prom_labels(**labels):
+    items = [
+        f'{key}="{prom_escape(value)}"'
+        for key, value in sorted(labels.items())
+        if value is not None and value != ""
+    ]
+    return "{" + ",".join(items) + "}" if items else ""
+
+
+step_counts = collections.Counter(step_status for _, step_status in steps)
+with open(metrics_path, "w", encoding="utf-8") as fh:
+    fh.write("# HELP webrtc_qos_phase5_production_gate_info Phase-5 production gate status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_gate_info gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_production_gate_info"
+        f"{prom_labels(source='phase5_production_gate', status=status)} 1\n"
+    )
+    fh.write("# HELP webrtc_qos_phase5_production_gate_steps_total Phase-5 production gate step count by status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_gate_steps_total gauge\n")
+    for step_status, count in sorted(step_counts.items()):
+        fh.write(
+            "webrtc_qos_phase5_production_gate_steps_total"
+            f"{prom_labels(status=step_status)} {count}\n"
+        )
+    fh.write("# HELP webrtc_qos_phase5_production_gate_step_status Phase-5 production gate observed step status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_gate_step_status gauge\n")
+    for step, step_status in steps:
+        fh.write(
+            "webrtc_qos_phase5_production_gate_step_status"
+            f"{prom_labels(step=step, status=step_status)} 1\n"
+        )
+    fh.write("# HELP webrtc_qos_phase5_production_gate_failure_debug_bundle_status Failure debug bundle status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_gate_failure_debug_bundle_status gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_production_gate_failure_debug_bundle_status"
+        f"{prom_labels(status=failure_bundle_status)} 1\n"
+    )
+    fh.write("# HELP webrtc_qos_phase5_production_gate_release_evidence_status Release evidence step status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_gate_release_evidence_status gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_production_gate_release_evidence_status"
+        f"{prom_labels(status=release_evidence_status)} 1\n"
+    )
+PY
 }
 
 write_release_evidence() {
@@ -553,6 +632,8 @@ run_step() {
     write_summary "phase5_production_gate_status=fail"
     collect_failure_debug_bundle "${name}"
     write_summary "failure_debug_bundle=${FAILURE_DEBUG_BUNDLE_DIR}"
+    write_summary "phase5_production_gate_metrics=${PHASE5_GATE_METRICS_PROM}"
+    write_gate_metrics
     write_manifest
     tail -n 80 "${log_file}" >&2 || true
     exit "${status}"
@@ -722,6 +803,8 @@ if [[ "${PHASE5_DRY_RUN}" != "1" ]]; then
   write_summary "phase5_release_evidence=${RELEASE_EVIDENCE_JSON}"
   write_summary "phase5_release_evidence_summary=${RELEASE_EVIDENCE_SUMMARY}"
 fi
+write_summary "phase5_production_gate_metrics=${PHASE5_GATE_METRICS_PROM}"
+write_gate_metrics
 write_summary "manifest=${MANIFEST_FILE}"
 write_manifest
 
