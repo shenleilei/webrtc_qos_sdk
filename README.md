@@ -149,6 +149,10 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_metrics.sh
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_alerts.sh
+OUTPUT_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
+  scripts/collect_phase5_debug_bundle.sh
+BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
+  scripts/verify_phase5_debug_bundle.sh
 ```
 
 `verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口。`VERIFY_LEVEL=smoke` 会串起 no-selfmade、WebRTC module smoke、外部 CMake package、loopback、pacing probe、role facade 和 synthetic 弱网矩阵；`VERIFY_LEVEL=qoe` 在 smoke 基础上增加低 RPS/低码率真实 H264 QoE 和恢复时间分布；`VERIFY_LEVEL=production` 会继续进入 production soak，并可通过 `REQUIRE_REAL_RENDERER=1 / REQUIRE_CAPTURE_LIBRARY=1` 把真实 renderer 和正式采集素材库变成硬门禁。当前 `SOAK_MINUTES=0` 的默认本地 production smoke 只验证 runner/archive 链路，默认配置为 `FRAMES_PER_CYCLE=12 / CONTENT_MODES=block_motion / SCENARIOS=weak_network_low_rps_low_bitrate`；正式验收仍必须显式跑 `SOAK_MINUTES>=120`。
@@ -185,6 +189,8 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 `verify_phase5_metrics.sh` 是 Phase-5 metrics snapshot 门禁：它验证显式传 `--metrics-dir` 后会生成 push/server/play 三类 JSONL metrics 文件，并检查弱网下的 bitrate/FPS 下探、恢复回升、server retransmission、play NACK 和 dual-track 指标身份。
 
 `verify_phase5_alerts.sh` 是 Phase-5 监控告警门禁：它验证显式传 `--alerts-dir` 后会生成 push/server/play 三类 JSONL alerts 文件，弱网下覆盖 low target bitrate、low encoder FPS、high downlink loss、video drop、NACK 和本地重传命中；同时用安装包外部 CMake fixture 覆盖 malformed RTP、transport output failure 和 decode output failure，并检查对应 warn/error 日志落盘。
+
+`collect_phase5_debug_bundle.sh` / `verify_phase5_debug_bundle.sh` 是 Phase-5 排障包门禁：collector 默认跑一次 UDP selftest，同时开启 `--log-dir / --metrics-dir / --alerts-dir`，把 metadata、build config、git status、session config、push/server/play 日志、metrics、alerts、timeline、first problem 和 sha256 manifest 收集到一个目录；verifier 离线校验必需文件、JSON 字段、弱网告警规则、timeline、manifest，以及 bundle 中不能出现 payload/token/secret/password 类字段。
 
 ## WebRTC-first Demo
 

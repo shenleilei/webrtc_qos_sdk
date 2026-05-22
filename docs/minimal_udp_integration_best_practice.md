@@ -503,6 +503,49 @@ metrics 文件包含 `final_target_bps`、`adaptation_target_bps`、
 `pli_count`、`retransmission_count` 等字段，用于区分网络/QoS 恢复问题和
 上层 codec/render 问题。
 
+生产集成还应启用 alerts，并把 logs、metrics、alerts 一起纳入排障包：
+
+```cpp
+webrtc_qos::RuntimeAlertConfig alerts;
+alerts.file.enabled = true;
+alerts.file.directory = "/var/log/webrtc_qos";
+alerts.file.basename = "webrtc_qos_alerts";
+alerts.file.max_file_bytes = 64 * 1024 * 1024;
+alerts.file.max_files = 5;
+alerts.high_loss_fraction_q8 = 128;
+alerts.low_target_bps = 700000;
+alerts.low_encoder_fps = 20;
+
+push_config.alerts = alerts;
+server_config.alerts = alerts;
+play_config.alerts = alerts;
+```
+
+demo 可用 `--alerts-dir` 验证 alerts 文件：
+
+```bash
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 36 --alerts-dir /tmp/webrtc_qos_udp_alerts
+```
+
+仓库内排障包 collector 会跑一次最小 UDP selftest 并同时打开日志、metrics 和
+alerts，然后生成可离线校验的 bundle：
+
+```bash
+OUTPUT_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
+  scripts/collect_phase5_debug_bundle.sh
+BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
+  scripts/verify_phase5_debug_bundle.sh
+```
+
+bundle 固定包含 `metadata.txt`、`build_config.txt`、`git_status.txt`、
+`session_config.json`、`log/{push,server,play}.log`、
+`metrics/{push,server,play}_metrics.jsonl`、`metrics/summary.csv`、
+`alerts/alerts.jsonl`、`alerts/alerts_summary.txt`、`timeline/events.jsonl`、
+`timeline/first_problem.json` 和 `manifest.sha256`。这些文件可以回答
+“第一条 warn/error 在哪个角色、哪个 track、哪个 receiver 出现”以及“弱网前后
+bitrate/FPS/NACK/retransmission 怎么变化”。
+
 ## 8. 线程和时钟
 
 推荐线程模型：
@@ -553,6 +596,8 @@ cmake --build build-webrtc-first \
   selftest 36 --log-dir /tmp/webrtc_qos_udp_logs
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 36 --metrics-dir /tmp/webrtc_qos_udp_metrics
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 36 --alerts-dir /tmp/webrtc_qos_udp_alerts
 ```
 
 预期结果应包含：
@@ -572,6 +617,12 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_logging.sh
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_metrics.sh
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_alerts.sh
+OUTPUT_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
+  scripts/collect_phase5_debug_bundle.sh
+BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
+  scripts/verify_phase5_debug_bundle.sh
 ```
 
 ## 11. 集成检查清单
@@ -589,6 +640,9 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 - receiver 按 `track_id` 或 `sender_ssrc` 分发 decoded AU。
 - sender/server/receiver 显式配置文件日志，stdout 只保留人工 summary。
 - sender/server/receiver 显式配置 metrics 文件，能看到弱网下探、恢复和恢复事件。
+- sender/server/receiver 显式配置 alerts 文件，能看到弱网、恢复、malformed、
+  transport failure 和 decode failure 告警。
+- 每次问题复现都收集 debug bundle，并用 `manifest.sha256` 做离线完整性校验。
 - 业务没有直接依赖 WebRTC 内部头、`PeerConnection`、ICE、DTLS 或 SRTP。
 
 ## 12. 参考文档

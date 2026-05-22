@@ -620,6 +620,68 @@ scripts/collect_phase5_debug_bundle.sh
 scripts/verify_phase5_debug_bundle.sh
 ```
 
+当前已落地第一版排障 bundle。collector 默认会构建并运行一次 UDP selftest，同时
+打开 `--log-dir / --metrics-dir / --alerts-dir`，再把运行产物规整成：
+
+```text
+debug_bundle/
+  metadata.txt
+  build_config.txt
+  git_status.txt
+  session_config.json
+  log/
+    push.log
+    server.log
+    play.log
+  metrics/
+    push_metrics.jsonl
+    server_metrics.jsonl
+    play_metrics.jsonl
+    summary.csv
+  alerts/
+    push_alerts.jsonl
+    server_alerts.jsonl
+    play_alerts.jsonl
+    alerts.jsonl
+    alerts_summary.txt
+  timeline/
+    events.jsonl
+    first_problem.json
+    summary.txt
+  evidence/
+    udp_selftest_output.txt
+    cmake_configure.log
+    cmake_build.log
+    qoe.csv
+    renderer_summary.txt
+  files.txt
+  manifest.sha256
+```
+
+`timeline/events.jsonl` 会把日志、metrics 和 alerts 统一按 `ts_us` 排序，
+`timeline/first_problem.json` 指向第一条 WARN/ERROR 或 alert，便于快速定位
+“第一个坏点”在哪个 role/track/receiver。
+
+离线 verifier 会检查：
+
+- 必需文件存在。
+- push/server/play 都有日志、metrics 和 alerts。
+- JSONL 都有统一身份字段。
+- metrics summary 覆盖三类 role。
+- weak-network alert 规则齐全。
+- timeline 同时包含 log/metric/alert 三类事件。
+- `manifest.sha256` 可校验。
+- bundle 中不出现 `payload/annexb_bytes/rtp_bytes/token/secret/password` 类字段。
+
+当前门禁：
+
+```bash
+OUTPUT_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
+  scripts/collect_phase5_debug_bundle.sh
+BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
+  scripts/verify_phase5_debug_bundle.sh
+```
+
 bundle 必须支持：
 
 - 离线查看当前 session/track/receiver 配置。
@@ -631,7 +693,7 @@ bundle 必须支持：
 #### 验收标准
 
 - 任意 Phase-5 runner 失败时自动输出 debug bundle。
-- bundle verifier 能检查必需文件存在。
+- bundle verifier 能检查必需文件存在、manifest、JSON 字段和 weak-network alert。
 - bundle 中无原始媒体 payload 和隐私敏感字段。
 
 ### 4.6 P1：外部最小 UDP 业务样板工程
