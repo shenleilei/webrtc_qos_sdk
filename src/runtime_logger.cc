@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -87,6 +88,29 @@ std::string BaseName(const FileLogConfig& config) {
   return "webrtc_qos";
 }
 
+void AddDroppedLogCount(std::string* text,
+                        uint64_t dropped_log_count,
+                        bool json_lines) {
+  if (text == nullptr || dropped_log_count == 0) {
+    return;
+  }
+  if (json_lines) {
+    const std::string field =
+        ",\"dropped_log_count\":" + std::to_string(dropped_log_count);
+    const size_t insert_pos =
+        text->size() >= 2 && (*text)[text->size() - 2] == '}'
+            ? text->size() - 2
+            : text->size();
+    text->insert(insert_pos, field);
+    return;
+  }
+  const std::string field =
+      " dropped_log_count=" + std::to_string(dropped_log_count);
+  const size_t insert_pos =
+      !text->empty() && text->back() == '\n' ? text->size() - 1 : text->size();
+  text->insert(insert_pos, field);
+}
+
 }  // namespace
 
 std::string StatusCodeName(StatusCode code) {
@@ -125,9 +149,21 @@ RuntimeLogger::RuntimeLogger(RuntimeLogConfig config, std::string role)
          << NextLoggerInstance();
   path_prefix_ = prefix.str();
   RotateIfNeededLocked();
+  if (IsAsyncEnabled()) {
+    worker_ = std::thread(&RuntimeLogger::WorkerLoop, this);
+  }
 }
 
 RuntimeLogger::~RuntimeLogger() {
+  Flush();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stopping_ = true;
+  }
+  queue_cv_.notify_all();
+  if (worker_.joinable()) {
+    worker_.join();
+  }
   Flush();
 }
 
@@ -148,7 +184,10 @@ void RuntimeLogger::Error(const char* event,
 }
 
 void RuntimeLogger::Flush() {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::mutex> lock(mutex_);
+  flush_cv_.wait(lock, [this] {
+    return queue_.empty() && !worker_active_;
+  });
   if (file_.is_open()) {
     file_.flush();
   }
@@ -194,14 +233,81 @@ void RuntimeLogger::Log(LogLevel level,
   }
 
   const std::string text = line.str();
-  std::lock_guard<std::mutex> lock(mutex_);
-  RotateIfNeededLocked();
-  if (file_.is_open()) {
-    file_ << text;
-    current_file_bytes_ += text.size();
+  QueuedLogRecord record;
+  record.level = level;
+  record.preserve = level >= LogLevel::kWarn ||
+                    (event != nullptr && std::string(event) == "stop");
+  record.text = text;
+
+  std::unique_lock<std::mutex> lock(mutex_);
+  if (IsAsyncEnabled()) {
+    const uint32_t max_queue_records = MaxQueueRecords();
+    if (queue_.size() >= max_queue_records) {
+      if (!record.preserve) {
+        ++pending_dropped_log_count_;
+        return;
+      }
+      while (queue_.size() >= max_queue_records) {
+        auto low_priority = std::find_if(queue_.begin(), queue_.end(),
+                                         [](const QueuedLogRecord& queued) {
+                                           return !queued.preserve;
+                                         });
+        if (low_priority == queue_.end()) {
+          flush_cv_.wait(lock, [this, max_queue_records] {
+            return queue_.size() < max_queue_records;
+          });
+          continue;
+        }
+        queue_.erase(low_priority);
+        ++pending_dropped_log_count_;
+      }
+    }
+    if (pending_dropped_log_count_ > 0) {
+      AddDroppedLogCount(&record.text, pending_dropped_log_count_,
+                         config_.file.json_lines);
+      pending_dropped_log_count_ = 0;
+    }
+    queue_.push_back(std::move(record));
+    lock.unlock();
+    queue_cv_.notify_one();
+  } else {
+    WriteRecordLocked(record);
   }
   if (config_.file.also_stderr) {
     std::cerr << text;
+  }
+}
+
+void RuntimeLogger::WorkerLoop() {
+  for (;;) {
+    QueuedLogRecord record;
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      queue_cv_.wait(lock, [this] {
+        return stopping_ || !queue_.empty();
+      });
+      if (queue_.empty() && stopping_) {
+        flush_cv_.notify_all();
+        return;
+      }
+      record = std::move(queue_.front());
+      queue_.pop_front();
+      worker_active_ = true;
+    }
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      WriteRecordLocked(record);
+      worker_active_ = false;
+      flush_cv_.notify_all();
+    }
+  }
+}
+
+void RuntimeLogger::WriteRecordLocked(const QueuedLogRecord& record) {
+  RotateIfNeededLocked();
+  if (file_.is_open()) {
+    file_ << record.text;
+    current_file_bytes_ += record.text.size();
   }
 }
 
@@ -231,10 +337,19 @@ void RuntimeLogger::RotateIfNeededLocked() {
 }
 
 bool RuntimeLogger::ShouldLog(LogLevel level) const {
-  if (!config_.file.enabled && !config_.file.also_stderr) {
+  const bool can_write_file = config_.file.enabled && !path_prefix_.empty();
+  if (!can_write_file && !config_.file.also_stderr) {
     return false;
   }
   return level >= config_.min_level && config_.min_level != LogLevel::kOff;
+}
+
+uint32_t RuntimeLogger::MaxQueueRecords() const {
+  return config_.max_queue_records == 0 ? 1 : config_.max_queue_records;
+}
+
+bool RuntimeLogger::IsAsyncEnabled() const {
+  return config_.file.enabled && !path_prefix_.empty();
 }
 
 }  // namespace webrtc_qos

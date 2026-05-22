@@ -180,6 +180,7 @@ webrtc_qos::RuntimeLogConfig MakeLogs(const std::string& dir) {
   config.file.max_files = 4;
   config.file.json_lines = true;
   config.file.also_stderr = false;
+  config.max_queue_records = 4096;
   return config;
 }
 

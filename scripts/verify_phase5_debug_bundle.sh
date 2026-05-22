@@ -172,6 +172,9 @@ runtime_section = runtime.get("runtime", {})
 for section in ("logging", "metrics", "alerts"):
     if runtime_section.get(section, {}).get("enabled") is not True:
         raise SystemExit(f"runtime_config.json missing enabled {section}")
+logging_config = runtime_section.get("logging", {})
+if int(logging_config.get("max_queue_records", 0)) <= 0:
+    raise SystemExit("runtime_config.json missing positive logging max_queue_records")
 roles_config = runtime.get("roles", [])
 if {item.get("role") for item in roles_config} != roles:
     raise SystemExit("runtime_config.json does not cover push/server/play roles")

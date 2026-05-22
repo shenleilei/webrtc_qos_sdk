@@ -459,6 +459,7 @@ logging.file.basename = "webrtc_qos";
 logging.file.max_file_bytes = 64 * 1024 * 1024;
 logging.file.max_files = 5;
 logging.file.json_lines = true;
+logging.max_queue_records = 4096;
 
 push_config.logging = logging;
 server_config.logging = logging;
@@ -474,12 +475,20 @@ play_config.logging = logging;
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 90 --log-dir /tmp/webrtc_qos_udp_logs \
   --log-max-file-bytes 512 --log-max-files 3
+
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 180 --log-dir /tmp/webrtc_qos_udp_logs \
+  --log-max-queue-records 1
 ```
 
 日志文件命名形如 `webrtc_qos_udp.push.<pid>...log`、
 `webrtc_qos_udp.server.<pid>...log`、`webrtc_qos_udp.play.<pid>...log`。
 当 `max_file_bytes` 超过阈值时同一 role 会按 index 轮转，`max_files` 控制单个
 logger 实例保留的文件数；`verify_phase5_logging.sh` 会用低阈值把轮转作为硬门禁。
+日志写文件走内部异步队列，`max_queue_records` 控制每个 logger 实例的待写记录上限；
+队列满时优先丢 info/debug/trace 级记录，warn/error 和 `Stop()` 的 stop 事件必须保留，
+并在后续保留日志中写 `dropped_log_count`。`verify_phase5_logging.sh` 会用极小队列
+把这个退化路径作为硬门禁。
 正常 `Stop()` 会写入 `stop` 事件并 flush 文件，`verify_phase5_logging.sh`
 会把 push/server/play 三个 role 的 stop 事件落盘作为回归门禁。
 每条日志包含 `role`、`event`、`session_id`、`stream_id`、`transport_id`、

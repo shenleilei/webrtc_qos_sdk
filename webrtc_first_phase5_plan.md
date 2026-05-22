@@ -366,6 +366,9 @@ transport/output：
 - 日志文件超过阈值会轮转；demo 和 external sample 支持
   `--log-max-file-bytes / --log-max-files`，`verify_phase5_logging.sh` 会用低阈值
   强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
+- 日志文件写入走内部异步队列；demo 和 external sample 支持
+  `--log-max-queue-records`，`verify_phase5_logging.sh` 会用极小队列验证
+  `dropped_log_count`，且 warn/error/stop 不丢。
 - `verify_phase5_logging.sh` 会检查 push/server/play 的 `stop` 事件已写入 JSONL
   文件，作为正常 `Stop()` 后 flush 的回归门禁。
 - CI artifact 收集日志文件。
@@ -1047,6 +1050,7 @@ scripts/verify_phase5_logging.sh
 - push/server/play 都生成日志文件。
 - 日志包含 start/stop/config/error 事件。
 - 正常 `Stop()` 后 stop 事件已 flush 到日志文件。
+- 异步日志队列满时记录 `dropped_log_count`，并保留 warn/error/stop。
 - 日志文件轮转生效。
 - 默认不输出 RTP/H264 payload bytes。
 - stdout 只保留 summary，不承载 SDK 运行日志。

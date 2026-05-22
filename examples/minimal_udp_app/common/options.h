@@ -20,6 +20,7 @@ struct CommonOptions {
   std::string alerts_dir;
   uint64_t log_max_file_bytes = 1024 * 1024;
   uint32_t log_max_files = 4;
+  uint32_t log_max_queue_records = 4096;
   uint64_t metrics_max_file_bytes = 1024 * 1024;
   uint32_t metrics_max_files = 4;
   uint64_t alerts_max_file_bytes = 1024 * 1024;
@@ -71,6 +72,15 @@ inline bool ParseOptionalArgs(int argc,
         return false;
       }
       options->log_max_files =
+          static_cast<uint32_t>(std::max(1, std::atoi(argv[++i])));
+      continue;
+    }
+    if (arg == "--log-max-queue-records") {
+      if (i + 1 >= argc) {
+        std::cerr << "--log-max-queue-records requires a value\n";
+        return false;
+      }
+      options->log_max_queue_records =
           static_cast<uint32_t>(std::max(1, std::atoi(argv[++i])));
       continue;
     }
@@ -149,6 +159,7 @@ inline webrtc_qos::RuntimeLogConfig MakeLogConfig(
     config.file.also_stderr = false;
     config.file.max_file_bytes = options.log_max_file_bytes;
     config.file.max_files = options.log_max_files;
+    config.max_queue_records = options.log_max_queue_records;
   }
   return config;
 }

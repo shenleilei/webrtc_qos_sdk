@@ -6,11 +6,12 @@ PREFIX="${PREFIX:-${SDK_ROOT}/dist/linux-x86_64}"
 BUILD_DIR="${BUILD_DIR:-/tmp/webrtc_qos_phase5_logging_build.$$}"
 LOG_DIR="${LOG_DIR:-/tmp/webrtc_qos_phase5_logs.$$}"
 ROTATION_LOG_DIR="${ROTATION_LOG_DIR:-/tmp/webrtc_qos_phase5_rotation_logs.$$}"
+QUEUE_LOG_DIR="${QUEUE_LOG_DIR:-/tmp/webrtc_qos_phase5_queue_logs.$$}"
 FRAMES="${FRAMES:-36}"
 
 cleanup() {
   if [[ "${KEEP_WORK_DIR:-0}" != "1" ]]; then
-    rm -rf "${BUILD_DIR}" "${LOG_DIR}" "${ROTATION_LOG_DIR}"
+    rm -rf "${BUILD_DIR}" "${LOG_DIR}" "${ROTATION_LOG_DIR}" "${QUEUE_LOG_DIR}"
   fi
 }
 trap cleanup EXIT
@@ -49,8 +50,8 @@ run_demo() {
   printf '%s\n' "${output}"
 }
 
-rm -rf "${BUILD_DIR}" "${LOG_DIR}" "${ROTATION_LOG_DIR}"
-mkdir -p "${LOG_DIR}" "${ROTATION_LOG_DIR}"
+rm -rf "${BUILD_DIR}" "${LOG_DIR}" "${ROTATION_LOG_DIR}" "${QUEUE_LOG_DIR}"
+mkdir -p "${LOG_DIR}" "${ROTATION_LOG_DIR}" "${QUEUE_LOG_DIR}"
 
 cmake -S "${SDK_ROOT}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -231,6 +232,49 @@ for role, paths in files_by_role.items():
 print(
     "validated_log_rotation "
     + " ".join(f"{role}_files={len(paths)}" for role, paths in sorted(files_by_role.items()))
+)
+PY
+
+queue_output="$(run_demo "bounded-queue UDP selftest" selftest 180 \
+  --log-dir "${QUEUE_LOG_DIR}" \
+  --log-max-queue-records 1)"
+printf '%s\n' "${queue_output}"
+require_output "udp_selftest .*pass=true" "${queue_output}" \
+  "UDP selftest with bounded async logging queue did not pass"
+if grep -q '"ts_us"' <<<"${queue_output}"; then
+  fail "bounded async file logging leaked JSON lines to stdout/stderr"
+fi
+
+python3 - "${QUEUE_LOG_DIR}" <<'PY'
+import json
+import pathlib
+import sys
+
+log_dir = pathlib.Path(sys.argv[1])
+roles = {"push", "server", "play"}
+records_by_role = {role: [] for role in roles}
+dropped_total = 0
+for path in sorted(log_dir.glob("*.log")):
+    with path.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            role = record.get("role")
+            if role in records_by_role:
+                records_by_role[role].append(record)
+            dropped_total += int(record.get("dropped_log_count", 0))
+for role, records in sorted(records_by_role.items()):
+    if not records:
+        raise SystemExit(f"{role}: missing async logger records")
+    if not any(record.get("event") == "stop" for record in records):
+        raise SystemExit(f"{role}: stop event was not flushed under queue pressure")
+if dropped_total <= 0:
+    raise SystemExit("missing positive dropped_log_count under queue pressure")
+print(
+    "validated_async_log_queue "
+    + " ".join(f"{role}_records={len(records)}" for role, records in sorted(records_by_role.items()))
+    + f" dropped_log_count={dropped_total}"
 )
 PY
 

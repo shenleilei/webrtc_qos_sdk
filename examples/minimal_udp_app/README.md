@@ -25,6 +25,7 @@ and falls back to `WebRtcQosSdk::role_push`, `WebRtcQosSdk::role_server` and
   --log-dir /tmp/minimal_udp_logs \
   --log-max-file-bytes 1048576 \
   --log-max-files 4 \
+  --log-max-queue-records 4096 \
   --metrics-dir /tmp/minimal_udp_metrics \
   --metrics-max-file-bytes 1048576 \
   --metrics-max-files 4 \
@@ -46,6 +47,7 @@ minimal_udp_selftest backend=webrtc_first_facade transport=udp peer_connection=f
   50000 127.0.0.1:50001 127.0.0.1:50002 \
   --frames 90 --tracks 2 --log-dir /tmp/minimal_udp_logs \
   --log-max-file-bytes 1048576 --log-max-files 4 \
+  --log-max-queue-records 4096 \
   --metrics-dir /tmp/minimal_udp_metrics \
   --metrics-max-file-bytes 1048576 --metrics-max-files 4 \
   --alerts-dir /tmp/minimal_udp_alerts \
@@ -55,6 +57,7 @@ minimal_udp_selftest backend=webrtc_first_facade transport=udp peer_connection=f
   50002 127.0.0.1:50000 \
   --frames 90 --tracks 2 --log-dir /tmp/minimal_udp_logs \
   --log-max-file-bytes 1048576 --log-max-files 4 \
+  --log-max-queue-records 4096 \
   --metrics-dir /tmp/minimal_udp_metrics \
   --metrics-max-file-bytes 1048576 --metrics-max-files 4 \
   --alerts-dir /tmp/minimal_udp_alerts \
@@ -64,6 +67,7 @@ minimal_udp_selftest backend=webrtc_first_facade transport=udp peer_connection=f
   50001 127.0.0.1:50000 \
   --frames 90 --tracks 2 --log-dir /tmp/minimal_udp_logs \
   --log-max-file-bytes 1048576 --log-max-files 4 \
+  --log-max-queue-records 4096 \
   --metrics-dir /tmp/minimal_udp_metrics \
   --metrics-max-file-bytes 1048576 --metrics-max-files 4 \
   --alerts-dir /tmp/minimal_udp_alerts \

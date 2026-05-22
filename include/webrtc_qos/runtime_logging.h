@@ -27,6 +27,7 @@ struct FileLogConfig {
 struct RuntimeLogConfig {
   LogLevel min_level = LogLevel::kInfo;
   FileLogConfig file;
+  uint32_t max_queue_records = 4096;
 };
 
 }  // namespace webrtc_qos

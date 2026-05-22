@@ -192,7 +192,7 @@ REQUIRE_PRODUCTION_EVIDENCE=0 \
 
 `verify_webrtc_first_roles.sh` 会继续调用 `verify_no_selfmade_media_stack.sh`、`verify_webrtc_first_loopback.sh`、`verify_webrtc_first_multitrack.sh` 和 `run_webrtc_first_multitrack_matrix.sh`，确认旧自研媒体栈没有回到 public API、CMake 或发布包，基础 WebRTC-first bytes 链路可外部消费，并且当前默认 multi-track 能力在双 track 情况下满足 shared source cap 分配、feedback isolation 和 per-track 身份输出。它也会构建 `webrtc_qos_webrtc_first_udp_demo`，跑 UDP selftest，并 smoke 检查独立 `sender/server/receiver` 三个角色入口都使用 `backend=webrtc_first_facade transport=udp peer_connection=false`。
 
-`verify_phase5_logging.sh` 是 Phase-5 第一条日志门禁：它验证默认不把 SDK 运行日志打到 stdout/stderr，显式传 `--log-dir` 后会生成 push/server/play 三类 JSONL 日志文件，并检查 start/stop、access unit、downlink quality、retransmission、decode output 等关键事件和统一身份字段；其中 stop 事件用于证明正常 `Stop()` 后日志已 flush 到文件。
+`verify_phase5_logging.sh` 是 Phase-5 第一条日志门禁：它验证默认不把 SDK 运行日志打到 stdout/stderr，显式传 `--log-dir` 后会生成 push/server/play 三类 JSONL 日志文件，并检查 start/stop、access unit、downlink quality、retransmission、decode output 等关键事件和统一身份字段；其中 stop 事件用于证明正常 `Stop()` 后日志已 flush 到文件。它还会用 `--log-max-queue-records 1` 压测异步日志队列，要求看到 `dropped_log_count` 且 warn/error/stop 不丢。
 
 `verify_phase5_metrics.sh` 是 Phase-5 metrics snapshot 门禁：它验证显式传 `--metrics-dir` 后会生成 push/server/play 三类 JSONL metrics 文件，并检查弱网下的 bitrate/FPS 下探、恢复回升、server retransmission、play NACK 和 dual-track 指标身份。
 
@@ -261,6 +261,11 @@ cmake --build build-webrtc-first \
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 90 --log-dir /tmp/webrtc_qos_udp_logs \
   --log-max-file-bytes 512 --log-max-files 3
+
+# 用极小异步队列验证高频日志不会阻塞媒体线程，丢弃计数会写入 dropped_log_count。
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 180 --log-dir /tmp/webrtc_qos_udp_logs \
+  --log-max-queue-records 1
 
 # 显式启用 Phase-5 metrics：生成 webrtc_qos_udp_metrics.{push,server,play}.*.jsonl。
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \

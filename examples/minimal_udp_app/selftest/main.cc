@@ -11,6 +11,7 @@ int main(int argc, char** argv) {
     std::cerr << "usage: " << argv[0]
               << " [--frames N] [--tracks 1|2] [--log-dir DIR]"
               << " [--log-max-file-bytes N] [--log-max-files N]"
+              << " [--log-max-queue-records N]"
               << " [--metrics-dir DIR] [--metrics-max-file-bytes N]"
               << " [--metrics-max-files N] [--alerts-dir DIR]"
               << " [--alerts-max-file-bytes N] [--alerts-max-files N]\n";
