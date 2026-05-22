@@ -256,6 +256,12 @@ def has_file(path):
     return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
+def valid_sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(
+        ch in "0123456789abcdefABCDEF" for ch in value
+    )
+
+
 implementation_summary = os.path.join(
     implementation_dir, "phase5_implementation_gate_summary.txt"
 )
@@ -351,7 +357,8 @@ checks = {
     "capture_manifest_summary": capture_manifest.get(
         "capture_manifest_verification"
     )
-    == "true",
+    == "true"
+    and valid_sha256(capture_manifest.get("capture_manifest_sha256")),
     "capture_qoe_csv": has_file(capture_qoe_csv)
     and capture_qoe.get("capture_qoe_verification") == "true",
     "capture_qoe_summary": capture_qoe.get("capture_qoe_verification") == "true",
@@ -552,6 +559,7 @@ doc = {
         "required_categories": capture_qoe.get(
             "required_categories", capture_manifest.get("required_categories", "")
         ),
+        "manifest_sha256": capture_manifest.get("capture_manifest_sha256", ""),
         "rows": parse_number(capture_qoe.get("rows", "0")),
         "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
         "playable_ratio_min": parse_number(capture_qoe.get("playable_ratio_min", "0")),
@@ -618,6 +626,9 @@ with open(release_summary, "w", encoding="utf-8") as fh:
     fh.write(f"production_soak_rows={doc['production_soak']['rows']}\n")
     fh.write(f"real_renderer_summary={rel(real_renderer_summary)}\n")
     fh.write(f"real_renderer_backend={doc['real_renderer']['backend']}\n")
+    fh.write(
+        f"capture_manifest_sha256={doc['capture_library']['manifest_sha256']}\n"
+    )
     fh.write(f"capture_qoe_csv={rel(capture_qoe_csv)}\n")
     fh.write(f"capture_qoe_summary={rel(capture_qoe_summary)}\n")
     fh.write(f"capture_qoe_rows={doc['capture_library']['rows']}\n")

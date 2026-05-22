@@ -450,6 +450,18 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence real renderer used xvfb backend' production_gate_release_renderer_xvfb_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_csv' production_gate_release_capture_qoe_index
+require_doc_pattern scripts/verify_capture_library_manifest.sh \
+  'capture_manifest_sha256' production_gate_capture_manifest_sha256_collector
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'capture_manifest_sha256' production_gate_capture_manifest_sha256_audit
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'manifest_sha256=' production_gate_capture_manifest_sha256_audit_summary_gate
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'manifest_sha256' production_gate_external_import_capture_manifest_sha256
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'capture_manifest_sha256' production_gate_release_capture_manifest_sha256_index
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'capture manifest sha256 mismatch' production_gate_release_capture_manifest_sha256_verifier
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_minima' production_gate_release_capture_qoe_minima
 require_doc_pattern scripts/verify_phase5_production_gate.sh \

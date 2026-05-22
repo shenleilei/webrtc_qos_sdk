@@ -187,6 +187,12 @@ def has_file(path):
     return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
+def valid_sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(
+        ch in "0123456789abcdefABCDEF" for ch in value
+    )
+
+
 metadata = read_kv(os.path.join(bundle_dir, "metadata.env"))
 audit_metrics = os.path.join(
     os.path.dirname(audit_summary), "phase2_completion_audit_metrics.prom"
@@ -219,6 +225,7 @@ capture_qoe_summary = os.path.join(bundle_dir, "capture_library", "capture_qoe_s
 production_soak = read_kv(production_soak_summary)
 production_soak_runtime = read_kv(production_soak_config)
 real_renderer = read_kv(real_renderer_summary)
+capture_manifest = read_kv(capture_manifest_summary)
 capture_qoe = read_kv(capture_qoe_summary)
 observed_git_heads = []
 for value in (
@@ -250,6 +257,7 @@ checks = {
     "capture_qoe_raw_evidence": has_file(capture_manifest_summary)
     and has_file(capture_qoe_csv)
     and has_file(capture_qoe_summary)
+    and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
     and capture_qoe.get("capture_qoe_verification") == "true",
 }
 
@@ -302,6 +310,7 @@ report = {
         "manifest_summary": rel(capture_manifest_summary),
         "qoe_csv": rel(capture_qoe_csv),
         "qoe_summary": rel(capture_qoe_summary),
+        "manifest_sha256": capture_manifest.get("capture_manifest_sha256", ""),
         "rows": parse_number(capture_qoe.get("rows", "0")),
         "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
         "categories": capture_qoe.get("categories", ""),
@@ -349,6 +358,10 @@ with open(report_summary, "w", encoding="utf-8") as fh:
     fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
     fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
     fh.write(f"real_renderer_metrics={rel(real_renderer_metrics)}\n")
+    fh.write(
+        "capture_manifest_sha256="
+        f"{capture_manifest.get('capture_manifest_sha256', '')}\n"
+    )
     fh.write(f"capture_qoe_csv={rel(capture_qoe_csv)}\n")
 
 if import_status != "pass":

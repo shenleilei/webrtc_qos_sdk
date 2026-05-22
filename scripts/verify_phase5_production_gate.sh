@@ -717,7 +717,7 @@ for key in (
 for section_name, keys in (
     ("production_soak", ("summary", "csv", "config", "archive")),
     ("real_renderer", ("summary", "metrics")),
-    ("capture_library", ("manifest_summary", "qoe_csv", "qoe_summary")),
+    ("capture_library", ("manifest_summary", "qoe_csv", "qoe_summary", "manifest_sha256")),
 ):
     section = report.get(section_name, {})
     for key in keys:
@@ -725,6 +725,11 @@ for section_name, keys in (
             raise SystemExit(
                 f"external phase2 import missing {section_name}.{key}"
             )
+    if section_name == "capture_library" and not (
+        len(section.get("manifest_sha256", "")) == 64
+        and all(ch in "0123456789abcdefABCDEF" for ch in section["manifest_sha256"])
+    ):
+        raise SystemExit("external phase2 import bad capture manifest sha256")
 PY
   else
     require_file "${readiness_dir}/logs/capture_manifest.log"
@@ -853,6 +858,9 @@ PY
   rg -q '^capture_manifest_verification=true$' \
     "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
     fail "capture manifest summary did not verify"
+  rg -q '^capture_manifest_sha256=[0-9a-fA-F]{64}$' \
+    "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
+    fail "capture manifest summary missing sha256"
   rg -q '^capture_qoe_verification=true$' \
     "${evidence_bundle}/capture_library/capture_qoe_summary.txt" ||
     fail "capture QoE summary did not verify"
@@ -943,6 +951,11 @@ fanout = doc.get("fanout", {})
 if fanout.get("status") != "deferred":
     raise SystemExit("release evidence fanout status must be deferred")
 
+def valid_sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(
+        ch in "0123456789abcdefABCDEF" for ch in value
+    )
+
 required_evidence = {
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
@@ -1012,6 +1025,19 @@ for key in ("manifest_summary", "qoe_csv", "qoe_summary"):
     rel = capture.get(key)
     if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
         raise SystemExit(f"release evidence bad capture pointer {key}")
+manifest_summary_path = os.path.join(gate_dir, capture["manifest_summary"])
+manifest_summary = {}
+with open(manifest_summary_path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        manifest_summary[key] = value
+if not valid_sha256(capture.get("manifest_sha256")):
+    raise SystemExit("release evidence capture manifest sha256 missing")
+if capture.get("manifest_sha256") != manifest_summary.get("capture_manifest_sha256"):
+    raise SystemExit("release evidence capture manifest sha256 mismatch")
 
 def normalize_rel(path):
     return os.path.normpath(path).replace(os.sep, "/")
@@ -1186,6 +1212,7 @@ for expected in (
     "real_renderer_summary=",
     "capture_qoe_csv=",
     "capture_qoe_rows=",
+    "capture_manifest_sha256=",
 ):
     if expected not in summary:
         raise SystemExit(f"release evidence summary missing {expected}")

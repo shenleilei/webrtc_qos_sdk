@@ -42,6 +42,10 @@ write_summary() {
   printf '%s\n' "$*" | tee -a "${SUMMARY_FILE}"
 }
 
+is_sha256() {
+  [[ "$1" =~ ^[0-9a-fA-F]{64}$ ]]
+}
+
 write_audit_metrics() {
   python3 - "${SUMMARY_FILE}" "${PHASE2_COMPLETION_AUDIT_METRICS_PROM}" <<'PY'
 import collections
@@ -349,8 +353,13 @@ if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
   capture_verified="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest_verification)"
   capture_dir="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_library_dir)"
   capture_manifest="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest)"
+  capture_manifest_sha256="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest_sha256)"
   capture_entries="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" entries)"
   capture_categories="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" categories)"
+  capture_manifest_sha_valid=0
+  if is_sha256 "${capture_manifest_sha256}"; then
+    capture_manifest_sha_valid=1
+  fi
   capture_fixture=0
   if grep -Eiq 'fixture|artifacts/capture_library_phase2_fixture|artifacts/capture_library_fixture' "${CAPTURE_MANIFEST_SUMMARY}"; then
     capture_fixture=1
@@ -374,18 +383,21 @@ if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
     capture_qoe_status=1
   fi
   if [[ "${capture_verified}" == "true" &&
+      "${capture_manifest_sha_valid}" -eq 1 &&
       "${category_missing}" -eq 0 &&
       "${capture_entries:-0}" -gt 0 &&
       "${capture_qoe_status}" -eq 0 ]]; then
     if [[ "${capture_fixture}" -eq 1 && "${ALLOW_FIXTURE_CAPTURE}" != "1" ]]; then
       audit_fail capture_library "fixture_library_not_formal dir=${capture_dir} manifest=${capture_manifest}"
     else
-      audit_pass capture_library "summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV} entries=${capture_entries} categories=${capture_categories}"
+      audit_pass capture_library "summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV} manifest_sha256=${capture_manifest_sha256} entries=${capture_entries} categories=${capture_categories}"
     fi
   else
     reason="manifest_not_valid"
     if [[ "${capture_qoe_status}" -ne 0 ]]; then
       reason="qoe_not_valid:${capture_qoe_output}"
+    elif [[ "${capture_manifest_sha_valid}" -ne 1 ]]; then
+      reason="missing_or_invalid_manifest_sha256"
     fi
     audit_fail capture_library "${reason} entries=${capture_entries:-missing} categories=${capture_categories:-missing} summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV}"
   fi

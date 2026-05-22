@@ -248,14 +248,17 @@ bundle 到 P5 gate 目录内，复验 bundle `manifest.sha256`，重新运行
 bundle 里的 git head 与当前 P5 gate 的 git head 一致，且 bundle metadata 证明外部测试机
 tracked worktree clean。导入报告还必须索引原始证据：
 production soak summary/CSV/config/archive、真实 renderer summary/metrics、capture
-manifest summary、capture QoE CSV/summary，并输出 `production_soak_raw_evidence`、
+manifest summary、capture manifest sha256、capture QoE CSV/summary，并输出 `production_soak_raw_evidence`、
 `real_renderer_raw_evidence`、`capture_qoe_raw_evidence` 三个检查项，避免外部机器只给
 pass 摘要而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
 `external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
 和业务素材；但 release evidence 和 production gate verifier 仍会离线复验导入报告及这些
 原始证据指针。
 
-正式 capture library 不能只证明 manifest 存在。`scripts/verify_capture_library_qoe_csv.sh`
+正式 capture library 不能只证明 manifest 存在。`scripts/verify_capture_library_manifest.sh`
+会在 summary 中输出 `capture_manifest_sha256`；Phase-2 completion audit、外部 bundle
+导入和 Phase-5 release evidence 必须携带并复验该哈希，证明发布证据对应具体的正式
+manifest 内容。`scripts/verify_capture_library_qoe_csv.sh`
 会离线复验 `webrtc_first_qoe_capture_library_720p.csv`：所有行必须 `pass=true`，必需类别
 必须覆盖，`playable_ratio / avg_psnr_y / avg_ssim_y` 不能低于门槛，`decode_errors /
 freeze_count / renderer_proxy_drop_frames` 必须为 0。Phase-2 completion audit 和外部
@@ -1374,7 +1377,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
 - 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 manifest、completion
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
-  capture QoE CSV，同时要求 bundle metadata 记录 clean tracked worktree。
+  capture manifest sha256、capture QoE CSV，同时要求 bundle metadata 记录 clean tracked worktree。
 - production soak archive 必须记录并验证 clean tracked worktree；只允许未跟踪
   artifacts/build 目录存在，不能用带 tracked 源码修改的 soak 结果作为正式证据。
 - 顶层 metadata、summary、logs 和 sha256 manifest。

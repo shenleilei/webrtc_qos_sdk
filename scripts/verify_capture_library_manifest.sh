@@ -25,6 +25,7 @@ RESOLVED_CAPTURE_LIST="${RESOLVED_CAPTURE_LIST}" \
 SUMMARY_FILE="${SUMMARY_FILE}" \
 python3 - <<'PY'
 import csv
+import hashlib
 import json
 import os
 import re
@@ -50,6 +51,8 @@ if not os.path.isfile(manifest):
     raise SystemExit("capture manifest not found: %s" % manifest)
 
 manifest_dir = os.path.dirname(os.path.abspath(manifest))
+with open(manifest, "rb") as manifest_fh:
+    manifest_sha256 = hashlib.sha256(manifest_fh.read()).hexdigest()
 rows = []
 with open(manifest, newline="", encoding="utf-8") as f:
     reader = csv.DictReader(f)
@@ -176,6 +179,7 @@ if resolved_capture_list:
 summary = {
     "capture_manifest_verification": "true",
     "capture_manifest": manifest,
+    "capture_manifest_sha256": manifest_sha256,
     "capture_library_dir": capture_dir,
     "entries": str(len(rows)),
     "categories": ",".join(sorted(categories)),
