@@ -304,12 +304,15 @@ if [[ "${SOAK_ARCHIVE}" == "1" ]]; then
   git_commit="$(git -C "${SDK_ROOT}" rev-parse HEAD 2>/dev/null || true)"
   git_branch="$(git -C "${SDK_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   git_dirty="unknown"
+  git_tracked_worktree_clean="unknown"
   if git -C "${SDK_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if git -C "${SDK_ROOT}" diff --quiet --ignore-submodules -- &&
        git -C "${SDK_ROOT}" diff --cached --quiet --ignore-submodules --; then
       git_dirty="false"
+      git_tracked_worktree_clean="true"
     else
       git_dirty="true"
+      git_tracked_worktree_clean="false"
     fi
   fi
   {
@@ -323,12 +326,24 @@ if [[ "${SOAK_ARCHIVE}" == "1" ]]; then
     echo "sdk_git_commit=${git_commit:-unknown}"
     echo "sdk_git_branch=${git_branch:-unknown}"
     echo "sdk_git_dirty=${git_dirty}"
+    echo "sdk_git_tracked_worktree_clean=${git_tracked_worktree_clean}"
     echo "webrtc_prefix=${WEBRTC_PREFIX}"
     echo "summary_csv=${SUMMARY_CSV}"
     echo "summary_txt=${SUMMARY_TXT}"
   } >"${metadata_file}"
   cp "${CONFIG_ENV}" "${SOAK_ARCHIVE_DIR}/config.env"
-  git -C "${SDK_ROOT}" status --short >"${SOAK_ARCHIVE_DIR}/git_status.txt" 2>/dev/null || true
+  git_status_file="${SOAK_ARCHIVE_DIR}/git_status.txt"
+  if git -C "${SDK_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${SDK_ROOT}" status --short --untracked-files=no >"${git_status_file}.tmp" 2>/dev/null || true
+    if [[ -s "${git_status_file}.tmp" ]]; then
+      mv "${git_status_file}.tmp" "${git_status_file}"
+    else
+      rm -f "${git_status_file}.tmp"
+      echo "tracked_changes=0" >"${git_status_file}"
+    fi
+  else
+    echo "tracked_changes=unknown" >"${git_status_file}"
+  fi
   {
     echo "summary_csv=$(basename "${SUMMARY_CSV}")"
     echo "summary_txt=$(basename "${SUMMARY_TXT}")"

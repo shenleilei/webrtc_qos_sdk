@@ -438,6 +438,14 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
   'real_renderer_metrics' production_gate_release_renderer_metrics_index
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_webrtc_first_qoe_production_soak_archive.sh' production_gate_release_soak_reverify
+require_doc_pattern scripts/run_webrtc_first_qoe_production_soak.sh \
+  'sdk_git_tracked_worktree_clean' production_soak_archive_git_clean_metadata
+require_doc_pattern scripts/run_webrtc_first_qoe_production_soak.sh \
+  'status --short --untracked-files=no' production_soak_archive_tracked_status_only
+require_doc_pattern scripts/verify_webrtc_first_qoe_production_soak_archive.sh \
+  'REQUIRE_CLEAN_GIT_WORKTREE' production_soak_archive_git_clean_gate
+require_doc_pattern scripts/verify_webrtc_first_qoe_production_soak_archive.sh \
+  'sdk_git_tracked_worktree_clean' production_soak_archive_git_clean_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence real renderer used xvfb backend' production_gate_release_renderer_xvfb_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \

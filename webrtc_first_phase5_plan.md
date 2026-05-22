@@ -226,6 +226,13 @@ release evidence 里索引的 production soak archive、真实 renderer metrics 
 CSV，避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
+production soak archive 也必须是可追溯的正式证据：runner 在
+`archive/metadata.txt` 写入 `sdk_git_tracked_worktree_clean=true|false`，
+`archive/git_status.txt` 只记录 tracked 文件状态，未跟踪 artifacts/build 目录不污染
+clean 判定；`verify_webrtc_first_qoe_production_soak_archive.sh` 默认要求该归档来自
+clean tracked worktree，只有排查历史归档时才允许显式设置
+`REQUIRE_CLEAN_GIT_WORKTREE=0`。
+
 如果真实 renderer、正式 capture library 和 `SOAK_MINUTES>=120` 是在专用测试机跑出的，
 P5 顶层 gate 支持导入该机器收集的 Phase-2 evidence bundle：
 
@@ -1368,6 +1375,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 manifest、completion
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
   capture QoE CSV，同时要求 bundle metadata 记录 clean tracked worktree。
+- production soak archive 必须记录并验证 clean tracked worktree；只允许未跟踪
+  artifacts/build 目录存在，不能用带 tracked 源码修改的 soak 结果作为正式证据。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
 - 正式 production gate metadata 和 release evidence 必须证明 tracked worktree clean；
   未跟踪 artifacts/build 目录不阻塞，但未提交的 tracked 源码修改不能生成 pass 证据。

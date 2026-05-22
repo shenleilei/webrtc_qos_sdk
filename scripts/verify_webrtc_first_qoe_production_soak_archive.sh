@@ -9,6 +9,7 @@ CONFIG_ENV="${CONFIG_ENV:-${OUTPUT_DIR}/webrtc_first_qoe_production_soak_config.
 SOAK_ARCHIVE_DIR="${SOAK_ARCHIVE_DIR:-${OUTPUT_DIR}/archive}"
 SOAK_ARCHIVE_TARBALL="${SOAK_ARCHIVE_TARBALL:-${OUTPUT_DIR}/webrtc_first_qoe_production_soak_archive.tar.gz}"
 REQUIRE_SOAK_TARBALL="${REQUIRE_SOAK_TARBALL:-1}"
+REQUIRE_CLEAN_GIT_WORKTREE="${REQUIRE_CLEAN_GIT_WORKTREE:-1}"
 MIN_SOAK_CYCLES="${MIN_SOAK_CYCLES:-1}"
 MIN_SOAK_ROWS="${MIN_SOAK_ROWS:-1}"
 
@@ -38,6 +39,9 @@ fi
 SUMMARY_CSV="${SUMMARY_CSV}" \
 SUMMARY_TXT="${SUMMARY_TXT}" \
 CONFIG_ENV="${CONFIG_ENV}" \
+METADATA_TXT="${SOAK_ARCHIVE_DIR}/metadata.txt" \
+GIT_STATUS_TXT="${SOAK_ARCHIVE_DIR}/git_status.txt" \
+REQUIRE_CLEAN_GIT_WORKTREE="${REQUIRE_CLEAN_GIT_WORKTREE}" \
 MIN_SOAK_CYCLES="${MIN_SOAK_CYCLES}" \
 MIN_SOAK_ROWS="${MIN_SOAK_ROWS}" \
 python3 - <<'PY'
@@ -48,6 +52,9 @@ import shlex
 summary_csv = os.environ["SUMMARY_CSV"]
 summary_txt = os.environ["SUMMARY_TXT"]
 config_env = os.environ["CONFIG_ENV"]
+metadata_txt = os.environ["METADATA_TXT"]
+git_status_txt = os.environ["GIT_STATUS_TXT"]
+require_clean_git_worktree = os.environ["REQUIRE_CLEAN_GIT_WORKTREE"] == "1"
 min_cycles = int(os.environ["MIN_SOAK_CYCLES"])
 min_rows = int(os.environ["MIN_SOAK_ROWS"])
 
@@ -73,6 +80,19 @@ def read_config(path):
     return config
 
 config = read_config(config_env)
+metadata = read_config(metadata_txt)
+
+tracked_clean = metadata.get("sdk_git_tracked_worktree_clean", "")
+if require_clean_git_worktree and tracked_clean != "true":
+    raise SystemExit(
+        "production soak archive was not generated from a clean tracked worktree: %s"
+        % (tracked_clean or "missing")
+    )
+
+with open(git_status_txt, encoding="utf-8") as git_status_fh:
+    git_status_text = git_status_fh.read().strip()
+if require_clean_git_worktree and git_status_text != "tracked_changes=0":
+    raise SystemExit("production soak archive git_status.txt has tracked changes")
 
 cycles = sorted({int(float(row["cycle"])) for row in rows})
 if len(cycles) < min_cycles:
@@ -139,6 +159,7 @@ print("avg_psnr_y_min=%g" % min(f(row, "avg_psnr_y") for row in rows))
 print("avg_ssim_y_min=%g" % min(f(row, "avg_ssim_y") for row in rows))
 print("renderer_proxy_max_gap_ms=%g" % max(f(row, "renderer_proxy_max_gap_ms") for row in rows))
 print("renderer_proxy_max_jitter_ms=%g" % max(f(row, "renderer_proxy_max_jitter_ms") for row in rows))
+print("sdk_git_tracked_worktree_clean=%s" % (tracked_clean or "missing"))
 print("weak_low_rows=%d" % len(weak_low_rows))
 print("weak_low_bad_send_rps_max=%g" % max((f(row, "bad_send_rps") for row in weak_low_rows), default=0))
 print("weak_low_bad_rtp_pps_max=%g" % max((f(row, "bad_rtp_pps") for row in weak_low_rows), default=0))
