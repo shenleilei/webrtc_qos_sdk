@@ -498,6 +498,7 @@ require_failed_implementation_evidence() {
   require_file "${implementation_summary}"
   require_file "${implementation_dir}/files.txt"
   require_file "${implementation_dir}/manifest.sha256"
+  require_file "${implementation_dir}/phase5_implementation_gate_metrics.prom"
   (
     cd "${implementation_dir}"
     sha256sum -c manifest.sha256 >/dev/null
@@ -506,6 +507,8 @@ require_failed_implementation_evidence() {
     fail "failed implementation evidence did not record fail status"
   rg -q '^step=[^ ]+ status=fail ' "${implementation_summary}" ||
     fail "failed implementation evidence missing failed step"
+  GATE_DIR="${implementation_dir}" REQUIRE_PASS=0 \
+    "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh" >/dev/null
 }
 
 require_success_debug_bundle() {
@@ -532,6 +535,7 @@ require_success_implementation_gate() {
   fi
   require_file "${GATE_DIR}/phase5_implementation_gate/manifest.sha256"
   require_file "${GATE_DIR}/phase5_implementation_gate/phase5_implementation_gate_summary.txt"
+  require_file "${GATE_DIR}/phase5_implementation_gate/phase5_implementation_gate_metrics.prom"
   (
     cd "${GATE_DIR}/phase5_implementation_gate"
     sha256sum -c manifest.sha256 >/dev/null
@@ -788,6 +792,11 @@ if requirements.get("multi_receiver_fanout") != "deferred_before_p5_completion":
     raise SystemExit("release evidence fanout requirement mismatch")
 
 observability = doc.get("observability", {})
+implementation_metrics = observability.get("implementation_gate_metrics")
+if not implementation_metrics or not os.path.exists(
+    os.path.join(gate_dir, implementation_metrics)
+):
+    raise SystemExit("release evidence missing implementation gate metrics")
 if observability.get("debug_bundle_slo_status") not in {"pass", "warn", "fail"}:
     raise SystemExit("release evidence missing debug bundle SLO status")
 fanout = doc.get("fanout", {})
@@ -796,6 +805,7 @@ if fanout.get("status") != "deferred":
 
 required_evidence = {
     "phase5_implementation_gate",
+    "phase5_implementation_gate_metrics",
     "phase5_production_readiness",
     "phase5_debug_bundle",
     "phase2_production_gate",
@@ -833,6 +843,7 @@ for key in (
     "gate_summary",
     "metadata",
     "phase5_implementation_gate",
+    "phase5_implementation_gate_metrics",
     "phase5_production_readiness",
     "phase5_debug_bundle",
     "phase2_production_gate",
@@ -1017,6 +1028,7 @@ for expected in (
     "formal_completion_status=complete",
     "scope=phase5_formal_production_release_evidence",
     "fanout_status=deferred",
+    "evidence=phase5_implementation_gate_metrics status=pass",
     "evidence=production_soak status=pass",
     "evidence=production_soak_csv status=pass",
     "evidence=real_renderer status=pass",

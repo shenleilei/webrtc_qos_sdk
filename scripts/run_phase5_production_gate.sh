@@ -252,6 +252,9 @@ def has_file(path):
 implementation_summary = os.path.join(
     implementation_dir, "phase5_implementation_gate_summary.txt"
 )
+implementation_metrics = os.path.join(
+    implementation_dir, "phase5_implementation_gate_metrics.prom"
+)
 readiness_summary = os.path.join(readiness_dir, "phase5_production_readiness_summary.txt")
 debug_slo = os.path.join(debug_bundle_dir, "monitoring", "slo_report.json")
 phase2_summary = os.path.join(phase2_dir, "phase2_production_gate_summary.txt")
@@ -302,6 +305,7 @@ checks = {
     "phase5_implementation_gate": has_line(
         implementation_summary, "phase5_implementation_gate_status=pass"
     ),
+    "phase5_implementation_gate_metrics": has_file(implementation_metrics),
     "phase5_production_readiness": readiness.get(
         "phase5_production_readiness_status"
     )
@@ -352,6 +356,11 @@ evidence = [
             "phase5_implementation_gate",
             checks["phase5_implementation_gate"],
             rel(implementation_summary),
+        ),
+        (
+            "phase5_implementation_gate_metrics",
+            checks["phase5_implementation_gate_metrics"],
+            rel(implementation_metrics),
         ),
         (
             "phase5_production_readiness",
@@ -461,6 +470,7 @@ doc = {
         "multi_receiver_fanout": "deferred_before_p5_completion",
     },
     "observability": {
+        "implementation_gate_metrics": rel(implementation_metrics),
         "debug_bundle_slo_status": slo_status,
         "debug_bundle_slo_report": rel(debug_slo),
     },
@@ -524,6 +534,7 @@ doc = {
         "gate_summary": rel(summary_file),
         "metadata": rel(metadata_file),
         "phase5_implementation_gate": rel(implementation_dir),
+        "phase5_implementation_gate_metrics": rel(implementation_metrics),
         "phase5_production_readiness": rel(readiness_dir),
         "phase5_debug_bundle": rel(debug_bundle_dir),
         "phase2_production_gate": rel(phase2_dir),
@@ -701,6 +712,8 @@ if [[ "${RUN_PHASE5_IMPLEMENTATION_GATE}" == "1" ]]; then
     env SDK_ROOT="${SDK_ROOT}" PREFIX="${WEBRTC_PREFIX}" \
       OUTPUT_ROOT="${PHASE5_IMPLEMENTATION_GATE_DIR}" \
       FRAMES="${PHASE5_IMPLEMENTATION_FRAMES}" \
+      RUN_PHASE5_RELEASE_CONTRACT=1 \
+      RUN_PHASE5_DEBUG_BUNDLE=1 \
       "${SDK_ROOT}/scripts/run_phase5_implementation_gate.sh"
   run_step verify_phase5_implementation_gate \
     env GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR}" REQUIRE_PASS=1 \

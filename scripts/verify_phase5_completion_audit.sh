@@ -404,6 +404,12 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   "step=phase5_implementation_gate status=pass" production_gate_failed_path_implementation_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_failed_implementation_evidence' production_gate_failed_implementation_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_implementation_gate_metrics' production_gate_release_implementation_metrics_index
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence missing implementation gate metrics' production_gate_release_implementation_metrics_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'phase5_implementation_gate_metrics.prom' production_gate_verifies_implementation_metrics
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \

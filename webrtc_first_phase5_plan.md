@@ -199,7 +199,7 @@ readiness 和 debug bundle 门禁，然后调用底层
 `phase5_production_gate_metrics.prom` 是顶层 gate 的 Prometheus/textfile 指标出口：
 导出 pass/fail/dry_run、各 step 状态、failure debug bundle 状态和 release evidence
 状态，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
-implementation gate、production readiness、debug bundle SLO、底层 Phase-2
+implementation gate、implementation gate `.prom` 指标、production readiness、debug bundle SLO、底层 Phase-2
 production gate、production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、
 正式 capture library、capture manifest summary、capture QoE CSV、capture QoE summary、
 evidence bundle 和 completion audit 的 pass 状态及相对 artifact 路径，同时记录
@@ -213,8 +213,8 @@ manifest 可离线校验；如果 implementation gate 已经 pass，即使后续
 `next_required_actions.json`、`risk_milestone_report.json`、
 `phase5_production_readiness_metrics.prom` 和 `next_required_actions.txt`；
 在 gate 成功时会离线复验
-`phase5_implementation_gate/` 的实现证据、`phase5_debug_bundle/` 的日志、metrics、
-alerts、timeline 和 runtime config，离线复验
+`phase5_implementation_gate/` 的实现证据和 `.prom` 指标、`phase5_debug_bundle/` 的日志、
+metrics、alerts、timeline 和 runtime config，离线复验
 `phase5_production_readiness/` 的 ready 状态、production gate `.prom` 指标和
 readiness `.prom` 指标，并直接复验底层 Phase-2 evidence bundle manifest、
 `phase2_completion_audit=pass` 和
@@ -1373,6 +1373,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   运行不校验。
 - 成功路径必须离线复验 `phase5_implementation_gate/`，确认实现证据在 production
   gate 内闭合。
+- 成功路径 release evidence 必须索引并离线复验
+  `phase5_implementation_gate/phase5_implementation_gate_metrics.prom`。
 - 成功路径必须离线复验 `phase5_debug_bundle/`，确认日志、metrics、alerts、
   timeline 和 runtime config 都可用。
 - 成功路径必须生成并离线复验 `phase5_release_evidence.json`，确认 production soak、
