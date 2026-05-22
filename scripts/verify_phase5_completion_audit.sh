@@ -672,6 +672,16 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'risk_milestone_report.json' production_gate_risk_milestone_json_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   "! -path './manifest.sha256'" production_gate_top_manifest_scope
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_gate_manifest' production_gate_release_top_manifest_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_gate_files' production_gate_release_top_files_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_production_gate_metrics' production_gate_release_top_metrics_index
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_top_manifest_consistency' production_gate_top_manifest_file_set_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence missing production gate metrics' production_gate_release_top_metrics_verifier
 
 if has_file "${PHASE5_DEBUG_BUNDLE_DIR}/manifest.sha256" &&
     has_file "${PHASE5_DEBUG_BUNDLE_DIR}/runtime_config.json"; then

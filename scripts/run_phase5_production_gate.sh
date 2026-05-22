@@ -201,6 +201,9 @@ write_release_evidence() {
     "${PHASE2_EVIDENCE_BUNDLE_DIR}" \
     "${RELEASE_EVIDENCE_JSON}" \
     "${RELEASE_EVIDENCE_SUMMARY}" \
+    "${FILES_FILE}" \
+    "${MANIFEST_FILE}" \
+    "${PHASE5_GATE_METRICS_PROM}" \
     "${SOAK_MINUTES}" \
     "${MIN_PRODUCTION_SOAK_MINUTES}" \
     "${ALLOW_XVFB_RENDERER}" \
@@ -222,13 +225,16 @@ import sys
     imported_phase2_evidence_bundle,
     release_json,
     release_summary,
+    files_file,
+    manifest_file,
+    gate_metrics,
     soak_minutes,
     min_soak_minutes,
     allow_xvfb_renderer,
     real_renderer_use_xvfb,
     capture_library_dir,
     capture_library_manifest,
-) = sys.argv[1:17]
+) = sys.argv[1:20]
 
 
 def rel(path):
@@ -377,6 +383,8 @@ debug_incident = os.path.join(debug_bundle_dir, "monitoring", "incident_report.j
 debug_incident_runbook = os.path.join(
     debug_bundle_dir, "monitoring", "incident_runbook.txt"
 )
+gate_files = files_file
+gate_manifest = manifest_file
 phase2_summary = os.path.join(phase2_dir, "phase2_production_gate_summary.txt")
 phase2_audit_summary = os.path.join(
     phase2_dir,
@@ -435,6 +443,9 @@ if os.path.exists(debug_slo):
         slo_status = json.load(fh).get("slo_status", "missing")
 
 checks = {
+    "phase5_gate_files": has_file(gate_files),
+    "phase5_gate_manifest": has_file(gate_manifest),
+    "phase5_production_gate_metrics": has_file(gate_metrics),
     "phase5_implementation_gate": has_line(
         implementation_summary, "phase5_implementation_gate_status=pass"
     ),
@@ -504,6 +515,21 @@ evidence = [
         "artifact": artifact,
     }
     for name, passed, artifact in (
+        (
+            "phase5_gate_files",
+            checks["phase5_gate_files"],
+            rel(gate_files),
+        ),
+        (
+            "phase5_gate_manifest",
+            checks["phase5_gate_manifest"],
+            rel(gate_manifest),
+        ),
+        (
+            "phase5_production_gate_metrics",
+            checks["phase5_production_gate_metrics"],
+            rel(gate_metrics),
+        ),
         (
             "phase5_implementation_gate",
             checks["phase5_implementation_gate"],
@@ -719,6 +745,7 @@ doc = {
         "multi_receiver_fanout": "deferred_before_p5_completion",
     },
     "observability": {
+        "phase5_production_gate_metrics": rel(gate_metrics),
         "implementation_gate_metrics": rel(implementation_metrics),
         "production_readiness_metrics": rel(readiness_metrics),
         "phase2_completion_audit_metrics": rel(phase2_audit_metrics),
@@ -791,6 +818,9 @@ doc = {
     "artifacts": {
         "gate_summary": rel(summary_file),
         "metadata": rel(metadata_file),
+        "phase5_gate_files": rel(gate_files),
+        "phase5_gate_manifest": rel(gate_manifest),
+        "phase5_production_gate_metrics": rel(gate_metrics),
         "git_tracked_status": rel(
             os.path.join(output_root, "git_tracked_status.txt")
         ),
@@ -851,6 +881,9 @@ with open(release_summary, "w", encoding="utf-8") as fh:
         "min_production_soak_minutes="
         f"{doc['requirements']['min_production_soak_minutes']}\n"
     )
+    fh.write(f"phase5_gate_files={rel(gate_files)}\n")
+    fh.write(f"phase5_gate_manifest={rel(gate_manifest)}\n")
+    fh.write(f"phase5_production_gate_metrics={rel(gate_metrics)}\n")
     for item in evidence:
         fh.write(
             f"evidence={item['id']} status={item['status']} "
@@ -1101,6 +1134,8 @@ else
 fi
 
 if [[ "${PHASE5_DRY_RUN}" != "1" ]]; then
+  write_gate_metrics
+  write_manifest
   run_step phase5_release_evidence write_release_evidence
 fi
 

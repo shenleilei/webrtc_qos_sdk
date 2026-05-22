@@ -39,6 +39,51 @@ require_file "${GATE_DIR}/phase5_production_gate_metrics.prom"
   sha256sum -c manifest.sha256 >/dev/null
 )
 
+verify_top_manifest_consistency() {
+  python3 - "${GATE_DIR}" <<'PY'
+import os
+import sys
+
+gate_dir = sys.argv[1]
+files_path = os.path.join(gate_dir, "files.txt")
+manifest_path = os.path.join(gate_dir, "manifest.sha256")
+
+with open(files_path, "r", encoding="utf-8") as fh:
+    files = [line.strip() for line in fh if line.strip()]
+with open(manifest_path, "r", encoding="utf-8") as fh:
+    manifest_files = []
+    for line_no, line in enumerate(fh, 1):
+        line = line.rstrip("\n")
+        if len(line) < 67:
+            raise SystemExit(f"manifest line {line_no} is too short")
+        digest, rel = line.split(None, 1)
+        if len(digest) != 64 or not all(
+            ch in "0123456789abcdefABCDEF" for ch in digest
+        ):
+            raise SystemExit(f"manifest line {line_no} has invalid sha256")
+        manifest_files.append(rel.lstrip("*"))
+
+actual_files = []
+for root, _, names in os.walk(gate_dir):
+    for name in names:
+        path = os.path.join(root, name)
+        rel = os.path.relpath(path, gate_dir)
+        if rel in {"manifest.sha256", "files.txt"}:
+            continue
+        actual_files.append(rel)
+actual_files.sort()
+
+if files != sorted(files):
+    raise SystemExit("top files.txt is not sorted")
+if files != manifest_files:
+    raise SystemExit("top files.txt and manifest.sha256 file sets differ")
+if files != actual_files:
+    raise SystemExit("top files.txt does not match actual gate files")
+PY
+}
+
+verify_top_manifest_consistency
+
 summary_has() {
   local pattern="$1"
   rg -q "${pattern}" "${SUMMARY_FILE}"
@@ -984,6 +1029,11 @@ with open(os.path.join(gate_dir, git_status), "r", encoding="utf-8") as fh:
         raise SystemExit("release evidence tracked git status is not clean")
 
 observability = doc.get("observability", {})
+gate_metrics = observability.get("phase5_production_gate_metrics")
+if gate_metrics != "phase5_production_gate_metrics.prom" or not os.path.exists(
+    os.path.join(gate_dir, "phase5_production_gate_metrics.prom")
+):
+    raise SystemExit("release evidence missing production gate metrics")
 implementation_metrics = observability.get("implementation_gate_metrics")
 if not implementation_metrics or not os.path.exists(
     os.path.join(gate_dir, implementation_metrics)
@@ -1038,6 +1088,9 @@ def categories_cover(observed, required):
     return bool(required_categories) and required_categories <= observed_categories
 
 required_evidence = {
+    "phase5_gate_files",
+    "phase5_gate_manifest",
+    "phase5_production_gate_metrics",
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
     "phase5_production_readiness",
@@ -1094,6 +1147,9 @@ artifacts = doc.get("artifacts", {})
 for key in (
     "gate_summary",
     "metadata",
+    "phase5_gate_files",
+    "phase5_gate_manifest",
+    "phase5_production_gate_metrics",
     "git_tracked_status",
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
@@ -1132,6 +1188,23 @@ for key in (
     rel = artifacts.get(key)
     if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
         raise SystemExit(f"release evidence bad artifact pointer {key}")
+
+expected_gate_artifacts = {
+    "phase5_gate_files": "files.txt",
+    "phase5_gate_manifest": "manifest.sha256",
+    "phase5_production_gate_metrics": "phase5_production_gate_metrics.prom",
+}
+for evidence_id, expected_rel in expected_gate_artifacts.items():
+    if artifacts.get(evidence_id) != expected_rel:
+        raise SystemExit(
+            f"release evidence artifact {evidence_id} points to "
+            f"{artifacts.get(evidence_id)}, expected {expected_rel}"
+        )
+    if by_id[evidence_id].get("artifact") != expected_rel:
+        raise SystemExit(
+            f"release evidence item {evidence_id} points to "
+            f"{by_id[evidence_id].get('artifact')}, expected {expected_rel}"
+        )
 
 capture = doc.get("capture_library", {})
 for key in ("manifest_summary", "qoe_csv", "qoe_summary"):
@@ -1389,6 +1462,12 @@ for expected in (
     "scope=phase5_formal_production_release_evidence",
     "fanout_status=deferred",
     "min_production_soak_minutes=",
+    "phase5_gate_files=files.txt",
+    "phase5_gate_manifest=manifest.sha256",
+    "phase5_production_gate_metrics=phase5_production_gate_metrics.prom",
+    "evidence=phase5_gate_files status=pass",
+    "evidence=phase5_gate_manifest status=pass",
+    "evidence=phase5_production_gate_metrics status=pass",
     "evidence=phase5_implementation_gate_metrics status=pass",
     "evidence=phase5_production_readiness_report status=pass",
     "evidence=phase5_production_readiness_metrics status=pass",
