@@ -399,9 +399,10 @@ server 侧：
 建议按这个顺序读：
 
 1. 本文
-2. [推拉客户端 SDK 集成说明](sdk_push_play_integration.md)
-3. [WebRTC 子模块拆分编译说明](webrtc_module_split_build.md)
-4. [Phase-2 主实施文档](../webrtc_first_phase2_master_plan.md)
-5. [Phase-3 逻辑正确性收敛计划](../webrtc_first_phase3_plan.md)
+2. [最小 UDP 集成最佳实践](minimal_udp_integration_best_practice.md)
+3. [推拉客户端 SDK 集成说明](sdk_push_play_integration.md)
+4. [WebRTC 子模块拆分编译说明](webrtc_module_split_build.md)
+5. [Phase-2 主实施文档](../webrtc_first_phase2_master_plan.md)
+6. [Phase-3 逻辑正确性收敛计划](../webrtc_first_phase3_plan.md)
 
 如果你关心“为什么可信、怎么验证”，继续看后续的 `QoS 测试与验证方法` 文档。

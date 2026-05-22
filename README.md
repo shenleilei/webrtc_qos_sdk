@@ -8,6 +8,7 @@
 - [WebRTC 边界声明](docs/webrtc_boundary_statement.md)
 - [QoS 测试与验证方法](docs/qos_test_validation_methodology.md)
 - [推拉客户端 SDK 集成说明](docs/sdk_push_play_integration.md)
+- [最小 UDP 集成最佳实践](docs/minimal_udp_integration_best_practice.md)
 - [WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md)
 - [Phase-2 主实施文档](webrtc_first_phase2_master_plan.md)
 - [Phase-3 逻辑正确性收敛计划](webrtc_first_phase3_plan.md)
@@ -202,6 +203,8 @@ walking_dead_zone_recover_dual_track ... decoded_tracks=2 ... pass=true
 当前日志里的 `retransmission` 表示 `NACK + 原 RTP 包重传`，不是 RFC4588 RTX。
 
 同时新增仓库内 UDP role demo：`webrtc_qos_webrtc_first_udp_demo`。它保留自动化 `selftest`，并提供独立 `sender/server/receiver` 三个进程模式，便于手工验证自定义 UDP transport 下的 WebRTC-first facade bytes 边界。当前默认 `selftest` 会同时覆盖 `single_track` 和 `dual_track` 两组场景，并输出总体 `udp_selftest profiles=single_track,dual_track pass=...` 结果。
+
+业务外围只实现 UDP socket、packet envelope 和编解码/渲染时，推荐按 [最小 UDP 集成最佳实践](docs/minimal_udp_integration_best_practice.md) 接入 `VideoPushClient / ServerQosRouter / VideoPlayClient`，track 通过 `SessionConfig.video_tracks` 声明，不直接依赖 WebRTC `PeerConnection` 或内部 `AddTrack` API。
 
 ```bash
 cmake --build build-webrtc-first \

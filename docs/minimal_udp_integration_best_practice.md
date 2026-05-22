@@ -1,0 +1,495 @@
+# 最小 UDP 集成最佳实践
+
+本文档说明当前 SDK 的最小实现集成方式：业务外围只实现 UDP
+传输、H264 编解码、渲染/采集和少量控制消息，媒体 plane 和 QoS
+能力通过 SDK 的 WebRTC-first facade 使用。
+
+当前 SDK 不是完整 WebRTC Client、`PeerConnection` 或 SFU，也不把
+`RTCPeerConnection::AddTrack()` 作为稳定公共接口暴露。对业务来说，
+“添加 track”的稳定入口是：
+
+- 在 `SessionConfig.video_tracks` 里声明每条 video track。
+- 发送每个 H264 Annex-B AU 时，把对应 track 的 `TransportIds` 填到
+  `AnnexBAccessUnitView::ids`。
+- 接收 AU 时，按 `AnnexBAccessUnitView::ids.track_id` 或
+  `sender_ssrc` 分发到对应解码/渲染链路。
+
+底层 RTP packetization、RTP/RTCP wire format、TWCC、NACK、PLI、
+GoogCC、pacing 和 video jitter 都由 SDK 的 WebRTC-backed facade
+承担。
+
+## 1. 最小职责边界
+
+推荐的最小拓扑：
+
+```text
+capture/encoder
+  -> VideoPushClient
+  -> UDP socket
+  -> ServerQosRouter
+  -> UDP socket
+  -> VideoPlayClient
+  -> decoder/render
+```
+
+业务侧需要实现：
+
+- UDP socket 的 bind、send、recv、地址路由和线程模型。
+- 一个很薄的 UDP packet envelope，用于区分 RTP、RTCP、下行质量报告和
+  sender rate cap。
+- H264 Annex-B encoder 输入和 decoder/render 输出。
+- 周期性 worker，持续驱动 `VideoPushClient::Process(now_us)` 和
+  `VideoPlayClient::Process(now_us)`。
+- 可选的业务安全层、鉴权、会话协商、NAT 穿透、QUIC/DTLS/VPN 等。
+
+SDK 负责：
+
+- 把 H264 Annex-B AU 切成 RTP bytes。
+- 从 RTP bytes 重组 Annex-B AU。
+- 生成和消费标准 RTCP：TWCC、SR、RR、NACK、PLI。
+- 发送端 GoogCC、pacer、probe、padding 和 sender packet history。
+- server 侧最小 QoS router、packet history、本地重传和 feedback 路由。
+- play 侧 NACK requester、PLI、video jitter 和 per-track 输出身份。
+
+业务侧不应该重复实现：
+
+- 自己生成 RTP header、RTCP NACK、RTCP TWCC、RTCP PLI。
+- 自己写 pacer、GoogCC、NACK requester 或 jitter buffer。
+- 为每条 track 单独创建一个 `VideoPushClient` 来绕开
+  `SessionConfig.video_tracks`。
+- 直接 include WebRTC 内部头文件或依赖 `PeerConnection` 行为。
+
+外部工程推荐只链接角色 target，不手动拼 WebRTC 子模块：
+
+```cmake
+find_package(WebRtcQosSdk REQUIRED CONFIG)
+
+add_executable(sender sender_main.cc)
+target_link_libraries(sender PRIVATE WebRtcQosSdk::role_push)
+
+add_executable(server server_main.cc)
+target_link_libraries(server PRIVATE WebRtcQosSdk::role_server)
+
+add_executable(receiver receiver_main.cc)
+target_link_libraries(receiver PRIVATE WebRtcQosSdk::role_play)
+```
+
+如果集成环境更适合单个 archive，可使用对应 bundle target：
+`WebRtcQosSdk::role_push_bundle`、`WebRtcQosSdk::role_server_bundle`、
+`WebRtcQosSdk::role_play_bundle`。
+
+## 2. UDP envelope
+
+`TransportOutput` 输出的是 SDK 已经生成好的 packet bytes：
+
+```cpp
+using TransportOutput =
+    std::function<Status(const TransportPacketView& packet)>;
+```
+
+UDP 层只需要把 `packet.bytes / packet.size` 原样发出去，并携带足够的
+业务 envelope 元数据，让接收端知道该把 payload 喂给哪个 SDK 入口。
+
+推荐最小 envelope：
+
+```cpp
+enum class WireKind : uint8_t {
+  kRtp = 1,
+  kRtcp = 2,
+  kDownlinkQuality = 3,
+  kSenderRateCap = 4,
+};
+
+struct WirePacket {
+  WireKind kind = WireKind::kRtp;
+  uint8_t flags = 0;
+  int64_t time_us = 0;
+  std::vector<uint8_t> payload;
+};
+```
+
+关键约束：
+
+- RTP/RTCP payload 必须 byte-for-byte 保持不变。
+- 每个 SDK 输出 packet 建议对应一个 UDP datagram。
+- 如果底层换成 TCP/QUIC stream，必须额外做 length framing，不能丢失 packet
+  边界。
+- envelope 必须保留 `RTP` 和 `RTCP` 类型，否则 server/play/push 侧无法可靠
+  dispatch 到 `On*Rtp()` 或 `On*Rtcp()`。
+- `TransportPacketMetadata::retransmission` 和 `padding` 对业务转发不是必需，
+  但建议带进 envelope flags，方便日志、弱网模拟和排查。
+- 当前默认 H264 RTP payload 上限是 `1200` bytes，加上 envelope 后仍应避免
+  IP fragmentation。
+
+仓库内 UDP demo 的 envelope 实现在
+[`demo/webrtc_first_udp/main.cc`](../demo/webrtc_first_udp/main.cc)，它只是
+示例 wire format，不是必须照抄的公共协议。
+
+## 3. Session 和 Track
+
+所有角色必须使用同一份 `SessionConfig` 语义：sender、server、receiver
+看到的 `session_id / stream_id / transport_id / receiver_id / source_id /
+track_id / sender_ssrc` 必须一致。
+
+最小双 track 配置示例：
+
+```cpp
+webrtc_qos::SessionConfig MakeSession(const char* debug_name) {
+  webrtc_qos::SessionConfig session;
+  session.ids.session_id = 1;
+  session.ids.stream_id = 1;
+  session.ids.transport_id = 1;
+  session.ids.receiver_id = 0x2222;
+  session.ids.source_id = session.ids.stream_id;
+  session.start_bitrate_bps = 1200000;
+  session.min_bitrate_bps = 300000;
+  session.max_bitrate_bps = 2500000;
+  session.debug_name = debug_name;
+
+  auto add_track = [&](uint32_t track_id,
+                       uint32_t sender_ssrc,
+                       bool base_track,
+                       uint32_t weight) {
+    webrtc_qos::VideoTrackConfig track;
+    track.ids = session.ids;
+    track.ids.track_id = track_id;
+    track.ids.sender_ssrc = sender_ssrc;
+    track.h264 = session.h264;
+    track.base_track = base_track;
+    track.weight = weight;
+    session.video_tracks.push_back(track);
+  };
+
+  add_track(101, 0x12345678u, true, 70);
+  add_track(202, 0x13355779u, false, 30);
+
+  // 兼容部分旧字段语义：session.ids.sender_ssrc 放第一条/base track。
+  session.ids.sender_ssrc = session.video_tracks.front().ids.sender_ssrc;
+  return session;
+}
+```
+
+规则：
+
+- `SessionConfig.video_tracks` 是 track 数量的唯一来源。
+- 填 1 条就是 1 条 track；填 2 条就是 2 条 track；填 N 条就是 N 条 track。
+- 每条 track 必须有稳定的 `track_id` 和唯一的 `sender_ssrc`。
+- 同一个 source 下的多条 track 放进同一个 `VideoPushClient`，共享
+  GoogCC/pacer/source cap。
+- `weight` 用于 shared source cap 下的 track 分配倾向，base track 通常权重
+  更高。
+- 不要新增业务侧 `track_count` 开关，也不要让 sender/server/receiver 各自推导
+  不同 track 列表。
+
+## 4. Sender 最小实现
+
+sender 侧创建一个 `VideoPushClient`，把 SDK 输出通过 UDP 发给 server。
+
+```cpp
+webrtc_qos::SessionConfig session = MakeSession("sender");
+
+webrtc_qos::VideoPushClientConfig config;
+config.session = session;
+config.transport_output =
+    [&](const webrtc_qos::TransportPacketView& packet) {
+      WirePacket wire;
+      wire.kind = packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp
+                      ? WireKind::kRtp
+                      : WireKind::kRtcp;
+      wire.time_us = packet.metadata.send_time_us;
+      wire.payload.assign(packet.bytes, packet.bytes + packet.size);
+      return SendUdp(server_addr, wire);
+    };
+
+auto push = webrtc_qos::CreateVideoPushClient(config);
+push->Start();
+```
+
+sender worker 的核心循环：
+
+```cpp
+while (running) {
+  const int64_t now_us = MonotonicNowUs();
+
+  // 1. 先处理 server 回来的 RTCP 和 sender cap。
+  for (const WirePacket& wire : RecvUdp()) {
+    if (wire.kind == WireKind::kRtcp) {
+      push->OnTransportFeedback(wire.payload.data(),
+                                wire.payload.size(),
+                                now_us);
+    } else if (wire.kind == WireKind::kSenderRateCap) {
+      webrtc_qos::SenderRateCap cap = DecodeSenderRateCap(wire.payload);
+      push->OnSenderRateCap(cap);
+    }
+  }
+
+  // 2. 即使没有新帧，也必须持续推进 GoogCC/pacer/RTCP。
+  push->Process(now_us);
+
+  // 3. 按每条 track 的适配建议驱动编码器。
+  for (const auto& track : session.video_tracks) {
+    webrtc_qos::EncoderAdaptation adaptation;
+    if (!push->GetTrackEncoderAdaptation(track.ids.track_id,
+                                         now_us,
+                                         &adaptation)) {
+      continue;
+    }
+
+    ConfigureEncoder(track.ids.track_id,
+                     adaptation.target_bitrate_bps,
+                     adaptation.max_fps,
+                     adaptation.request_keyframe);
+
+    EncodedAu encoded = TryEncodeAnnexB(track.ids.track_id, now_us);
+    if (!encoded.available) {
+      continue;
+    }
+
+    webrtc_qos::AnnexBAccessUnitView au;
+    au.bytes = encoded.bytes.data();
+    au.size = encoded.bytes.size();
+    au.capture_time_us = encoded.capture_time_us;
+    au.keyframe = encoded.keyframe;
+    au.ids = track.ids;
+    push->PushAnnexBAccessUnit(au);
+
+    // 低延迟场景建议 AU 入队后再推进一次 pacer。
+    push->Process(MonotonicNowUs());
+  }
+}
+```
+
+sender 侧注意事项：
+
+- `PushAnnexBAccessUnit()` 的输入必须是完整 Annex-B AU，不是单个裸 NALU。
+- 多 track 时必须给每个 AU 填正确的 `au.ids = track.ids`。
+- `capture_time_us` 应来自媒体采集/编码时间，不要用解码顺序或随机递增值替代。
+- `GetTrackEncoderAdaptation()` 是多 track 下的优先入口；单 track 可使用
+  `GetEncoderAdaptation()`。
+- 收到 `PLI` 后，`request_keyframe` 会通过 adaptation 暴露给业务编码器。
+- `SenderRateCap` 走业务控制 envelope，不是 RTCP packet。
+
+## 5. Server 最小实现
+
+server 侧创建一个 `ServerQosRouter`，负责 sender 和 receiver 之间的 RTP/RTCP
+bytes 路由，以及下行质量到 sender cap 的收敛。
+
+```cpp
+webrtc_qos::SessionConfig session = MakeSession("server");
+
+webrtc_qos::ServerQosRouterConfig config;
+config.session = session;
+config.sender_output =
+    [&](const webrtc_qos::TransportPacketView& packet) {
+      return SendUdp(sender_addr, EncodeTransportPacket(packet));
+    };
+config.receiver_output =
+    [&](const webrtc_qos::TransportPacketView& packet) {
+      return SendUdp(receiver_addr, EncodeTransportPacket(packet));
+    };
+
+auto server = webrtc_qos::CreateServerQosRouter(config);
+server->Start();
+```
+
+server UDP dispatch：
+
+```cpp
+while (running) {
+  const int64_t now_us = MonotonicNowUs();
+
+  for (const ReceivedDatagram& datagram : RecvUdp()) {
+    WirePacket wire = DecodeWirePacket(datagram.bytes);
+
+    if (datagram.from == sender_addr) {
+      if (wire.kind == WireKind::kRtp) {
+        server->OnSenderRtp(wire.payload.data(),
+                            wire.payload.size(),
+                            now_us);
+      } else if (wire.kind == WireKind::kRtcp) {
+        server->OnSenderRtcp(wire.payload.data(),
+                             wire.payload.size(),
+                             now_us);
+      }
+      continue;
+    }
+
+    if (datagram.from == receiver_addr) {
+      if (wire.kind == WireKind::kRtcp) {
+        server->OnReceiverRtcp(session.ids.receiver_id,
+                               wire.payload.data(),
+                               wire.payload.size(),
+                               now_us);
+      } else if (wire.kind == WireKind::kDownlinkQuality) {
+        webrtc_qos::DownlinkQuality quality =
+            DecodeDownlinkQuality(wire.payload);
+        server->OnDownlinkQuality(quality);
+
+        const auto cap = server->CurrentSenderRateCap(now_us);
+        SendUdp(sender_addr, EncodeSenderRateCap(cap));
+      }
+    }
+  }
+}
+```
+
+server 侧注意事项：
+
+- sender RTP 必须喂 `OnSenderRtp()`，sender RTCP 必须喂 `OnSenderRtcp()`。
+- receiver RTCP 必须喂 `OnReceiverRtcp(receiver_id, ...)`，`receiver_id` 是业务
+  下游身份，不是 RTCP SSRC。
+- `receiver_output` 是单包输出回调。当前 SDK 不维护 receiver registry，也不自动
+  做多 receiver 全量 fanout。
+- 如果要做多 receiver，业务 server 需要维护 receiver 列表，把 sender RTP/RTCP
+  fanout 到多个下游；SDK 负责每个 receiver 的反馈语义和最小修复路由。
+- server 不解码媒体，不改写 H264 payload，不生成业务层 GOP 策略。
+
+## 6. Receiver 最小实现
+
+receiver 侧创建一个 `VideoPlayClient`，把 server 发来的 RTP/RTCP 喂给 SDK，
+并消费 SDK 输出的 Annex-B AU。
+
+```cpp
+webrtc_qos::SessionConfig session = MakeSession("receiver");
+
+webrtc_qos::VideoPlayClientConfig config;
+config.session = session;
+config.transport_output =
+    [&](const webrtc_qos::TransportPacketView& packet) {
+      return SendUdp(server_addr, EncodeTransportPacket(packet));
+    };
+config.decoded_access_unit_output =
+    [&](const webrtc_qos::AnnexBAccessUnitView& au) {
+      DecodeAndRender(au.ids.track_id,
+                      au.bytes,
+                      au.size,
+                      au.capture_time_us);
+      return webrtc_qos::Status::Ok();
+    };
+
+auto play = webrtc_qos::CreateVideoPlayClient(config);
+play->Start();
+```
+
+receiver worker 的核心循环：
+
+```cpp
+while (running) {
+  const int64_t now_us = MonotonicNowUs();
+
+  for (const WirePacket& wire : RecvUdp()) {
+    if (wire.kind == WireKind::kRtp) {
+      play->OnRtpPacket(wire.payload.data(), wire.payload.size(), now_us);
+    } else if (wire.kind == WireKind::kRtcp) {
+      play->OnRtcpPacket(wire.payload.data(), wire.payload.size(), now_us);
+    }
+  }
+
+  // 即使暂时没有新 RTP，也要推进 NACK/PLI 重试计时。
+  play->Process(now_us);
+
+  webrtc_qos::DownlinkQuality quality;
+  quality.ids = session.ids;
+  quality.report_seq = NextReportSeq();
+  quality.report_time_us = static_cast<uint64_t>(now_us);
+  quality.fraction_lost_q8 = EstimateLossQ8();
+  quality.recv_bitrate_bps = EstimateRecvBitrateBps();
+  quality.video_drop_frames = ReadRendererDropFrames();
+  SendUdp(server_addr, EncodeDownlinkQuality(quality));
+}
+```
+
+receiver 侧注意事项：
+
+- `decoded_access_unit_output` 输出的是完整 Annex-B AU。
+- 多 track 时，解码器和 renderer 应按 `au.ids.track_id` 或 `sender_ssrc` 分路。
+- `VideoPlayClient::GetTrackQosSnapshot(track_id, now_us, &snapshot)` 可用于查看
+  per-track NACK、PLI、loss、RTT 等传输/恢复指标。
+- PSNR、SSIM、playable ratio、freeze proxy、renderer proxy 不是
+  `VideoPlayClient` 的公共 API，正式 QoE 应由业务 decode/render 或 QoE harness
+  计算。
+
+## 7. 线程和时钟
+
+推荐线程模型：
+
+- sender role 一个 worker，串行调用 `push->Start/Process/Push/OnFeedback`。
+- server role 一个 worker，串行调用 `server->Start/OnSender*/OnReceiver*`。
+- receiver role 一个 worker，串行调用 `play->Start/Process/OnRtp/OnRtcp`。
+- 如果业务必须多线程调用同一个 facade，需要在业务侧加锁或投递到同一 task
+  queue。
+
+时钟要求：
+
+- `now_us` 使用单调时钟，单位微秒。
+- `Process(now_us)` 必须稳定周期调用，建议 5ms 到 20ms tick。
+- 低 FPS、弱网、暂停采集期间也要继续调用 `Process(now_us)`。
+- RTP/RTCP receive time 用收到 UDP datagram 的本地单调时间。
+
+## 8. 安全和网络边界
+
+最小 UDP 方式适用于本机、内网、专线、可信 C/S 网络或业务已有安全隧道的场景。
+当前 SDK 不提供完整 WebRTC 的这些能力：
+
+- ICE / STUN / TURN
+- DTLS handshake
+- SRTP key management
+- NAT traversal
+- 浏览器 PeerConnection signaling
+
+如果要跑在公网或不可信网络，业务必须在 SDK 外层提供等价安全和连接能力，例如
+QUIC、DTLS、VPN、专线加密、访问控制和重放保护。无论底层是 UDP、QUIC 还是业务
+自定义传输，SDK facade 看到的仍然只是 RTP/RTCP opaque bytes。
+
+## 9. 最小验证方式
+
+本仓库内最接近业务最小集成的参考是 UDP 三角色 demo：
+
+```bash
+cd /root/webrtc_qos_sdk
+cmake -S . -B build-webrtc-first \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWEBRTC_QOS_ENABLE_WEBRTC_FACADE=ON \
+  -DWEBRTC_QOS_WEBRTC_MODULE_PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64
+cmake --build build-webrtc-first \
+  --target webrtc_qos_webrtc_first_udp_demo -j2
+
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo selftest 36
+```
+
+预期结果应包含：
+
+```text
+backend=webrtc_first_facade transport=udp peer_connection=false
+udp_selftest_dual_track ... tracks=2 ... decoded_tracks=2 ... pass=true
+```
+
+更完整的角色和 multi-track 门禁：
+
+```bash
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+SDK_ROOT=/root/webrtc_qos_sdk \
+  scripts/verify_webrtc_first_roles.sh
+```
+
+## 10. 集成检查清单
+
+- sender/server/receiver 使用同一份 `SessionConfig`。
+- 所有 track 都来自 `SessionConfig.video_tracks`。
+- 每个 AU 都填了正确的 `AnnexBAccessUnitView::ids`。
+- UDP envelope 能区分 RTP、RTCP、`DownlinkQuality` 和 `SenderRateCap`。
+- RTP/RTCP payload 没有被业务层解析、修改、合包或拆错边界。
+- sender 持续调用 `VideoPushClient::Process(now_us)`。
+- receiver 持续调用 `VideoPlayClient::Process(now_us)`。
+- server 把 receiver RTCP 调到 `OnReceiverRtcp(receiver_id, ...)`。
+- sender 把 server RTCP 调到 `OnTransportFeedback(...)`。
+- sender 使用 `GetTrackEncoderAdaptation()` 驱动每条 track 的码率、FPS 和关键帧。
+- receiver 按 `track_id` 或 `sender_ssrc` 分发 decoded AU。
+- 业务没有直接依赖 WebRTC 内部头、`PeerConnection`、ICE、DTLS 或 SRTP。
+
+## 11. 参考文档
+
+- [推拉客户端 SDK 集成说明](sdk_push_play_integration.md)
+- [WebRTC 边界声明](webrtc_boundary_statement.md)
+- [QoS 测试与验证方法](qos_test_validation_methodology.md)
+- [UDP 三角色 demo](../demo/webrtc_first_udp/main.cc)
