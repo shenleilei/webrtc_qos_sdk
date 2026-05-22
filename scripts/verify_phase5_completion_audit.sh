@@ -396,6 +396,10 @@ require_doc_pattern scripts/run_phase5_implementation_gate.sh \
   'phase5_error_contract' implementation_gate_runs_error_contract
 require_doc_pattern scripts/run_phase5_implementation_gate.sh \
   "! -path './manifest.sha256'" implementation_gate_top_manifest_scope
+require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
+  'implementation gate files.txt and manifest.sha256 file sets differ' implementation_gate_manifest_file_set_verifier
+require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
+  'implementation gate files.txt does not match actual files' implementation_gate_manifest_actual_files_verifier
 require_doc_pattern scripts/run_phase5_implementation_gate.sh \
   'phase5_implementation_gate_metrics.prom' implementation_gate_metrics_collector
 require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
@@ -684,6 +688,10 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
   'phase5_production_gate_metrics' production_gate_release_top_metrics_index
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_top_manifest_consistency' production_gate_top_manifest_file_set_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_top_manifest_consistency "\$\{readiness_dir\}" "readiness"' production_gate_readiness_manifest_file_set_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  '\{label\} files.txt and manifest.sha256 file sets differ' production_gate_manifest_file_set_template
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence missing production gate metrics' production_gate_release_top_metrics_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \

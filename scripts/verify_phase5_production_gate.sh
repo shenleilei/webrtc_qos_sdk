@@ -40,11 +40,13 @@ require_file "${GATE_DIR}/phase5_production_gate_metrics.prom"
 )
 
 verify_top_manifest_consistency() {
-  python3 - "${GATE_DIR}" <<'PY'
+  local dir="$1"
+  local label="$2"
+  python3 - "${dir}" "${label}" <<'PY'
 import os
 import sys
 
-gate_dir = sys.argv[1]
+gate_dir, label = sys.argv[1:3]
 files_path = os.path.join(gate_dir, "files.txt")
 manifest_path = os.path.join(gate_dir, "manifest.sha256")
 
@@ -55,12 +57,12 @@ with open(manifest_path, "r", encoding="utf-8") as fh:
     for line_no, line in enumerate(fh, 1):
         line = line.rstrip("\n")
         if len(line) < 67:
-            raise SystemExit(f"manifest line {line_no} is too short")
+            raise SystemExit(f"{label} manifest line {line_no} is too short")
         digest, rel = line.split(None, 1)
         if len(digest) != 64 or not all(
             ch in "0123456789abcdefABCDEF" for ch in digest
         ):
-            raise SystemExit(f"manifest line {line_no} has invalid sha256")
+            raise SystemExit(f"{label} manifest line {line_no} has invalid sha256")
         manifest_files.append(rel.lstrip("*"))
 
 actual_files = []
@@ -74,15 +76,15 @@ for root, _, names in os.walk(gate_dir):
 actual_files.sort()
 
 if files != sorted(files):
-    raise SystemExit("top files.txt is not sorted")
+    raise SystemExit(f"{label} files.txt is not sorted")
 if files != manifest_files:
-    raise SystemExit("top files.txt and manifest.sha256 file sets differ")
+    raise SystemExit(f"{label} files.txt and manifest.sha256 file sets differ")
 if files != actual_files:
-    raise SystemExit("top files.txt does not match actual gate files")
+    raise SystemExit(f"{label} files.txt does not match actual files")
 PY
 }
 
-verify_top_manifest_consistency
+verify_top_manifest_consistency "${GATE_DIR}" "top"
 
 summary_has() {
   local pattern="$1"
@@ -611,6 +613,7 @@ PY
     cd "${readiness_dir}"
     sha256sum -c manifest.sha256 >/dev/null
   )
+  verify_top_manifest_consistency "${readiness_dir}" "readiness"
   rg -q '^phase5_production_readiness_status=not_ready$' "${readiness_summary}" ||
     fail "failed readiness evidence did not record not_ready"
   if ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules|soak_config|external_phase2_evidence_bundle|script_[^ ]+) status=fail ' \
@@ -828,6 +831,7 @@ PY
     cd "${readiness_dir}"
     sha256sum -c manifest.sha256 >/dev/null
   )
+  verify_top_manifest_consistency "${readiness_dir}" "readiness"
   rg -q '^phase5_production_readiness_status=ready$' "${readiness_summary}" ||
     fail "phase5 production readiness was not ready"
   rg -q '^check=git_worktree_clean status=pass ' "${readiness_summary}" ||

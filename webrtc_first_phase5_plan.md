@@ -173,7 +173,8 @@ runtime artifacts、`phase5_implementation_gate_metrics.prom`、`files.txt` 和
 形式导出 gate pass/fail、各 step 最终状态和 debug bundle 状态，供 CI、监控告警和
 production gate wrapper 在正式验收前判断实现证据是否闭合。
 `verify_phase5_implementation_gate.sh` 会复验所有子门禁 pass、三角色日志/metrics/
-alerts 产物、debug bundle manifest、顶层 `.prom` 指标和运行 JSON 统一身份字段，避免
+alerts 产物、debug bundle manifest、顶层 `.prom` 指标、`files.txt` /
+`manifest.sha256` / 实际文件集合一致性和运行 JSON 统一身份字段，避免
 completion audit 只靠脚本存在和文档 pattern。
 
 `verify_phase5_production_readiness.sh` 是正式验收前的轻量 preflight。它不跑长时
@@ -1406,7 +1407,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   capture manifest sha256、capture QoE CSV，同时要求 bundle metadata 记录 clean tracked worktree。
 - production soak archive 必须记录并验证 clean tracked worktree；只允许未跟踪
   artifacts/build 目录存在，不能用带 tracked 源码修改的 soak 结果作为正式证据。
-- 顶层 metadata、summary、logs 和 sha256 manifest。
+- 顶层 metadata、summary、logs，以及 `files.txt` / `manifest.sha256` / 实际文件集合一致性。
 - 正式 production gate metadata 和 release evidence 必须证明 tracked worktree clean；
   未跟踪 artifacts/build 目录不阻塞，但未提交的 tracked 源码修改不能生成 pass 证据。
 - 顶层 `phase5_implementation_gate_metrics.prom` 必须覆盖 implementation gate
