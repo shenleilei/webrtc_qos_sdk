@@ -328,7 +328,6 @@ Phase-4 不应该先做一个很重的：
 - pacing
 - GoogCC
 - jitter / packet buffer
-- 后续可能的 encoding/simulcast
 
 ### 7.3 当前明确不做的部分
 
@@ -417,7 +416,7 @@ Phase-4 不应该先做一个很重的：
      - transport/control 是我们的
      - media plane 尽量保留 WebRTC
      - 当前做的是多 track，不是多 receiver fanout
-     - 多 track 和多 encodings 不是一回事
+     - 当前不拆出其它并行 media-plane 路线
 
 ### 9.2 现有门禁仍需保留
 
