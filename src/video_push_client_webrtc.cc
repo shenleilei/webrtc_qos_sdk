@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "compound_rtcp.h"
+#include "runtime_logger.h"
 #include "video_track_config_utils.h"
 #include "webrtc_qos/googcc_adapter.h"
 #include "webrtc_qos/h264_rtp_adapter.h"
@@ -45,6 +46,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
  public:
   explicit WebRtcVideoPushClient(VideoPushClientConfig config)
       : config_(std::move(config)),
+        logger_(config_.logging, "push"),
         googcc_(GoogCcAdapterConfig{config_.session.start_bitrate_bps,
                                     config_.session.min_bitrate_bps,
                                     config_.session.max_bitrate_bps}),
@@ -74,9 +76,12 @@ class WebRtcVideoPushClient final : public VideoPushClient {
 
   Status Start() override {
     if (!config_.transport_output) {
-      return InvalidArgument("VideoPushClient requires transport_output");
+      Status status = InvalidArgument("VideoPushClient requires transport_output");
+      logger_.Error("start_failed", config_.session.ids, status);
+      return status;
     }
     if (!track_config_status_) {
+      logger_.Error("start_failed", config_.session.ids, track_config_status_);
       return track_config_status_;
     }
     started_ = true;
@@ -87,18 +92,23 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     pacer_->Process(0);
     ApplyProbeClusters();
     ApplyGoogCcRates(0);
+    logger_.Info("start", config_.session.ids);
     return Status::Ok();
   }
 
   Status Stop() override {
     started_ = false;
+    logger_.Info("stop", config_.session.ids);
+    logger_.Flush();
     return Status::Ok();
   }
 
   Status Process(int64_t now_us) override {
     if (!started_) {
-      return Status::Error(StatusCode::kUnsupported,
-                           "VideoPushClient is not started");
+      Status status = Status::Error(StatusCode::kUnsupported,
+                                    "VideoPushClient is not started");
+      logger_.Warn("process_before_start", config_.session.ids, status);
+      return status;
     }
     PruneState(now_us);
     Status drain_status = DrainPacer(now_us);
@@ -113,17 +123,23 @@ class WebRtcVideoPushClient final : public VideoPushClient {
 
   Status PushAnnexBAccessUnit(const AnnexBAccessUnitView& access_unit) override {
     if (!started_) {
-      return Status::Error(StatusCode::kUnsupported,
-                           "VideoPushClient is not started");
+      Status status = Status::Error(StatusCode::kUnsupported,
+                                    "VideoPushClient is not started");
+      logger_.Warn("push_before_start", access_unit.ids, status);
+      return status;
     }
     if (access_unit.bytes == nullptr || access_unit.size == 0) {
-      return InvalidArgument("empty Annex-B access unit");
+      Status status = InvalidArgument("empty Annex-B access unit");
+      logger_.Warn("push_au_rejected", access_unit.ids, status);
+      return status;
     }
 
     TrackState* track = ResolveTrackForAccessUnit(access_unit);
     if (track == nullptr) {
-      return InvalidArgument(
+      Status status = InvalidArgument(
           "multi-track push requires track_id or sender_ssrc in access unit");
+      logger_.Warn("push_au_rejected", access_unit.ids, status);
+      return status;
     }
 
     std::vector<H264RtpPayload> payloads;
@@ -131,8 +147,10 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                              H264RtpPacketizerConfig{
                                  track->config.h264.max_rtp_payload_bytes},
                              &payloads)) {
-      return Status::Error(StatusCode::kMalformedPacket,
-                           "failed to packetize H264 Annex-B AU");
+      Status status = Status::Error(StatusCode::kMalformedPacket,
+                                    "failed to packetize H264 Annex-B AU");
+      logger_.Warn("packetize_failed", track->config.ids, status);
+      return status;
     }
 
     struct PendingPacket {
@@ -156,7 +174,9 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       rtp_input.payload = payload.payload.data();
       rtp_input.payload_size = payload.payload.size();
       if (!BuildRtpPacket(rtp_input, RtpConfig(track->config), &rtp_bytes)) {
-        return InternalError("failed to build RTP packet");
+        Status status = InternalError("failed to build RTP packet");
+        logger_.Error("rtp_build_failed", track->config.ids, status);
+        return status;
       }
 
       PacingAdapterPacket pacing_packet;
@@ -174,16 +194,21 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     const auto pacer_stats = pacer_->stats();
     if (pacer_stats.queue_bytes + access_unit_bytes > kMaxPacingQueueBytes) {
       ++track->snapshot.dropped_frames;
-      return Status::Error(StatusCode::kQueueFull,
-                           "WebRTC pacing adapter queue bytes would overflow");
+      Status status = Status::Error(
+          StatusCode::kQueueFull,
+          "WebRTC pacing adapter queue bytes would overflow");
+      logger_.Warn("pacer_enqueue_failed", track->config.ids, status);
+      return status;
     }
 
     for (auto& pending : pending_packets) {
       if (!pacer_->EnqueuePacket(pending.packet)) {
         ResetPacerQueue(access_unit.capture_time_us);
         ++track->snapshot.dropped_frames;
-        return Status::Error(StatusCode::kQueueFull,
-                             "WebRTC pacing adapter rejected RTP packet");
+        Status status = Status::Error(StatusCode::kQueueFull,
+                                      "WebRTC pacing adapter rejected RTP packet");
+        logger_.Warn("pacer_enqueue_failed", track->config.ids, status);
+        return status;
       }
     }
     track->next_rtp_sequence_number = rtp_sequence_number;
@@ -192,6 +217,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       track->keyframe_request_pending = false;
     }
 
+    logger_.Info("push_au", track->config.ids);
     return Status::Ok();
   }
 
@@ -284,6 +310,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       ResetPacerQueue(cap.receive_time_us);
     }
     ApplyGoogCcRates(cap.receive_time_us);
+    logger_.Info("sender_rate_cap_update", cap.ids);
     return Status::Ok();
   }
 
@@ -303,6 +330,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     }
     ApplyProbeClusters();
     ApplyGoogCcRates(at_time_us);
+    logger_.Info("network_route_change", config_.session.ids);
     return Status::Ok();
   }
 
@@ -695,6 +723,9 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
       if (track != nullptr) {
         ++track->snapshot.dropped_retransmission_packets;
+        logger_.Warn("sender_retransmission_drop", track->config.ids,
+                     Status::Error(StatusCode::kQueueFull,
+                                   "retransmission would overflow pacer queue"));
       }
       return Status::Ok();
     }
@@ -702,6 +733,14 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
       if (track != nullptr) {
         ++track->snapshot.dropped_retransmission_packets;
+        logger_.Warn("sender_retransmission_drop", track->config.ids,
+                     Status::Error(StatusCode::kQueueFull,
+                                   "pacer rejected retransmission"));
+      }
+    } else {
+      TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
+      if (track != nullptr) {
+        logger_.Info("sender_retransmission_enqueue", track->config.ids);
       }
     }
     return Status::Ok();
@@ -734,7 +773,11 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       rtp_input.payload = parsed.payload.data();
       rtp_input.payload_size = parsed.payload.size();
       if (!BuildRtpPacket(rtp_input, RtpConfig(track->config), &rebuilt_bytes)) {
-        return InternalError("failed to rebuild retransmission RTP packet");
+        Status status =
+            InternalError("failed to rebuild retransmission RTP packet");
+        logger_.Error("sender_retransmission_rebuild_failed",
+                      track->config.ids, status);
+        return status;
       }
       PacingAdapterPacket packet;
       packet.ssrc = parsed.ssrc;
@@ -754,7 +797,9 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   Status EmitPacketNow(const PacingAdapterPacket& packet, int64_t now_us) {
     TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
     if (track == nullptr) {
-      return InternalError("missing track state for emitted packet");
+      Status status = InternalError("missing track state for emitted packet");
+      logger_.Error("rtp_emit_failed", config_.session.ids, status);
+      return status;
     }
 
     TransportPacketView view;
@@ -767,6 +812,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     view.metadata.padding = packet.padding;
     Status status = config_.transport_output(view);
     if (!status) {
+      logger_.Error("transport_output_failed", track->config.ids, status);
       return status;
     }
     if (packet.transport_sequence_number >= 0) {
@@ -830,6 +876,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   }
 
   VideoPushClientConfig config_;
+  RuntimeLogger logger_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   uint32_t primary_track_id_ = 0;

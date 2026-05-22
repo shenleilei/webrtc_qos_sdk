@@ -50,6 +50,8 @@ SDK 负责：
 - 发送端 GoogCC、pacer、probe、padding 和 sender packet history。
 - server 侧最小 QoS router、packet history、本地重传和 feedback 路由。
 - play 侧 NACK requester、PLI、video jitter 和 per-track 输出身份。
+- 按 `RuntimeLogConfig` 输出结构化角色日志到文件，方便按
+  session/source/track/receiver 排查问题。
 
 业务侧不应该重复实现：
 
@@ -190,6 +192,9 @@ webrtc_qos::SessionConfig session = MakeSession("sender");
 
 webrtc_qos::VideoPushClientConfig config;
 config.session = session;
+config.logging.file.enabled = true;
+config.logging.file.directory = "/var/log/webrtc_qos";
+config.logging.file.basename = "sender";
 config.transport_output =
     [&](const webrtc_qos::TransportPacketView& packet) {
       WirePacket wire;
@@ -279,6 +284,9 @@ webrtc_qos::SessionConfig session = MakeSession("server");
 
 webrtc_qos::ServerQosRouterConfig config;
 config.session = session;
+config.logging.file.enabled = true;
+config.logging.file.directory = "/var/log/webrtc_qos";
+config.logging.file.basename = "server";
 config.sender_output =
     [&](const webrtc_qos::TransportPacketView& packet) {
       return SendUdp(sender_addr, EncodeTransportPacket(packet));
@@ -354,6 +362,9 @@ webrtc_qos::SessionConfig session = MakeSession("receiver");
 
 webrtc_qos::VideoPlayClientConfig config;
 config.session = session;
+config.logging.file.enabled = true;
+config.logging.file.directory = "/var/log/webrtc_qos";
+config.logging.file.basename = "receiver";
 config.transport_output =
     [&](const webrtc_qos::TransportPacketView& packet) {
       return SendUdp(server_addr, EncodeTransportPacket(packet));
@@ -409,7 +420,41 @@ receiver 侧注意事项：
   `VideoPlayClient` 的公共 API，正式 QoE 应由业务 decode/render 或 QoE harness
   计算。
 
-## 7. 线程和时钟
+## 7. 日志和排障
+
+生产集成不要把 SDK 运行事件依赖在 stdout/stderr 上。sender、server、receiver
+三个角色都建议显式配置 `RuntimeLogConfig`，把结构化 JSON Lines 写入日志目录：
+
+```cpp
+webrtc_qos::RuntimeLogConfig logging;
+logging.min_level = webrtc_qos::LogLevel::kInfo;
+logging.file.enabled = true;
+logging.file.directory = "/var/log/webrtc_qos";
+logging.file.basename = "webrtc_qos";
+logging.file.max_file_bytes = 64 * 1024 * 1024;
+logging.file.max_files = 5;
+logging.file.json_lines = true;
+
+push_config.logging = logging;
+server_config.logging = logging;
+play_config.logging = logging;
+```
+
+默认不配置日志时 SDK 不会输出运行日志。demo 可用 `--log-dir` 快速验证：
+
+```bash
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 36 --log-dir /tmp/webrtc_qos_udp_logs
+```
+
+日志文件命名形如 `webrtc_qos_udp.push.<pid>...log`、
+`webrtc_qos_udp.server.<pid>...log`、`webrtc_qos_udp.play.<pid>...log`。
+每条日志包含 `role`、`event`、`session_id`、`stream_id`、`transport_id`、
+`source_id`、`track_id`、`sender_ssrc`、`receiver_id`，warn/error 还会带
+`status_code` 和 `reason`。不要记录 H264 payload、RTP payload、鉴权 token
+或用户隐私字段。
+
+## 8. 线程和时钟
 
 推荐线程模型：
 
@@ -426,7 +471,7 @@ receiver 侧注意事项：
 - 低 FPS、弱网、暂停采集期间也要继续调用 `Process(now_us)`。
 - RTP/RTCP receive time 用收到 UDP datagram 的本地单调时间。
 
-## 8. 安全和网络边界
+## 9. 安全和网络边界
 
 最小 UDP 方式适用于本机、内网、专线、可信 C/S 网络或业务已有安全隧道的场景。
 当前 SDK 不提供完整 WebRTC 的这些能力：
@@ -441,7 +486,7 @@ receiver 侧注意事项：
 QUIC、DTLS、VPN、专线加密、访问控制和重放保护。无论底层是 UDP、QUIC 还是业务
 自定义传输，SDK facade 看到的仍然只是 RTP/RTCP opaque bytes。
 
-## 9. 最小验证方式
+## 10. 最小验证方式
 
 本仓库内最接近业务最小集成的参考是 UDP 三角色 demo：
 
@@ -455,6 +500,8 @@ cmake --build build-webrtc-first \
   --target webrtc_qos_webrtc_first_udp_demo -j2
 
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo selftest 36
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 36 --log-dir /tmp/webrtc_qos_udp_logs
 ```
 
 预期结果应包含：
@@ -470,9 +517,11 @@ udp_selftest_dual_track ... tracks=2 ... decoded_tracks=2 ... pass=true
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 SDK_ROOT=/root/webrtc_qos_sdk \
   scripts/verify_webrtc_first_roles.sh
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_logging.sh
 ```
 
-## 10. 集成检查清单
+## 11. 集成检查清单
 
 - sender/server/receiver 使用同一份 `SessionConfig`。
 - 所有 track 都来自 `SessionConfig.video_tracks`。
@@ -485,11 +534,13 @@ SDK_ROOT=/root/webrtc_qos_sdk \
 - sender 把 server RTCP 调到 `OnTransportFeedback(...)`。
 - sender 使用 `GetTrackEncoderAdaptation()` 驱动每条 track 的码率、FPS 和关键帧。
 - receiver 按 `track_id` 或 `sender_ssrc` 分发 decoded AU。
+- sender/server/receiver 显式配置文件日志，stdout 只保留人工 summary。
 - 业务没有直接依赖 WebRTC 内部头、`PeerConnection`、ICE、DTLS 或 SRTP。
 
-## 11. 参考文档
+## 12. 参考文档
 
 - [推拉客户端 SDK 集成说明](sdk_push_play_integration.md)
 - [WebRTC 边界声明](webrtc_boundary_statement.md)
 - [QoS 测试与验证方法](qos_test_validation_methodology.md)
 - [UDP 三角色 demo](../demo/webrtc_first_udp/main.cc)
+- [Phase-5 生产集成化、可观测性与日志体系计划](../webrtc_first_phase5_plan.md)

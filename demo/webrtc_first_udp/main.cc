@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -11,12 +12,14 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "webrtc_qos/rate_cap.h"
+#include "webrtc_qos/runtime_logging.h"
 #include "webrtc_qos/server_qos_router.h"
 #include "webrtc_qos/video_play_client.h"
 #include "webrtc_qos/video_push_client.h"
@@ -61,6 +64,11 @@ struct Metrics {
   uint32_t max_recovery_fps = 0;
   uint32_t final_target_bps = 0;
   uint32_t final_fps = 0;
+};
+
+struct CommonOptions {
+  int frames = 36;
+  std::string log_dir;
 };
 
 void PutU16(uint16_t value, std::vector<uint8_t>* out) {
@@ -437,6 +445,46 @@ void RequireStatus(const webrtc_qos::Status& status, const char* operation) {
   std::exit(2);
 }
 
+webrtc_qos::RuntimeLogConfig MakeLogConfig(const std::string& log_dir) {
+  webrtc_qos::RuntimeLogConfig config;
+  if (!log_dir.empty()) {
+    config.file.enabled = true;
+    config.file.directory = log_dir;
+    config.file.basename = "webrtc_qos_udp";
+    config.file.json_lines = true;
+    config.file.also_stderr = false;
+    config.file.max_file_bytes = 1024 * 1024;
+    config.file.max_files = 4;
+  }
+  return config;
+}
+
+bool ParseOptionalArgs(int argc,
+                       char** argv,
+                       int start_index,
+                       CommonOptions* options) {
+  for (int i = start_index; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--log-dir") {
+      if (i + 1 >= argc) {
+        std::cerr << "--log-dir requires a directory\n";
+        return false;
+      }
+      options->log_dir = argv[++i];
+      continue;
+    }
+    char* end = nullptr;
+    const long frames = std::strtol(arg.c_str(), &end, 10);
+    if (end != nullptr && *end == '\0') {
+      options->frames = static_cast<int>(frames);
+      continue;
+    }
+    std::cerr << "unknown argument: " << arg << "\n";
+    return false;
+  }
+  return true;
+}
+
 WireKind WireKindFromTransport(webrtc_qos::TransportPacketKind kind) {
   return kind == webrtc_qos::TransportPacketKind::kRtp ? WireKind::kRtp
                                                        : WireKind::kRtcp;
@@ -503,7 +551,7 @@ bool CheckMetrics(const Metrics& metrics, size_t track_total) {
 
 int RunUdpSender(uint16_t local_port,
                  const sockaddr_in& server_addr,
-                 int frames) {
+                 const CommonOptions& options) {
   UdpEndpoint udp;
   if (!udp.Bind(local_port)) {
     std::cerr << "failed to bind sender UDP port\n";
@@ -515,6 +563,7 @@ int RunUdpSender(uint16_t local_port,
       MakeDualTrackSession("webrtc_first_udp_sender");
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
+  push_config.logging = MakeLogConfig(options.log_dir);
   push_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         if (packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp) {
@@ -563,7 +612,7 @@ int RunUdpSender(uint16_t local_port,
     return progressed;
   };
 
-  for (int frame = 0; frame < frames; ++frame) {
+  for (int frame = 0; frame < options.frames; ++frame) {
     const int64_t now_us = 1000000 + static_cast<int64_t>(frame) * 33333;
     RequireStatus(push->Process(now_us), "sender process");
     for (int guard = 0; guard < 32 && pump_feedback(now_us); ++guard) {
@@ -604,7 +653,7 @@ int RunUdpSender(uint16_t local_port,
   }
 
   const int64_t final_time_us =
-      1000000 + static_cast<int64_t>(frames) * 33333 + 1000000;
+      1000000 + static_cast<int64_t>(options.frames) * 33333 + 1000000;
   RequireStatus(push->Process(final_time_us), "sender final process");
   for (int guard = 0; guard < 64 && pump_feedback(final_time_us); ++guard) {
   }
@@ -628,7 +677,7 @@ int RunUdpSender(uint16_t local_port,
 int RunUdpServer(uint16_t local_port,
                  const sockaddr_in& sender_addr,
                  const sockaddr_in& receiver_addr,
-                 int frames) {
+                 const CommonOptions& options) {
   UdpEndpoint udp;
   if (!udp.Bind(local_port)) {
     std::cerr << "failed to bind server UDP port\n";
@@ -640,6 +689,7 @@ int RunUdpServer(uint16_t local_port,
       MakeDualTrackSession("webrtc_first_udp_server");
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
+  server_config.logging = MakeLogConfig(options.log_dir);
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         return udp.SendTo(sender_addr, EncodeTransportPacket(packet))
@@ -665,7 +715,7 @@ int RunUdpServer(uint16_t local_port,
   }
   RequireStatus(server->Start(), "server start");
 
-  for (int frame = 0; frame < frames; ++frame) {
+  for (int frame = 0; frame < options.frames; ++frame) {
     const int64_t now_us = 1000000 + static_cast<int64_t>(frame) * 33333;
     std::vector<uint8_t> datagram;
     sockaddr_in from {};
@@ -711,7 +761,8 @@ int RunUdpServer(uint16_t local_port,
   }
 
   const auto snapshot =
-      server->GetQosSnapshot(1000000 + static_cast<int64_t>(frames) * 33333);
+      server->GetQosSnapshot(1000000 +
+                             static_cast<int64_t>(options.frames) * 33333);
   std::cout << "udp_server backend=webrtc_first_facade"
             << " transport=udp"
             << " peer_connection=false"
@@ -730,7 +781,7 @@ int RunUdpServer(uint16_t local_port,
 
 int RunUdpReceiver(uint16_t local_port,
                    const sockaddr_in& server_addr,
-                   int frames) {
+                   const CommonOptions& options) {
   UdpEndpoint udp;
   if (!udp.Bind(local_port)) {
     std::cerr << "failed to bind receiver UDP port\n";
@@ -742,6 +793,7 @@ int RunUdpReceiver(uint16_t local_port,
       MakeDualTrackSession("webrtc_first_udp_receiver");
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
+  play_config.logging = MakeLogConfig(options.log_dir);
   play_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         ++metrics.receiver_rtcp;
@@ -770,13 +822,13 @@ int RunUdpReceiver(uint16_t local_port,
   }
   RequireStatus(play->Start(), "receiver start");
 
-  for (int frame = 0; frame < frames; ++frame) {
+  for (int frame = 0; frame < options.frames; ++frame) {
     const int64_t now_us = 1000000 + static_cast<int64_t>(frame) * 33333;
     webrtc_qos::DownlinkQuality quality;
     quality.ids = session.ids;
     quality.report_seq = static_cast<uint32_t>(frame + 1);
     quality.report_time_us = static_cast<uint64_t>(now_us);
-    if (InBadWindow(frame, frames)) {
+    if (InBadWindow(frame, options.frames)) {
       quality.fraction_lost_q8 = 192;
       quality.video_drop_frames = 1;
       quality.recv_bitrate_bps = session.min_bitrate_bps;
@@ -799,7 +851,7 @@ int RunUdpReceiver(uint16_t local_port,
                       "receiver RTCP");
       } else if (wire.kind == WireKind::kRtp) {
         const bool retransmission = (wire.flags & kRetransmissionFlag) != 0;
-        if (InBadWindow(frame, frames) && !retransmission) {
+        if (InBadWindow(frame, options.frames) && !retransmission) {
           ++metrics.downlink_dropped;
           continue;
         }
@@ -831,7 +883,7 @@ int RunUdpReceiver(uint16_t local_port,
 
 int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
                           const char* label,
-                          int frames) {
+                          const CommonOptions& options) {
   UdpEndpoint sender_udp;
   UdpEndpoint server_udp;
   UdpEndpoint receiver_udp;
@@ -844,6 +896,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
 
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
+  push_config.logging = MakeLogConfig(options.log_dir);
   push_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         if (packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp) {
@@ -861,6 +914,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
 
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
+  play_config.logging = MakeLogConfig(options.log_dir);
   play_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         ++metrics.receiver_rtcp;
@@ -884,6 +938,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
 
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
+  server_config.logging = MakeLogConfig(options.log_dir);
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         return server_udp.SendTo(sender_udp.local_addr(),
@@ -959,7 +1014,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
         progressed = true;
       } else if (wire.kind == WireKind::kRtp) {
         const bool retransmission = (wire.flags & kRetransmissionFlag) != 0;
-        if (InBadWindow(frame, frames) && !retransmission) {
+        if (InBadWindow(frame, options.frames) && !retransmission) {
           ++metrics.downlink_dropped;
           progressed = true;
           continue;
@@ -1027,17 +1082,27 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   };
 
   auto pump_all = [&](int frame, int64_t now_us) {
+    int idle_polls = 0;
     for (int guard = 0; guard < 128; ++guard) {
-      const bool progressed = pump_server(now_us) || pump_sender(now_us) ||
-                              pump_receiver(frame, now_us);
+      const bool server_progressed = pump_server(now_us);
+      const bool sender_progressed = pump_sender(now_us);
+      const bool receiver_progressed = pump_receiver(frame, now_us);
+      const bool progressed =
+          server_progressed || sender_progressed || receiver_progressed;
       if (!progressed) {
+        if (++idle_polls <= 4) {
+          const timespec wait_time {0, 1000000};
+          nanosleep(&wait_time, nullptr);
+          continue;
+        }
         break;
       }
+      idle_polls = 0;
     }
     RequireStatus(play->Process(now_us), "play UDP process");
   };
 
-  for (int frame = 0; frame < frames; ++frame) {
+  for (int frame = 0; frame < options.frames; ++frame) {
     const int64_t now_us = 1000000 + static_cast<int64_t>(frame) * 33333;
     RequireStatus(push->Process(now_us), "push process");
     pump_all(frame, now_us);
@@ -1046,7 +1111,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
     quality.ids = session.ids;
     quality.report_seq = static_cast<uint32_t>(frame + 1);
     quality.report_time_us = static_cast<uint64_t>(now_us);
-    if (InBadWindow(frame, frames)) {
+    if (InBadWindow(frame, options.frames)) {
       quality.fraction_lost_q8 = 192;
       quality.video_drop_frames = 1;
       quality.recv_bitrate_bps = session.min_bitrate_bps;
@@ -1062,14 +1127,14 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
     const auto snapshot = push->GetQosSnapshot(now_us);
     metrics.final_target_bps = snapshot.sender_rates.final_target_bps;
     metrics.final_fps = adaptation.max_fps;
-    if (InBadWindow(frame, frames)) {
+    if (InBadWindow(frame, options.frames)) {
       ++metrics.bad_ticks;
       metrics.min_bad_target_bps =
           std::min(metrics.min_bad_target_bps,
                    snapshot.sender_rates.final_target_bps);
       metrics.min_bad_fps = std::min(metrics.min_bad_fps, adaptation.max_fps);
     }
-    if (InRecoveryWindow(frame, frames)) {
+    if (InRecoveryWindow(frame, options.frames)) {
       ++metrics.recovery_ticks;
       metrics.max_recovery_target_bps =
           std::max(metrics.max_recovery_target_bps,
@@ -1088,10 +1153,10 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
       if (frame % FpsInterval(track_adaptation.max_fps) != 0) {
         continue;
       }
-      if (InBadWindow(frame, frames)) {
+      if (InBadWindow(frame, options.frames)) {
         ++metrics.bad_pushed_frames;
       }
-      if (InRecoveryWindow(frame, frames)) {
+      if (InRecoveryWindow(frame, options.frames)) {
         ++metrics.recovery_pushed_frames;
       }
       const std::vector<uint8_t> au = MakeIdrAccessUnit(
@@ -1112,11 +1177,11 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   }
 
   const int64_t final_time_us =
-      1000000 + static_cast<int64_t>(frames) * 33333 + 1000000;
+      1000000 + static_cast<int64_t>(options.frames) * 33333 + 1000000;
   RequireStatus(push->OnSenderRateCap(server->CurrentSenderRateCap(final_time_us)),
                 "final push UDP sender cap");
   RequireStatus(push->Process(final_time_us), "final push process");
-  pump_all(frames, final_time_us);
+  pump_all(options.frames, final_time_us);
   const auto server_snapshot = server->GetQosSnapshot(final_time_us);
   metrics.retransmissions =
       std::max<int>(metrics.retransmissions,
@@ -1168,16 +1233,16 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   return pass ? 0 : 1;
 }
 
-int RunUdpSelftest(int frames) {
+int RunUdpSelftest(const CommonOptions& options) {
   const auto single_track_session =
       MakeSingleTrackSession("webrtc_first_udp_selftest_single_track");
   const auto dual_track_session =
       MakeDualTrackSession("webrtc_first_udp_selftest_dual_track");
 
   const int single_status =
-      RunUdpSelftestProfile(single_track_session, "single_track", frames);
+      RunUdpSelftestProfile(single_track_session, "single_track", options);
   const int dual_status =
-      RunUdpSelftestProfile(dual_track_session, "dual_track", frames);
+      RunUdpSelftestProfile(dual_track_session, "dual_track", options);
 
   const bool pass = single_status == 0 && dual_status == 0;
   std::cout << "udp_selftest backend=webrtc_first_facade"
@@ -1194,14 +1259,20 @@ int RunUdpSelftest(int frames) {
 int main(int argc, char** argv) {
   const std::string mode = argc >= 2 ? argv[1] : "selftest";
   if (mode == "selftest") {
-    const int frames = argc >= 3 ? std::max(12, std::atoi(argv[2])) : 36;
-    return RunUdpSelftest(frames);
+    CommonOptions options;
+    options.frames = 36;
+    if (!ParseOptionalArgs(argc, argv, 2, &options)) {
+      return 2;
+    }
+    options.frames = std::max(12, options.frames);
+    return RunUdpSelftest(options);
   }
 
   if (mode == "sender") {
     if (argc < 4) {
       std::cerr << "usage: " << argv[0]
-                << " sender <local_port> <server_ip:port> [frames]\n";
+                << " sender <local_port> <server_ip:port> [frames]"
+                << " [--log-dir DIR]\n";
       return 2;
     }
     sockaddr_in server_addr {};
@@ -1209,16 +1280,21 @@ int main(int argc, char** argv) {
       std::cerr << "invalid server endpoint: " << argv[3] << "\n";
       return 2;
     }
-    const int frames = argc >= 5 ? std::max(1, std::atoi(argv[4])) : 90;
+    CommonOptions options;
+    options.frames = 90;
+    if (!ParseOptionalArgs(argc, argv, 4, &options)) {
+      return 2;
+    }
+    options.frames = std::max(1, options.frames);
     return RunUdpSender(static_cast<uint16_t>(std::atoi(argv[2])),
-                        server_addr, frames);
+                        server_addr, options);
   }
 
   if (mode == "server") {
     if (argc < 5) {
       std::cerr << "usage: " << argv[0]
                 << " server <local_port> <sender_ip:port>"
-                << " <receiver_ip:port> [frames]\n";
+                << " <receiver_ip:port> [frames] [--log-dir DIR]\n";
       return 2;
     }
     sockaddr_in sender_addr {};
@@ -1231,15 +1307,21 @@ int main(int argc, char** argv) {
       std::cerr << "invalid receiver endpoint: " << argv[4] << "\n";
       return 2;
     }
-    const int frames = argc >= 6 ? std::max(1, std::atoi(argv[5])) : 90;
+    CommonOptions options;
+    options.frames = 90;
+    if (!ParseOptionalArgs(argc, argv, 5, &options)) {
+      return 2;
+    }
+    options.frames = std::max(1, options.frames);
     return RunUdpServer(static_cast<uint16_t>(std::atoi(argv[2])),
-                        sender_addr, receiver_addr, frames);
+                        sender_addr, receiver_addr, options);
   }
 
   if (mode == "receiver") {
     if (argc < 4) {
       std::cerr << "usage: " << argv[0]
-                << " receiver <local_port> <server_ip:port> [frames]\n";
+                << " receiver <local_port> <server_ip:port> [frames]"
+                << " [--log-dir DIR]\n";
       return 2;
     }
     sockaddr_in server_addr {};
@@ -1247,19 +1329,26 @@ int main(int argc, char** argv) {
       std::cerr << "invalid server endpoint: " << argv[3] << "\n";
       return 2;
     }
-    const int frames = argc >= 5 ? std::max(1, std::atoi(argv[4])) : 90;
+    CommonOptions options;
+    options.frames = 90;
+    if (!ParseOptionalArgs(argc, argv, 4, &options)) {
+      return 2;
+    }
+    options.frames = std::max(1, options.frames);
     return RunUdpReceiver(static_cast<uint16_t>(std::atoi(argv[2])),
-                          server_addr, frames);
+                          server_addr, options);
   }
 
   std::cerr << "usage:\n"
-            << "  " << argv[0] << " selftest [frames]\n"
+            << "  " << argv[0] << " selftest [frames] [--log-dir DIR]\n"
             << "  " << argv[0]
-            << " sender <local_port> <server_ip:port> [frames]\n"
+            << " sender <local_port> <server_ip:port> [frames]"
+            << " [--log-dir DIR]\n"
             << "  " << argv[0]
             << " server <local_port> <sender_ip:port> <receiver_ip:port>"
-            << " [frames]\n"
+            << " [frames] [--log-dir DIR]\n"
             << "  " << argv[0]
-            << " receiver <local_port> <server_ip:port> [frames]\n";
+            << " receiver <local_port> <server_ip:port> [frames]"
+            << " [--log-dir DIR]\n";
   return 2;
 }

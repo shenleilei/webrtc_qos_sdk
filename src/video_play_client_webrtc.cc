@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "compound_rtcp.h"
+#include "runtime_logger.h"
 #include "video_track_config_utils.h"
 #include "webrtc_qos/nack_requester_adapter.h"
 #include "webrtc_qos/rtcp_adapter.h"
@@ -42,7 +43,7 @@ uint32_t ResolveReceiverFeedbackSsrc(const SessionConfig& session) {
 class WebRtcVideoPlayClient final : public VideoPlayClient {
  public:
   explicit WebRtcVideoPlayClient(VideoPlayClientConfig config)
-      : config_(std::move(config)) {
+      : config_(std::move(config)), logger_(config_.logging, "play") {
     track_config_status_ =
         ResolveVideoTrackConfigs(config_.session, &track_configs_);
     if (track_config_status_) {
@@ -70,28 +71,38 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
 
   Status Start() override {
     if (!config_.decoded_access_unit_output) {
-      return InvalidArgument(
+      Status status = InvalidArgument(
           "VideoPlayClient requires decoded_access_unit_output");
+      logger_.Error("start_failed", config_.session.ids, status);
+      return status;
     }
     if (!config_.transport_output) {
-      return InvalidArgument("VideoPlayClient requires transport_output");
+      Status status = InvalidArgument("VideoPlayClient requires transport_output");
+      logger_.Error("start_failed", config_.session.ids, status);
+      return status;
     }
     if (!track_config_status_) {
+      logger_.Error("start_failed", config_.session.ids, track_config_status_);
       return track_config_status_;
     }
     started_ = true;
+    logger_.Info("start", config_.session.ids);
     return Status::Ok();
   }
 
   Status Stop() override {
     started_ = false;
+    logger_.Info("stop", config_.session.ids);
+    logger_.Flush();
     return Status::Ok();
   }
 
   Status Process(int64_t now_us) override {
     if (!started_) {
-      return Status::Error(StatusCode::kUnsupported,
-                           "VideoPlayClient is not started");
+      Status status = Status::Error(StatusCode::kUnsupported,
+                                    "VideoPlayClient is not started");
+      logger_.Warn("process_before_start", config_.session.ids, status);
+      return status;
     }
     for (auto& item : track_states_) {
       Status status = EmitNackRequesterFeedback(item.second, now_us);
@@ -106,17 +117,23 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
                      size_t rtp_size,
                      int64_t receive_time_us) override {
     if (!started_) {
-      return Status::Error(StatusCode::kUnsupported,
-                           "VideoPlayClient is not started");
+      Status status = Status::Error(StatusCode::kUnsupported,
+                                    "VideoPlayClient is not started");
+      logger_.Warn("rtp_before_start", config_.session.ids, status);
+      return status;
     }
     if (rtp_bytes == nullptr || rtp_size == 0) {
-      return InvalidArgument("empty RTP packet");
+      Status status = InvalidArgument("empty RTP packet");
+      logger_.Warn("malformed_rtp", config_.session.ids, status);
+      return status;
     }
 
     RtpPacketAdapterParsedPacket parsed;
     if (!ParseRtpPacket(rtp_bytes, rtp_size, LegacyRtpConfig(), &parsed)) {
-      return Status::Error(StatusCode::kMalformedPacket,
-                           "failed to parse RTP packet");
+      Status status = Status::Error(StatusCode::kMalformedPacket,
+                                    "failed to parse RTP packet");
+      logger_.Warn("malformed_rtp", config_.session.ids, status);
+      return status;
     }
 
     TrackState& track = EnsureTrackStateForSsrc(parsed.ssrc, parsed.payload_type);
@@ -151,9 +168,11 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       view.ids = track.config.ids;
       Status status = config_.decoded_access_unit_output(view);
       if (!status) {
+        logger_.Error("decode_au_output_failed", view.ids, status);
         return status;
       }
       ++track.decoded_frames;
+      logger_.Info("decode_au_output", view.ids);
     }
     return Status::Ok();
   }
@@ -314,20 +333,26 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
         nack.media_ssrc = track.config.ids.sender_ssrc;
         nack.packet_ids = event.rtp_sequence_numbers;
         if (!BuildRtcpNack(nack, &rtcp_bytes)) {
-          return Status::Error(StatusCode::kInternalError,
-                               "failed to build RTCP NACK");
+          Status status = Status::Error(StatusCode::kInternalError,
+                                        "failed to build RTCP NACK");
+          logger_.Error("rtcp_build_failed", track.config.ids, status);
+          return status;
         }
         ++track.snapshot.nack_count;
+        logger_.Info("nack_generated", track.config.ids);
       } else if (event.type ==
                  NackRequesterAdapterEventType::kKeyFrameRequest) {
         RtcpAdapterPli pli;
         pli.sender_ssrc = ResolveReceiverFeedbackSsrc(config_.session);
         pli.media_ssrc = track.config.ids.sender_ssrc;
         if (!BuildRtcpPli(pli, &rtcp_bytes)) {
-          return Status::Error(StatusCode::kInternalError,
-                               "failed to build RTCP PLI");
+          Status status = Status::Error(StatusCode::kInternalError,
+                                        "failed to build RTCP PLI");
+          logger_.Error("rtcp_build_failed", track.config.ids, status);
+          return status;
         }
         ++track.snapshot.pli_count;
+        logger_.Info("pli_generated", track.config.ids);
       }
 
       TransportPacketView view;
@@ -338,6 +363,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       view.metadata.send_time_us = now_us;
       Status status = config_.transport_output(view);
       if (!status) {
+        logger_.Error("transport_output_failed", track.config.ids, status);
         return status;
       }
     }
@@ -359,6 +385,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   }
 
   VideoPlayClientConfig config_;
+  RuntimeLogger logger_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   uint32_t primary_track_id_ = 0;

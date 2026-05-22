@@ -187,8 +187,8 @@ enum class LogLevel {
 
 struct FileLogConfig {
   bool enabled = false;
-  const char* directory = nullptr;
-  const char* basename = "webrtc_qos";
+  std::string directory;
+  std::string basename = "webrtc_qos";
   uint64_t max_file_bytes = 64 * 1024 * 1024;
   uint32_t max_files = 5;
   bool json_lines = true;
@@ -713,6 +713,8 @@ P0/P1 完成后再确认。
 ### 5.1 RuntimeLogConfig
 
 ```cpp
+#include <string>
+
 enum class LogLevel {
   kTrace = 0,
   kDebug = 1,
@@ -724,8 +726,8 @@ enum class LogLevel {
 
 struct FileLogConfig {
   bool enabled = false;
-  const char* directory = nullptr;
-  const char* basename = "webrtc_qos";
+  std::string directory;
+  std::string basename = "webrtc_qos";
   uint64_t max_file_bytes = 64 * 1024 * 1024;
   uint32_t max_files = 5;
   bool json_lines = true;

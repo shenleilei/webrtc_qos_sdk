@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "compound_rtcp.h"
+#include "runtime_logger.h"
 #include "video_track_config_utils.h"
 #include "webrtc_qos/rate_cap.h"
 #include "webrtc_qos/rtcp_adapter.h"
@@ -69,6 +70,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
  public:
   explicit WebRtcServerQosRouter(ServerQosRouterConfig config)
       : config_(std::move(config)),
+        logger_(config_.logging, "server"),
         packet_history_(TransportPacketHistoryConfig{1000, 3000, 4096}) {
     track_config_status_ =
         ResolveVideoTrackConfigs(config_.session, &track_configs_);
@@ -84,18 +86,24 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
   Status Start() override {
     if (!config_.sender_output || !config_.receiver_output) {
-      return InvalidArgument(
+      Status status = InvalidArgument(
           "ServerQosRouter requires sender_output and receiver_output");
+      logger_.Error("start_failed", config_.session.ids, status);
+      return status;
     }
     if (!track_config_status_) {
+      logger_.Error("start_failed", config_.session.ids, track_config_status_);
       return track_config_status_;
     }
     started_ = true;
+    logger_.Info("start", config_.session.ids);
     return Status::Ok();
   }
 
   Status Stop() override {
     started_ = false;
+    logger_.Info("stop", config_.session.ids);
+    logger_.Flush();
     return Status::Ok();
   }
 
@@ -103,13 +111,17 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                      size_t rtp_size,
                      int64_t receive_time_us) override {
     if (!started_) {
-      return Status::Error(StatusCode::kUnsupported,
-                           "ServerQosRouter is not started");
+      Status status = Status::Error(StatusCode::kUnsupported,
+                                    "ServerQosRouter is not started");
+      logger_.Warn("sender_rtp_before_start", config_.session.ids, status);
+      return status;
     }
     RtpPacketAdapterParsedPacket parsed;
     if (!ParseRtpPacket(rtp_bytes, rtp_size, LegacyRtpConfig(), &parsed)) {
-      return Status::Error(StatusCode::kMalformedPacket,
-                           "failed to parse sender RTP");
+      Status status = Status::Error(StatusCode::kMalformedPacket,
+                                    "failed to parse sender RTP");
+      logger_.Warn("malformed_rtp", config_.session.ids, status);
+      return status;
     }
     const bool padding = HasRtpPadding(rtp_bytes, rtp_size);
     std::vector<uint8_t> copy(rtp_bytes, rtp_bytes + rtp_size);
@@ -128,6 +140,8 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                        TransportPacketKind::kRtp, receive_time_us, false,
                        padding));
     if (!relay_status) {
+      logger_.Error("receiver_output_failed", TrackIdsForSsrc(parsed.ssrc),
+                    relay_status);
       return relay_status;
     }
     return MaybeSendUplinkTwcc(receive_time_us);
@@ -137,11 +151,15 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                       size_t rtcp_size,
                       int64_t receive_time_us) override {
     if (!started_) {
-      return Status::Error(StatusCode::kUnsupported,
-                           "ServerQosRouter is not started");
+      Status status = Status::Error(StatusCode::kUnsupported,
+                                    "ServerQosRouter is not started");
+      logger_.Warn("sender_rtcp_before_start", config_.session.ids, status);
+      return status;
     }
     if (rtcp_bytes == nullptr || rtcp_size == 0) {
-      return InvalidArgument("empty sender RTCP");
+      Status status = InvalidArgument("empty sender RTCP");
+      logger_.Warn("malformed_rtcp", config_.session.ids, status);
+      return status;
     }
     RtcpPacketIterationStats iteration_stats;
     Status parse_status = ForEachSupportedRtcpPacket(
@@ -152,18 +170,26 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
             RecordSenderReport(parsed.sender_report, receive_time_us);
           }
           std::vector<uint8_t> copy(packet_bytes, packet_bytes + packet_size);
-          return config_.receiver_output(
-              MakePacketView(copy,
-                             TrackIdsForSsrc(PacketMediaSsrc(parsed)),
-                             TransportPacketKind::kRtcp, receive_time_us,
-                             false));
+          const TransportIds ids = TrackIdsForSsrc(PacketMediaSsrc(parsed));
+          Status status = config_.receiver_output(MakePacketView(
+              copy, ids, TransportPacketKind::kRtcp, receive_time_us, false));
+          if (!status) {
+            logger_.Error("receiver_output_failed", ids, status);
+          }
+          return status;
         },
         &iteration_stats);
     if (!parse_status) {
+      logger_.Warn("malformed_rtcp", config_.session.ids, parse_status);
       return parse_status;
     }
     snapshot_.unsupported_rtcp_packet_count +=
         static_cast<uint32_t>(iteration_stats.unsupported_packets);
+    if (iteration_stats.unsupported_packets > 0) {
+      logger_.Warn("unsupported_rtcp_drop", config_.session.ids,
+                   Status::Error(StatusCode::kUnsupported,
+                                 "unsupported sender RTCP packet dropped"));
+    }
     return MaybeSendReceiverReport(receive_time_us);
   }
 
@@ -172,11 +198,15 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                         size_t rtcp_size,
                         int64_t receive_time_us) override {
     if (!started_) {
-      return Status::Error(StatusCode::kUnsupported,
-                           "ServerQosRouter is not started");
+      Status status = Status::Error(StatusCode::kUnsupported,
+                                    "ServerQosRouter is not started");
+      logger_.Warn("receiver_rtcp_before_start", config_.session.ids, status);
+      return status;
     }
     if (rtcp_bytes == nullptr || rtcp_size == 0) {
-      return InvalidArgument("empty receiver RTCP");
+      Status status = InvalidArgument("empty receiver RTCP");
+      logger_.Warn("malformed_rtcp", config_.session.ids, status);
+      return status;
     }
 
     RtcpPacketIterationStats iteration_stats;
@@ -193,14 +223,25 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
             ++snapshot_.pli_count;
           }
           std::vector<uint8_t> copy(packet_bytes, packet_bytes + packet_size);
-          return config_.sender_output(
-              MakePacketView(copy, ids, TransportPacketKind::kRtcp,
-                             receive_time_us, false));
+          Status status = config_.sender_output(MakePacketView(
+              copy, ids, TransportPacketKind::kRtcp, receive_time_us, false));
+          if (!status) {
+            logger_.Error("sender_output_failed", ids, status);
+          }
+          return status;
         },
         &iteration_stats);
+    if (!status) {
+      logger_.Warn("malformed_rtcp", config_.session.ids, status);
+    }
     if (status) {
       snapshot_.unsupported_rtcp_packet_count +=
           static_cast<uint32_t>(iteration_stats.unsupported_packets);
+      if (iteration_stats.unsupported_packets > 0) {
+        logger_.Warn("unsupported_rtcp_drop", config_.session.ids,
+                     Status::Error(StatusCode::kUnsupported,
+                                   "unsupported receiver RTCP packet dropped"));
+      }
     }
     return status;
   }
@@ -214,6 +255,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     last_downlink_quality_ = stored_quality;
     receiver_states_[receiver_id] =
         ReceiverState{stored_quality, BuildReceiverRateCap(stored_quality)};
+    logger_.Info("downlink_quality_update", stored_quality.ids);
     return Status::Ok();
   }
 
@@ -374,26 +416,35 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
           found->rtp_bytes, ids, TransportPacketKind::kRtp, receive_time_us,
           true));
       if (!status) {
+        logger_.Error("receiver_output_failed", ids, status);
         return status;
       }
+      logger_.Info("local_retransmission_hit", ids);
     }
     packet_history_.Prune(receive_time_us, last_downlink_quality_.rtt_ms);
 
     if (missing_packet_ids.empty()) {
       return Status::Ok();
     }
+    logger_.Info("local_retransmission_miss", TrackIdsForSsrc(nack.media_ssrc));
     RtcpAdapterNack forwarded_nack = nack;
     forwarded_nack.packet_ids = std::move(missing_packet_ids);
     std::vector<uint8_t> copy;
-    if (!BuildRtcpNack(forwarded_nack, &copy)) {
-      return Status::Error(StatusCode::kInternalError,
-                           "failed to rebuild forwarded RTCP NACK");
-    }
     TransportIds ids = TrackIdsForSsrc(nack.media_ssrc);
     ids.receiver_id = receiver_id;
-    return config_.sender_output(
+    if (!BuildRtcpNack(forwarded_nack, &copy)) {
+      Status status = Status::Error(StatusCode::kInternalError,
+                                    "failed to rebuild forwarded RTCP NACK");
+      logger_.Error("rtcp_build_failed", ids, status);
+      return status;
+    }
+    Status status = config_.sender_output(
         MakePacketView(copy, ids, TransportPacketKind::kRtcp, receive_time_us,
                        false));
+    if (!status) {
+      logger_.Error("sender_output_failed", ids, status);
+    }
+    return status;
   }
 
   void RecordTwccPacket(uint16_t transport_sequence_number,
@@ -431,16 +482,22 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
     std::vector<uint8_t> rtcp_bytes;
     if (!BuildRtcpTransportFeedback(feedback, &rtcp_bytes)) {
-      return Status::Error(StatusCode::kInternalError,
-                           "failed to build uplink TWCC");
+      Status status = Status::Error(StatusCode::kInternalError,
+                                    "failed to build uplink TWCC");
+      logger_.Error("rtcp_build_failed", config_.session.ids, status);
+      return status;
     }
     pending_twcc_packets_.clear();
     twcc_base_sequence_.reset();
     twcc_base_time_us_ = 0;
     last_twcc_send_time_us_ = now_us;
-    return config_.sender_output(
+    Status status = config_.sender_output(
         MakePacketView(rtcp_bytes, config_.session.ids,
                        TransportPacketKind::kRtcp, now_us, false));
+    if (!status) {
+      logger_.Error("sender_output_failed", config_.session.ids, status);
+    }
+    return status;
   }
 
   void RecordSenderReport(const RtcpAdapterSenderReport& sender_report,
@@ -478,16 +535,23 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
     std::vector<uint8_t> rtcp_bytes;
     if (!BuildRtcpReceiverReport(rr, &rtcp_bytes)) {
-      return Status::Error(StatusCode::kInternalError,
-                           "failed to build RTCP RR");
+      Status status = Status::Error(StatusCode::kInternalError,
+                                    "failed to build RTCP RR");
+      logger_.Error("rtcp_build_failed", config_.session.ids, status);
+      return status;
     }
     last_rr_send_time_us_ = now_us;
-    return config_.sender_output(
+    Status status = config_.sender_output(
         MakePacketView(rtcp_bytes, config_.session.ids,
                        TransportPacketKind::kRtcp, now_us, false));
+    if (!status) {
+      logger_.Error("sender_output_failed", config_.session.ids, status);
+    }
+    return status;
   }
 
   ServerQosRouterConfig config_;
+  RuntimeLogger logger_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   std::unordered_map<uint32_t, TransportIds> sender_ssrc_to_ids_;
