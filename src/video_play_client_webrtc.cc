@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "compound_rtcp.h"
+#include "runtime_alert_writer.h"
 #include "runtime_logger.h"
 #include "runtime_metrics_writer.h"
 #include "video_track_config_utils.h"
@@ -21,6 +22,11 @@ namespace {
 
 Status InvalidArgument(const char* message) {
   return Status::Error(StatusCode::kInvalidArgument, message);
+}
+
+bool IsMalformedInputStatus(const Status& status) {
+  return status.code == StatusCode::kInvalidArgument ||
+         status.code == StatusCode::kMalformedPacket;
 }
 
 bool HasRtpPadding(const uint8_t* rtp_bytes, size_t rtp_size) {
@@ -46,7 +52,8 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   explicit WebRtcVideoPlayClient(VideoPlayClientConfig config)
       : config_(std::move(config)),
         logger_(config_.logging, "play"),
-        metrics_writer_(config_.metrics, "play") {
+        metrics_writer_(config_.metrics, "play"),
+        alert_writer_(config_.alerts, "play") {
     track_config_status_ =
         ResolveVideoTrackConfigs(config_.session, &track_configs_);
     if (track_config_status_) {
@@ -98,6 +105,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     logger_.Info("stop", config_.session.ids);
     logger_.Flush();
     metrics_writer_.Flush();
+    alert_writer_.Flush();
     return Status::Ok();
   }
 
@@ -115,6 +123,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       }
     }
     MaybeWriteMetrics(now_us);
+    MaybeWriteQosAlerts(now_us);
     return Status::Ok();
   }
 
@@ -130,6 +139,10 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     if (rtp_bytes == nullptr || rtp_size == 0) {
       Status status = InvalidArgument("empty RTP packet");
       logger_.Warn("malformed_rtp", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtp", "network_qos",
+                            config_.session.ids, receive_time_us, status);
+      }
       return status;
     }
 
@@ -138,6 +151,10 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       Status status = Status::Error(StatusCode::kMalformedPacket,
                                     "failed to parse RTP packet");
       logger_.Warn("malformed_rtp", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtp", "network_qos",
+                            config_.session.ids, receive_time_us, status);
+      }
       return status;
     }
 
@@ -174,6 +191,10 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       Status status = config_.decoded_access_unit_output(view);
       if (!status) {
         logger_.Error("decode_au_output_failed", view.ids, status);
+        if (alert_writer_.config().alert_on_media_failure) {
+          alert_writer_.Error("decode_output_failed", "media_quality",
+                              view.ids, receive_time_us, status);
+        }
         return status;
       }
       ++track.decoded_frames;
@@ -185,7 +206,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   Status OnRtcpPacket(const uint8_t* rtcp_bytes,
                       size_t rtcp_size,
                       int64_t receive_time_us) override {
-    return ForEachSupportedRtcpPacket(
+    Status status = ForEachSupportedRtcpPacket(
         rtcp_bytes, rtcp_size,
         [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed) {
           if (parsed.type != RtcpAdapterPacketType::kReceiverReport) {
@@ -208,6 +229,14 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
           }
           return Status::Ok();
         });
+    if (!status && IsMalformedInputStatus(status)) {
+      logger_.Warn("malformed_rtcp", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtcp", "network_qos",
+                            config_.session.ids, receive_time_us, status);
+      }
+    }
+    return status;
   }
 
   QosSnapshot GetQosSnapshot(int64_t now_us) const override {
@@ -345,6 +374,11 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
         }
         ++track.snapshot.nack_count;
         logger_.Info("nack_generated", track.config.ids);
+        if (alert_writer_.config().alert_on_recovery_events) {
+          alert_writer_.Warn("nack_generated", "network_qos",
+                             track.config.ids, now_us,
+                             track.snapshot.nack_count, 0);
+        }
       } else if (event.type ==
                  NackRequesterAdapterEventType::kKeyFrameRequest) {
         RtcpAdapterPli pli;
@@ -358,6 +392,11 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
         }
         ++track.snapshot.pli_count;
         logger_.Info("pli_generated", track.config.ids);
+        if (alert_writer_.config().alert_on_recovery_events) {
+          alert_writer_.Warn("pli_generated", "media_quality",
+                             track.config.ids, now_us,
+                             track.snapshot.pli_count, 0);
+        }
       }
 
       TransportPacketView view;
@@ -369,6 +408,10 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       Status status = config_.transport_output(view);
       if (!status) {
         logger_.Error("transport_output_failed", track.config.ids, status);
+        if (alert_writer_.config().alert_on_transport_failure) {
+          alert_writer_.Error("transport_output_failed", "availability",
+                              track.config.ids, now_us, status);
+        }
         return status;
       }
     }
@@ -405,9 +448,26 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     }
   }
 
+  void MaybeWriteQosAlerts(int64_t now_us) {
+    const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    if (!alert_config.alert_on_qos_degradation) {
+      return;
+    }
+    for (const auto& item : track_states_) {
+      const auto stats = item.second.jitter->stats();
+      if (stats.packets_rejected >= alert_config.video_drop_frames_threshold) {
+        alert_writer_.Warn("jitter_packet_drop", "media_quality",
+                           item.second.config.ids, now_us,
+                           stats.packets_rejected,
+                           alert_config.video_drop_frames_threshold);
+      }
+    }
+  }
+
   VideoPlayClientConfig config_;
   RuntimeLogger logger_;
   RuntimeMetricsWriter metrics_writer_;
+  RuntimeAlertWriter alert_writer_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   uint32_t primary_track_id_ = 0;

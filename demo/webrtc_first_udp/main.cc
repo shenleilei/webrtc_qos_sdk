@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "webrtc_qos/rate_cap.h"
+#include "webrtc_qos/runtime_alerts.h"
 #include "webrtc_qos/runtime_logging.h"
 #include "webrtc_qos/runtime_metrics.h"
 #include "webrtc_qos/server_qos_router.h"
@@ -71,6 +72,7 @@ struct CommonOptions {
   int frames = 36;
   std::string log_dir;
   std::string metrics_dir;
+  std::string alerts_dir;
 };
 
 void PutU16(uint16_t value, std::vector<uint8_t>* out) {
@@ -476,6 +478,24 @@ webrtc_qos::RuntimeMetricsConfig MakeMetricsConfig(
   return config;
 }
 
+webrtc_qos::RuntimeAlertConfig MakeAlertConfig(
+    const std::string& alerts_dir) {
+  webrtc_qos::RuntimeAlertConfig config;
+  if (!alerts_dir.empty()) {
+    config.file.enabled = true;
+    config.file.directory = alerts_dir;
+    config.file.basename = "webrtc_qos_udp_alerts";
+    config.file.max_file_bytes = 1024 * 1024;
+    config.file.max_files = 4;
+    config.suppress_repeated_alerts_ms = 0;
+    config.high_loss_fraction_q8 = 128;
+    config.video_drop_frames_threshold = 1;
+    config.low_target_bps = 700000;
+    config.low_encoder_fps = 20;
+  }
+  return config;
+}
+
 bool ParseOptionalArgs(int argc,
                        char** argv,
                        int start_index,
@@ -496,6 +516,14 @@ bool ParseOptionalArgs(int argc,
         return false;
       }
       options->metrics_dir = argv[++i];
+      continue;
+    }
+    if (arg == "--alerts-dir") {
+      if (i + 1 >= argc) {
+        std::cerr << "--alerts-dir requires a directory\n";
+        return false;
+      }
+      options->alerts_dir = argv[++i];
       continue;
     }
     char* end = nullptr;
@@ -590,6 +618,7 @@ int RunUdpSender(uint16_t local_port,
   push_config.session = session;
   push_config.logging = MakeLogConfig(options.log_dir);
   push_config.metrics = MakeMetricsConfig(options.metrics_dir);
+  push_config.alerts = MakeAlertConfig(options.alerts_dir);
   push_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         if (packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp) {
@@ -717,6 +746,7 @@ int RunUdpServer(uint16_t local_port,
   server_config.session = session;
   server_config.logging = MakeLogConfig(options.log_dir);
   server_config.metrics = MakeMetricsConfig(options.metrics_dir);
+  server_config.alerts = MakeAlertConfig(options.alerts_dir);
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         return udp.SendTo(sender_addr, EncodeTransportPacket(packet))
@@ -822,6 +852,7 @@ int RunUdpReceiver(uint16_t local_port,
   play_config.session = session;
   play_config.logging = MakeLogConfig(options.log_dir);
   play_config.metrics = MakeMetricsConfig(options.metrics_dir);
+  play_config.alerts = MakeAlertConfig(options.alerts_dir);
   play_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         ++metrics.receiver_rtcp;
@@ -926,6 +957,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   push_config.session = session;
   push_config.logging = MakeLogConfig(options.log_dir);
   push_config.metrics = MakeMetricsConfig(options.metrics_dir);
+  push_config.alerts = MakeAlertConfig(options.alerts_dir);
   push_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         if (packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp) {
@@ -945,6 +977,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   play_config.session = session;
   play_config.logging = MakeLogConfig(options.log_dir);
   play_config.metrics = MakeMetricsConfig(options.metrics_dir);
+  play_config.alerts = MakeAlertConfig(options.alerts_dir);
   play_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         ++metrics.receiver_rtcp;
@@ -970,6 +1003,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   server_config.session = session;
   server_config.logging = MakeLogConfig(options.log_dir);
   server_config.metrics = MakeMetricsConfig(options.metrics_dir);
+  server_config.alerts = MakeAlertConfig(options.alerts_dir);
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         return server_udp.SendTo(sender_udp.local_addr(),
@@ -1303,7 +1337,8 @@ int main(int argc, char** argv) {
     if (argc < 4) {
       std::cerr << "usage: " << argv[0]
                 << " sender <local_port> <server_ip:port> [frames]"
-                << " [--log-dir DIR] [--metrics-dir DIR]\n";
+                << " [--log-dir DIR] [--metrics-dir DIR]"
+                << " [--alerts-dir DIR]\n";
       return 2;
     }
     sockaddr_in server_addr {};
@@ -1326,7 +1361,7 @@ int main(int argc, char** argv) {
       std::cerr << "usage: " << argv[0]
                 << " server <local_port> <sender_ip:port>"
                 << " <receiver_ip:port> [frames] [--log-dir DIR]"
-                << " [--metrics-dir DIR]\n";
+                << " [--metrics-dir DIR] [--alerts-dir DIR]\n";
       return 2;
     }
     sockaddr_in sender_addr {};
@@ -1353,7 +1388,8 @@ int main(int argc, char** argv) {
     if (argc < 4) {
       std::cerr << "usage: " << argv[0]
                 << " receiver <local_port> <server_ip:port> [frames]"
-                << " [--log-dir DIR] [--metrics-dir DIR]\n";
+                << " [--log-dir DIR] [--metrics-dir DIR]"
+                << " [--alerts-dir DIR]\n";
       return 2;
     }
     sockaddr_in server_addr {};
@@ -1373,15 +1409,18 @@ int main(int argc, char** argv) {
 
   std::cerr << "usage:\n"
             << "  " << argv[0] << " selftest [frames] [--log-dir DIR]"
-            << " [--metrics-dir DIR]\n"
+            << " [--metrics-dir DIR] [--alerts-dir DIR]\n"
             << "  " << argv[0]
             << " sender <local_port> <server_ip:port> [frames]"
-            << " [--log-dir DIR] [--metrics-dir DIR]\n"
+            << " [--log-dir DIR] [--metrics-dir DIR]"
+            << " [--alerts-dir DIR]\n"
             << "  " << argv[0]
             << " server <local_port> <sender_ip:port> <receiver_ip:port>"
-            << " [frames] [--log-dir DIR] [--metrics-dir DIR]\n"
+            << " [frames] [--log-dir DIR] [--metrics-dir DIR]"
+            << " [--alerts-dir DIR]\n"
             << "  " << argv[0]
             << " receiver <local_port> <server_ip:port> [frames]"
-            << " [--log-dir DIR] [--metrics-dir DIR]\n";
+            << " [--log-dir DIR] [--metrics-dir DIR]"
+            << " [--alerts-dir DIR]\n";
   return 2;
 }

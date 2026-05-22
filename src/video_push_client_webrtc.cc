@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "compound_rtcp.h"
+#include "runtime_alert_writer.h"
 #include "runtime_logger.h"
 #include "runtime_metrics_writer.h"
 #include "video_track_config_utils.h"
@@ -39,6 +40,11 @@ Status InternalError(const char* message) {
   return Status::Error(StatusCode::kInternalError, message);
 }
 
+bool IsMalformedInputStatus(const Status& status) {
+  return status.code == StatusCode::kInvalidArgument ||
+         status.code == StatusCode::kMalformedPacket;
+}
+
 bool SequenceNumberAtOrAfter(uint16_t lhs, uint16_t rhs) {
   return static_cast<int16_t>(lhs - rhs) >= 0;
 }
@@ -49,6 +55,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       : config_(std::move(config)),
         logger_(config_.logging, "push"),
         metrics_writer_(config_.metrics, "push"),
+        alert_writer_(config_.alerts, "push"),
         googcc_(GoogCcAdapterConfig{config_.session.start_bitrate_bps,
                                     config_.session.min_bitrate_bps,
                                     config_.session.max_bitrate_bps}),
@@ -103,6 +110,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     logger_.Info("stop", config_.session.ids);
     logger_.Flush();
     metrics_writer_.Flush();
+    alert_writer_.Flush();
     return Status::Ok();
   }
 
@@ -126,6 +134,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       return rtcp_status;
     }
     MaybeWriteMetrics(now_us);
+    MaybeWriteQosAlerts(now_us);
     return Status::Ok();
   }
 
@@ -158,6 +167,11 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       Status status = Status::Error(StatusCode::kMalformedPacket,
                                     "failed to packetize H264 Annex-B AU");
       logger_.Warn("packetize_failed", track->config.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_h264", "media_quality",
+                            track->config.ids, access_unit.capture_time_us,
+                            status);
+      }
       return status;
     }
 
@@ -206,6 +220,11 @@ class WebRtcVideoPushClient final : public VideoPushClient {
           StatusCode::kQueueFull,
           "WebRTC pacing adapter queue bytes would overflow");
       logger_.Warn("pacer_enqueue_failed", track->config.ids, status);
+      if (alert_writer_.config().alert_on_media_failure) {
+        alert_writer_.Error("pacer_enqueue_failed", "media_quality",
+                            track->config.ids, access_unit.capture_time_us,
+                            status);
+      }
       return status;
     }
 
@@ -216,6 +235,11 @@ class WebRtcVideoPushClient final : public VideoPushClient {
         Status status = Status::Error(StatusCode::kQueueFull,
                                       "WebRTC pacing adapter rejected RTP packet");
         logger_.Warn("pacer_enqueue_failed", track->config.ids, status);
+        if (alert_writer_.config().alert_on_media_failure) {
+          alert_writer_.Error("pacer_enqueue_failed", "media_quality",
+                              track->config.ids, access_unit.capture_time_us,
+                              status);
+        }
         return status;
       }
     }
@@ -233,7 +257,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                              size_t rtcp_size,
                              int64_t receive_time_us) override {
     PruneState(receive_time_us);
-    return ForEachSupportedRtcpPacket(
+    Status status = ForEachSupportedRtcpPacket(
         rtcp_bytes, rtcp_size,
         [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed)
             -> Status {
@@ -308,6 +332,14 @@ class WebRtcVideoPushClient final : public VideoPushClient {
           }
           return Status::Ok();
         });
+    if (!status && IsMalformedInputStatus(status)) {
+      logger_.Warn("malformed_rtcp", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtcp", "network_qos",
+                            config_.session.ids, receive_time_us, status);
+      }
+    }
+    return status;
   }
 
   Status OnSenderRateCap(const SenderRateCap& cap) override {
@@ -713,6 +745,11 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       view.metadata.send_time_us = now_us;
       Status status = config_.transport_output(view);
       if (!status) {
+        logger_.Error("transport_output_failed", track.config.ids, status);
+        if (alert_writer_.config().alert_on_transport_failure) {
+          alert_writer_.Error("transport_output_failed", "availability",
+                              track.config.ids, now_us, status);
+        }
         return status;
       }
       track.last_sr_send_time_us_ = now_us;
@@ -731,9 +768,16 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
       if (track != nullptr) {
         ++track->snapshot.dropped_retransmission_packets;
-        logger_.Warn("sender_retransmission_drop", track->config.ids,
-                     Status::Error(StatusCode::kQueueFull,
-                                   "retransmission would overflow pacer queue"));
+        const Status status =
+            Status::Error(StatusCode::kQueueFull,
+                          "retransmission would overflow pacer queue");
+        logger_.Warn("sender_retransmission_drop", track->config.ids, status);
+        if (alert_writer_.config().alert_on_recovery_events) {
+          alert_writer_.Warn("sender_retransmission_drop", "network_qos",
+                             track->config.ids, packet.enqueue_time_us,
+                             track->snapshot.dropped_retransmission_packets,
+                             0);
+        }
       }
       return Status::Ok();
     }
@@ -741,14 +785,25 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
       if (track != nullptr) {
         ++track->snapshot.dropped_retransmission_packets;
-        logger_.Warn("sender_retransmission_drop", track->config.ids,
-                     Status::Error(StatusCode::kQueueFull,
-                                   "pacer rejected retransmission"));
+        const Status status = Status::Error(StatusCode::kQueueFull,
+                                            "pacer rejected retransmission");
+        logger_.Warn("sender_retransmission_drop", track->config.ids, status);
+        if (alert_writer_.config().alert_on_recovery_events) {
+          alert_writer_.Warn("sender_retransmission_drop", "network_qos",
+                             track->config.ids, packet.enqueue_time_us,
+                             track->snapshot.dropped_retransmission_packets,
+                             0);
+        }
       }
     } else {
       TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
       if (track != nullptr) {
         logger_.Info("sender_retransmission_enqueue", track->config.ids);
+        if (alert_writer_.config().alert_on_recovery_events) {
+          alert_writer_.Warn("sender_retransmission_enqueue", "network_qos",
+                             track->config.ids, packet.enqueue_time_us,
+                             track->snapshot.retransmission_count + 1, 0);
+        }
       }
     }
     return Status::Ok();
@@ -821,6 +876,10 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     Status status = config_.transport_output(view);
     if (!status) {
       logger_.Error("transport_output_failed", track->config.ids, status);
+      if (alert_writer_.config().alert_on_transport_failure) {
+        alert_writer_.Error("transport_output_failed", "availability",
+                            track->config.ids, now_us, status);
+      }
       return status;
     }
     if (packet.transport_sequence_number >= 0) {
@@ -903,9 +962,32 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     }
   }
 
+  void MaybeWriteQosAlerts(int64_t now_us) {
+    const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    if (!alert_config.alert_on_qos_degradation) {
+      return;
+    }
+    const QosSnapshot snapshot = GetQosSnapshot(now_us);
+    const EncoderAdaptation adaptation = GetEncoderAdaptation(now_us);
+    if (snapshot.sender_rates.final_target_bps > 0 &&
+        snapshot.sender_rates.final_target_bps <=
+            alert_config.low_target_bps) {
+      alert_writer_.Warn("low_target_bitrate", "media_quality", snapshot.ids,
+                         now_us, snapshot.sender_rates.final_target_bps,
+                         alert_config.low_target_bps);
+    }
+    if (adaptation.max_fps > 0 &&
+        adaptation.max_fps <= alert_config.low_encoder_fps) {
+      alert_writer_.Warn("low_encoder_fps", "media_quality", snapshot.ids,
+                         now_us, adaptation.max_fps,
+                         alert_config.low_encoder_fps);
+    }
+  }
+
   VideoPushClientConfig config_;
   RuntimeLogger logger_;
   RuntimeMetricsWriter metrics_writer_;
+  RuntimeAlertWriter alert_writer_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   uint32_t primary_track_id_ = 0;

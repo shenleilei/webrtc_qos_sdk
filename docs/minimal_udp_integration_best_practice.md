@@ -52,6 +52,10 @@ SDK 负责：
 - play 侧 NACK requester、PLI、video jitter 和 per-track 输出身份。
 - 按 `RuntimeLogConfig` 输出结构化角色日志到文件，方便按
   session/source/track/receiver 排查问题。
+- 按 `RuntimeMetricsConfig` 定期输出 metrics snapshot，到文件后可被 CI、
+  监控或 debug bundle 收集。
+- 按 `RuntimeAlertConfig` 输出结构化 alerts，用于弱网、media failure、
+  transport failure 和 malformed packet 的最小生产告警闭环。
 
 业务侧不应该重复实现：
 
@@ -195,6 +199,10 @@ config.session = session;
 config.logging.file.enabled = true;
 config.logging.file.directory = "/var/log/webrtc_qos";
 config.logging.file.basename = "sender";
+config.metrics.file.enabled = true;
+config.metrics.file.directory = "/var/log/webrtc_qos/metrics";
+config.alerts.file.enabled = true;
+config.alerts.file.directory = "/var/log/webrtc_qos/alerts";
 config.transport_output =
     [&](const webrtc_qos::TransportPacketView& packet) {
       WirePacket wire;
@@ -209,6 +217,16 @@ config.transport_output =
 auto push = webrtc_qos::CreateVideoPushClient(config);
 push->Start();
 ```
+
+生产集成建议至少启用以下运行时输出：
+
+- `RuntimeLogConfig`：写 JSONL 角色日志，记录 start/stop、packetize failure、
+  transport output failure、NACK/重传、decode output 等事件。
+- `RuntimeMetricsConfig`：写 push/server/play 的 session/track metrics snapshot，
+  用于观察 bitrate/FPS 下探、恢复、loss、NACK、retransmission 和 drop。
+- `RuntimeAlertConfig`：写 alerts JSONL，默认覆盖 low target bitrate、low encoder
+  FPS、high downlink loss、video drop、NACK/retransmission recovery、malformed
+  RTP/RTCP/H264、transport output failure 和 decode output failure。
 
 sender worker 的核心循环：
 

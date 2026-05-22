@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "compound_rtcp.h"
+#include "runtime_alert_writer.h"
 #include "runtime_logger.h"
 #include "runtime_metrics_writer.h"
 #include "video_track_config_utils.h"
@@ -26,6 +27,11 @@ constexpr size_t kMaxTwccFeedbackPackets = 64;
 
 Status InvalidArgument(const char* message) {
   return Status::Error(StatusCode::kInvalidArgument, message);
+}
+
+bool IsMalformedInputStatus(const Status& status) {
+  return status.code == StatusCode::kInvalidArgument ||
+         status.code == StatusCode::kMalformedPacket;
 }
 
 TransportPacketView MakePacketView(const std::vector<uint8_t>& bytes,
@@ -73,6 +79,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       : config_(std::move(config)),
         logger_(config_.logging, "server"),
         metrics_writer_(config_.metrics, "server"),
+        alert_writer_(config_.alerts, "server"),
         packet_history_(TransportPacketHistoryConfig{1000, 3000, 4096}) {
     track_config_status_ =
         ResolveVideoTrackConfigs(config_.session, &track_configs_);
@@ -107,6 +114,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     logger_.Info("stop", config_.session.ids);
     logger_.Flush();
     metrics_writer_.Flush();
+    alert_writer_.Flush();
     return Status::Ok();
   }
 
@@ -124,6 +132,10 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       Status status = Status::Error(StatusCode::kMalformedPacket,
                                     "failed to parse sender RTP");
       logger_.Warn("malformed_rtp", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtp", "network_qos",
+                            config_.session.ids, receive_time_us, status);
+      }
       return status;
     }
     const bool padding = HasRtpPadding(rtp_bytes, rtp_size);
@@ -145,6 +157,11 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     if (!relay_status) {
       logger_.Error("receiver_output_failed", TrackIdsForSsrc(parsed.ssrc),
                     relay_status);
+      if (alert_writer_.config().alert_on_transport_failure) {
+        alert_writer_.Error("receiver_output_failed", "availability",
+                            TrackIdsForSsrc(parsed.ssrc), receive_time_us,
+                            relay_status);
+      }
       return relay_status;
     }
     MaybeWriteMetrics(receive_time_us);
@@ -163,6 +180,10 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     if (rtcp_bytes == nullptr || rtcp_size == 0) {
       Status status = InvalidArgument("empty sender RTCP");
       logger_.Warn("malformed_rtcp", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtcp", "network_qos",
+                            config_.session.ids, receive_time_us, status);
+      }
       return status;
     }
     RtcpPacketIterationStats iteration_stats;
@@ -179,12 +200,21 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
               copy, ids, TransportPacketKind::kRtcp, receive_time_us, false));
           if (!status) {
             logger_.Error("receiver_output_failed", ids, status);
+            if (alert_writer_.config().alert_on_transport_failure) {
+              alert_writer_.Error("receiver_output_failed", "availability",
+                                  ids, receive_time_us, status);
+            }
           }
           return status;
         },
         &iteration_stats);
     if (!parse_status) {
       logger_.Warn("malformed_rtcp", config_.session.ids, parse_status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtcp", "network_qos",
+                            config_.session.ids, receive_time_us,
+                            parse_status);
+      }
       return parse_status;
     }
     snapshot_.unsupported_rtcp_packet_count +=
@@ -193,6 +223,11 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       logger_.Warn("unsupported_rtcp_drop", config_.session.ids,
                    Status::Error(StatusCode::kUnsupported,
                                  "unsupported sender RTCP packet dropped"));
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Warn("unsupported_rtcp", "network_qos",
+                           config_.session.ids, receive_time_us,
+                           iteration_stats.unsupported_packets, 0);
+      }
     }
     return MaybeSendReceiverReport(receive_time_us);
   }
@@ -210,6 +245,10 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     if (rtcp_bytes == nullptr || rtcp_size == 0) {
       Status status = InvalidArgument("empty receiver RTCP");
       logger_.Warn("malformed_rtcp", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtcp", "network_qos",
+                            config_.session.ids, receive_time_us, status);
+      }
       return status;
     }
 
@@ -231,12 +270,20 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
               copy, ids, TransportPacketKind::kRtcp, receive_time_us, false));
           if (!status) {
             logger_.Error("sender_output_failed", ids, status);
+            if (alert_writer_.config().alert_on_transport_failure) {
+              alert_writer_.Error("sender_output_failed", "availability",
+                                  ids, receive_time_us, status);
+            }
           }
           return status;
         },
         &iteration_stats);
-    if (!status) {
+    if (!status && IsMalformedInputStatus(status)) {
       logger_.Warn("malformed_rtcp", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_malformed_packet) {
+        alert_writer_.Error("malformed_rtcp", "network_qos",
+                            config_.session.ids, receive_time_us, status);
+      }
     }
     if (status) {
       snapshot_.unsupported_rtcp_packet_count +=
@@ -245,6 +292,11 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
         logger_.Warn("unsupported_rtcp_drop", config_.session.ids,
                      Status::Error(StatusCode::kUnsupported,
                                    "unsupported receiver RTCP packet dropped"));
+        if (alert_writer_.config().alert_on_malformed_packet) {
+          alert_writer_.Warn("unsupported_rtcp", "network_qos",
+                             config_.session.ids, receive_time_us,
+                             iteration_stats.unsupported_packets, 0);
+        }
       }
     }
     MaybeWriteMetrics(receive_time_us);
@@ -265,6 +317,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
         stored_quality.report_time_us == 0
             ? 0
             : static_cast<int64_t>(stored_quality.report_time_us);
+    MaybeWriteDownlinkAlerts(stored_quality, report_time_us);
     MaybeWriteMetrics(report_time_us);
     return Status::Ok();
   }
@@ -299,6 +352,24 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       return;
     }
     metrics_writer_.WriteSession(GetQosSnapshot(now_us));
+  }
+
+  void MaybeWriteDownlinkAlerts(const DownlinkQuality& quality,
+                                int64_t report_time_us) {
+    const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    if (!alert_config.alert_on_qos_degradation) {
+      return;
+    }
+    if (quality.fraction_lost_q8 >= alert_config.high_loss_fraction_q8) {
+      alert_writer_.Warn("high_downlink_loss", "network_qos", quality.ids,
+                         report_time_us, quality.fraction_lost_q8,
+                         alert_config.high_loss_fraction_q8);
+    }
+    if (quality.video_drop_frames >= alert_config.video_drop_frames_threshold) {
+      alert_writer_.Warn("video_drop_frames", "media_quality", quality.ids,
+                         report_time_us, quality.video_drop_frames,
+                         alert_config.video_drop_frames_threshold);
+    }
   }
 
   struct ReceiverState {
@@ -434,21 +505,33 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
           true));
       if (!status) {
         logger_.Error("receiver_output_failed", ids, status);
+        if (alert_writer_.config().alert_on_transport_failure) {
+          alert_writer_.Error("receiver_output_failed", "availability", ids,
+                              receive_time_us, status);
+        }
         return status;
       }
       logger_.Info("local_retransmission_hit", ids);
+      if (alert_writer_.config().alert_on_recovery_events) {
+        alert_writer_.Warn("local_retransmission_hit", "network_qos", ids,
+                           receive_time_us, snapshot_.retransmission_count, 0);
+      }
     }
     packet_history_.Prune(receive_time_us, last_downlink_quality_.rtt_ms);
 
     if (missing_packet_ids.empty()) {
       return Status::Ok();
     }
-    logger_.Info("local_retransmission_miss", TrackIdsForSsrc(nack.media_ssrc));
+    TransportIds ids = TrackIdsForSsrc(nack.media_ssrc);
+    ids.receiver_id = receiver_id;
+    logger_.Info("local_retransmission_miss", ids);
+    if (alert_writer_.config().alert_on_recovery_events) {
+      alert_writer_.Warn("local_retransmission_miss", "network_qos", ids,
+                         receive_time_us, missing_packet_ids.size(), 0);
+    }
     RtcpAdapterNack forwarded_nack = nack;
     forwarded_nack.packet_ids = std::move(missing_packet_ids);
     std::vector<uint8_t> copy;
-    TransportIds ids = TrackIdsForSsrc(nack.media_ssrc);
-    ids.receiver_id = receiver_id;
     if (!BuildRtcpNack(forwarded_nack, &copy)) {
       Status status = Status::Error(StatusCode::kInternalError,
                                     "failed to rebuild forwarded RTCP NACK");
@@ -460,6 +543,10 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                        false));
     if (!status) {
       logger_.Error("sender_output_failed", ids, status);
+      if (alert_writer_.config().alert_on_transport_failure) {
+        alert_writer_.Error("sender_output_failed", "availability", ids,
+                            receive_time_us, status);
+      }
     }
     return status;
   }
@@ -513,6 +600,10 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                        TransportPacketKind::kRtcp, now_us, false));
     if (!status) {
       logger_.Error("sender_output_failed", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_transport_failure) {
+        alert_writer_.Error("sender_output_failed", "availability",
+                            config_.session.ids, now_us, status);
+      }
     }
     return status;
   }
@@ -563,6 +654,10 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                        TransportPacketKind::kRtcp, now_us, false));
     if (!status) {
       logger_.Error("sender_output_failed", config_.session.ids, status);
+      if (alert_writer_.config().alert_on_transport_failure) {
+        alert_writer_.Error("sender_output_failed", "availability",
+                            config_.session.ids, now_us, status);
+      }
     }
     return status;
   }
@@ -570,6 +665,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
   ServerQosRouterConfig config_;
   RuntimeLogger logger_;
   RuntimeMetricsWriter metrics_writer_;
+  RuntimeAlertWriter alert_writer_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   std::unordered_map<uint32_t, TransportIds> sender_ssrc_to_ids_;

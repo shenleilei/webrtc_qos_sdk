@@ -520,11 +520,64 @@ alerts_summary.txt
 {"ts_us":1000000,"severity":"WARN","rule":"high_nack_rate","role":"play","track_id":101,"value":42,"threshold":20}
 ```
 
+当前已落地第一版文件型 alerts：
+
+```cpp
+struct FileAlertsConfig {
+  bool enabled = false;
+  std::string directory;
+  std::string basename = "webrtc_qos_alerts";
+  uint64_t max_file_bytes = 64 * 1024 * 1024;
+  uint32_t max_files = 5;
+};
+
+struct RuntimeAlertConfig {
+  FileAlertsConfig file;
+  uint32_t suppress_repeated_alerts_ms = 1000;
+  bool alert_on_qos_degradation = true;
+  bool alert_on_recovery_events = true;
+  bool alert_on_malformed_packet = true;
+  bool alert_on_transport_failure = true;
+  bool alert_on_media_failure = true;
+  uint16_t high_loss_fraction_q8 = 128;
+  uint16_t video_drop_frames_threshold = 1;
+  uint32_t low_target_bps = 700000;
+  uint32_t low_encoder_fps = 20;
+};
+```
+
+role config 已追加 `RuntimeAlertConfig alerts`。当前 JSONL 覆盖统一身份字段、
+`severity/rule/category/value/threshold/status_code/reason`，并在以下路径触发：
+
+- push：low target bitrate、low encoder FPS、malformed H264、pacer enqueue
+  failure、transport output failure、sender retransmission enqueue/drop。
+- server：malformed RTP/RTCP、unsupported RTCP、receiver/sender output failure、
+  high downlink loss、video drop、本地重传 hit/miss。
+- play：malformed RTP、NACK/PLI、transport output failure、decode output failure、
+  jitter packet drop。
+
+仓库内 UDP demo 已支持 `--alerts-dir`，文件名为：
+
+```text
+webrtc_qos_udp_alerts.<role>.<pid>.<timestamp>.<index>.jsonl
+```
+
+当前门禁为：
+
+```bash
+scripts/verify_phase5_alerts.sh
+```
+
+该脚本先用 UDP weak-network selftest 验证降码率/FPS、downlink loss、video drop、
+NACK 和重传告警，再用安装包外部 CMake fixture 验证 malformed RTP、transport
+output failure、decode output failure，同时确认对应 warn/error 日志落盘。
+
 #### 验收标准
 
 - weak network low-RPS case 产生预期的 bitrate/FPS 下探记录，但不误报 fatal。
 - decode error fixture 能触发 decode 告警。
 - transport output failure 能触发可用性告警。
+- malformed packet 能触发 warn/error 日志和告警。
 - 告警文件进入 evidence bundle。
 
 ### 4.5 P1：问题排查 Bundle
