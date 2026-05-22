@@ -368,6 +368,22 @@ require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'webrtc_qos_phase5_debug_bundle_slo_objective_status' debug_bundle_monitoring_metrics_slo_gate
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'webrtc_qos_phase5_debug_bundle_alerts_total' debug_bundle_monitoring_metrics_alert_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_debug_health_report' production_gate_release_debug_health_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_debug_slo_report' production_gate_release_debug_slo_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_debug_monitoring_metrics' production_gate_release_debug_monitoring_metrics_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_debug_alert_policy' production_gate_release_debug_alert_policy_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_debug_incident_report' production_gate_release_debug_incident_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_debug_first_problem' production_gate_release_debug_first_problem_index
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence missing observability pointer' production_gate_release_debug_observability_pointer_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'phase5_debug_incident_report=' production_gate_release_debug_summary_pointer
 require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
   'validated_phase5_implementation_records' implementation_gate_runtime_records
 require_doc_pattern scripts/run_phase5_implementation_gate.sh \

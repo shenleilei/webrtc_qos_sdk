@@ -1001,6 +1001,18 @@ if not readiness_metrics or not os.path.exists(
     raise SystemExit("release evidence missing production readiness metrics")
 if observability.get("debug_bundle_slo_status") not in {"pass", "warn", "fail"}:
     raise SystemExit("release evidence missing debug bundle SLO status")
+for key in (
+    "debug_bundle_health_report",
+    "debug_bundle_slo_report",
+    "debug_bundle_monitoring_metrics",
+    "debug_bundle_alert_policy",
+    "debug_bundle_incident_report",
+    "debug_bundle_timeline",
+    "debug_bundle_first_problem",
+):
+    rel = observability.get(key)
+    if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
+        raise SystemExit(f"release evidence missing observability pointer {key}")
 fanout = doc.get("fanout", {})
 if fanout.get("status") != "deferred":
     raise SystemExit("release evidence fanout status must be deferred")
@@ -1037,6 +1049,16 @@ required_evidence = {
     "phase5_readiness_check_records",
     "git_worktree_clean",
     "phase5_debug_bundle",
+    "phase5_debug_runtime_config",
+    "phase5_debug_alerts_summary",
+    "phase5_debug_timeline",
+    "phase5_debug_first_problem",
+    "phase5_debug_health_report",
+    "phase5_debug_slo_report",
+    "phase5_debug_monitoring_metrics",
+    "phase5_debug_alert_policy",
+    "phase5_debug_incident_report",
+    "phase5_debug_incident_runbook",
     "phase2_production_gate",
     "phase2_completion_audit",
     "phase2_completion_audit_metrics",
@@ -1083,6 +1105,16 @@ for key in (
     "phase5_production_readiness_metrics",
     "phase5_readiness_check_records",
     "phase5_debug_bundle",
+    "phase5_debug_runtime_config",
+    "phase5_debug_alerts_summary",
+    "phase5_debug_timeline",
+    "phase5_debug_first_problem",
+    "phase5_debug_health_report",
+    "phase5_debug_slo_report",
+    "phase5_debug_monitoring_metrics",
+    "phase5_debug_alert_policy",
+    "phase5_debug_incident_report",
+    "phase5_debug_incident_runbook",
     "phase2_production_gate",
     "phase2_evidence_bundle",
     "phase2_completion_audit",
@@ -1136,6 +1168,7 @@ def normalize_rel(path):
 
 phase2_evidence_bundle_rel = artifacts.get("phase2_evidence_bundle", "")
 readiness_artifact_base = normalize_rel(artifacts.get("phase5_production_readiness", ""))
+debug_artifact_base = normalize_rel(artifacts.get("phase5_debug_bundle", ""))
 production_soak_artifact_base = normalize_rel(
     os.path.join(phase2_evidence_bundle_rel, "production_soak")
 )
@@ -1218,6 +1251,40 @@ expected_readiness_artifacts = {
         os.path.join(readiness_artifact_base, "check_records.jsonl")
     ),
 }
+expected_debug_artifacts = {
+    "phase5_debug_runtime_config": normalize_rel(
+        os.path.join(debug_artifact_base, "runtime_config.json")
+    ),
+    "phase5_debug_alerts_summary": normalize_rel(
+        os.path.join(debug_artifact_base, "alerts", "alerts_summary.txt")
+    ),
+    "phase5_debug_timeline": normalize_rel(
+        os.path.join(debug_artifact_base, "timeline", "events.jsonl")
+    ),
+    "phase5_debug_first_problem": normalize_rel(
+        os.path.join(debug_artifact_base, "timeline", "first_problem.json")
+    ),
+    "phase5_debug_health_report": normalize_rel(
+        os.path.join(debug_artifact_base, "monitoring", "health_report.json")
+    ),
+    "phase5_debug_slo_report": normalize_rel(
+        os.path.join(debug_artifact_base, "monitoring", "slo_report.json")
+    ),
+    "phase5_debug_monitoring_metrics": normalize_rel(
+        os.path.join(
+            debug_artifact_base, "monitoring", "phase5_monitoring_metrics.prom"
+        )
+    ),
+    "phase5_debug_alert_policy": normalize_rel(
+        os.path.join(debug_artifact_base, "monitoring", "alert_policy.json")
+    ),
+    "phase5_debug_incident_report": normalize_rel(
+        os.path.join(debug_artifact_base, "monitoring", "incident_report.json")
+    ),
+    "phase5_debug_incident_runbook": normalize_rel(
+        os.path.join(debug_artifact_base, "monitoring", "incident_runbook.txt")
+    ),
+}
 
 production_soak = doc.get("production_soak", {})
 for key in ("summary", "csv", "config", "archive"):
@@ -1250,6 +1317,8 @@ def require_consistent_pointer(evidence_id, expected_rel, nested_rel=None):
         )
 
 for evidence_id, expected_rel in expected_readiness_artifacts.items():
+    require_consistent_pointer(evidence_id, expected_rel)
+for evidence_id, expected_rel in expected_debug_artifacts.items():
     require_consistent_pointer(evidence_id, expected_rel)
 for evidence_id, expected_rel in expected_production_soak_artifacts.items():
     nested_key = evidence_id.replace("production_soak_", "")
@@ -1323,6 +1392,9 @@ for expected in (
     "evidence=phase5_implementation_gate_metrics status=pass",
     "evidence=phase5_production_readiness_report status=pass",
     "evidence=phase5_production_readiness_metrics status=pass",
+    "evidence=phase5_debug_health_report status=pass",
+    "evidence=phase5_debug_monitoring_metrics status=pass",
+    "evidence=phase5_debug_incident_report status=pass",
     "evidence=git_worktree_clean status=pass",
     "evidence=phase2_completion_audit_metrics status=pass",
     "evidence=production_soak status=pass",
@@ -1334,6 +1406,9 @@ for expected in (
     "phase5_readiness_report=",
     "phase5_readiness_metrics=",
     "phase5_risk_milestone_report=",
+    "phase5_debug_health_report=",
+    "phase5_debug_monitoring_metrics=",
+    "phase5_debug_incident_report=",
     "production_soak_csv=",
     "production_soak_rows=",
     "real_renderer_summary=",

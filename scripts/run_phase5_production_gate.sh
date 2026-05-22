@@ -360,7 +360,23 @@ readiness_metrics = os.path.join(
     readiness_dir, "phase5_production_readiness_metrics.prom"
 )
 readiness_check_records = os.path.join(readiness_dir, "check_records.jsonl")
+debug_manifest = os.path.join(debug_bundle_dir, "manifest.sha256")
+debug_runtime_config = os.path.join(debug_bundle_dir, "runtime_config.json")
+debug_alerts_summary = os.path.join(debug_bundle_dir, "alerts", "alerts_summary.txt")
+debug_timeline = os.path.join(debug_bundle_dir, "timeline", "events.jsonl")
+debug_first_problem = os.path.join(debug_bundle_dir, "timeline", "first_problem.json")
+debug_health = os.path.join(debug_bundle_dir, "monitoring", "health_report.json")
 debug_slo = os.path.join(debug_bundle_dir, "monitoring", "slo_report.json")
+debug_monitoring_metrics = os.path.join(
+    debug_bundle_dir, "monitoring", "phase5_monitoring_metrics.prom"
+)
+debug_alert_policy = os.path.join(
+    debug_bundle_dir, "monitoring", "alert_policy.json"
+)
+debug_incident = os.path.join(debug_bundle_dir, "monitoring", "incident_report.json")
+debug_incident_runbook = os.path.join(
+    debug_bundle_dir, "monitoring", "incident_runbook.txt"
+)
 phase2_summary = os.path.join(phase2_dir, "phase2_production_gate_summary.txt")
 phase2_audit_summary = os.path.join(
     phase2_dir,
@@ -435,10 +451,17 @@ checks = {
     "phase5_readiness_check_records": has_file(readiness_check_records),
     "git_worktree_clean": metadata.get("GIT_TRACKED_WORKTREE_CLEAN") == "1"
     and has_prefix(readiness_summary, "check=git_worktree_clean status=pass "),
-    "phase5_debug_bundle": has_file(
-        os.path.join(debug_bundle_dir, "manifest.sha256")
-    )
-    and has_file(debug_slo),
+    "phase5_debug_bundle": has_file(debug_manifest) and has_file(debug_slo),
+    "phase5_debug_runtime_config": has_file(debug_runtime_config),
+    "phase5_debug_alerts_summary": has_file(debug_alerts_summary),
+    "phase5_debug_timeline": has_file(debug_timeline),
+    "phase5_debug_first_problem": has_file(debug_first_problem),
+    "phase5_debug_health_report": has_file(debug_health),
+    "phase5_debug_slo_report": has_file(debug_slo),
+    "phase5_debug_monitoring_metrics": has_file(debug_monitoring_metrics),
+    "phase5_debug_alert_policy": has_file(debug_alert_policy),
+    "phase5_debug_incident_report": has_file(debug_incident),
+    "phase5_debug_incident_runbook": has_file(debug_incident_runbook),
     "phase2_production_gate": has_line(phase2_summary, "phase2_production_gate_status=pass"),
     "phase2_completion_audit": has_line(
         phase2_audit_summary, "phase2_completion_audit=pass"
@@ -534,7 +557,57 @@ evidence = [
         (
             "phase5_debug_bundle",
             checks["phase5_debug_bundle"],
-            rel(os.path.join(debug_bundle_dir, "manifest.sha256")),
+            rel(debug_manifest),
+        ),
+        (
+            "phase5_debug_runtime_config",
+            checks["phase5_debug_runtime_config"],
+            rel(debug_runtime_config),
+        ),
+        (
+            "phase5_debug_alerts_summary",
+            checks["phase5_debug_alerts_summary"],
+            rel(debug_alerts_summary),
+        ),
+        (
+            "phase5_debug_timeline",
+            checks["phase5_debug_timeline"],
+            rel(debug_timeline),
+        ),
+        (
+            "phase5_debug_first_problem",
+            checks["phase5_debug_first_problem"],
+            rel(debug_first_problem),
+        ),
+        (
+            "phase5_debug_health_report",
+            checks["phase5_debug_health_report"],
+            rel(debug_health),
+        ),
+        (
+            "phase5_debug_slo_report",
+            checks["phase5_debug_slo_report"],
+            rel(debug_slo),
+        ),
+        (
+            "phase5_debug_monitoring_metrics",
+            checks["phase5_debug_monitoring_metrics"],
+            rel(debug_monitoring_metrics),
+        ),
+        (
+            "phase5_debug_alert_policy",
+            checks["phase5_debug_alert_policy"],
+            rel(debug_alert_policy),
+        ),
+        (
+            "phase5_debug_incident_report",
+            checks["phase5_debug_incident_report"],
+            rel(debug_incident),
+        ),
+        (
+            "phase5_debug_incident_runbook",
+            checks["phase5_debug_incident_runbook"],
+            rel(debug_incident_runbook),
         ),
         (
             "phase2_production_gate",
@@ -649,8 +722,14 @@ doc = {
         "implementation_gate_metrics": rel(implementation_metrics),
         "production_readiness_metrics": rel(readiness_metrics),
         "phase2_completion_audit_metrics": rel(phase2_audit_metrics),
+        "debug_bundle_health_report": rel(debug_health),
         "debug_bundle_slo_status": slo_status,
         "debug_bundle_slo_report": rel(debug_slo),
+        "debug_bundle_monitoring_metrics": rel(debug_monitoring_metrics),
+        "debug_bundle_alert_policy": rel(debug_alert_policy),
+        "debug_bundle_incident_report": rel(debug_incident),
+        "debug_bundle_timeline": rel(debug_timeline),
+        "debug_bundle_first_problem": rel(debug_first_problem),
     },
     "production_soak": {
         "summary": rel(production_soak_summary),
@@ -725,6 +804,16 @@ doc = {
         "phase5_production_readiness_metrics": rel(readiness_metrics),
         "phase5_readiness_check_records": rel(readiness_check_records),
         "phase5_debug_bundle": rel(debug_bundle_dir),
+        "phase5_debug_runtime_config": rel(debug_runtime_config),
+        "phase5_debug_alerts_summary": rel(debug_alerts_summary),
+        "phase5_debug_timeline": rel(debug_timeline),
+        "phase5_debug_first_problem": rel(debug_first_problem),
+        "phase5_debug_health_report": rel(debug_health),
+        "phase5_debug_slo_report": rel(debug_slo),
+        "phase5_debug_monitoring_metrics": rel(debug_monitoring_metrics),
+        "phase5_debug_alert_policy": rel(debug_alert_policy),
+        "phase5_debug_incident_report": rel(debug_incident),
+        "phase5_debug_incident_runbook": rel(debug_incident_runbook),
         "phase2_production_gate": rel(phase2_dir),
         "phase2_evidence_bundle": rel(phase2_evidence_bundle),
         "phase2_completion_audit": rel(phase2_audit_summary),
@@ -770,6 +859,9 @@ with open(release_summary, "w", encoding="utf-8") as fh:
     fh.write(f"phase5_readiness_report={rel(readiness_report)}\n")
     fh.write(f"phase5_readiness_metrics={rel(readiness_metrics)}\n")
     fh.write(f"phase5_risk_milestone_report={rel(risk_milestone_report)}\n")
+    fh.write(f"phase5_debug_health_report={rel(debug_health)}\n")
+    fh.write(f"phase5_debug_monitoring_metrics={rel(debug_monitoring_metrics)}\n")
+    fh.write(f"phase5_debug_incident_report={rel(debug_incident)}\n")
     fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
     fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
     fh.write(f"production_soak_minutes={doc['production_soak']['soak_minutes']}\n")
