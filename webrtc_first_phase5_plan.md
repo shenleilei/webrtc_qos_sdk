@@ -365,6 +365,8 @@ transport/output：
 - 日志文件超过阈值会轮转；demo 和 external sample 支持
   `--log-max-file-bytes / --log-max-files`，`verify_phase5_logging.sh` 会用低阈值
   强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
+- `verify_phase5_logging.sh` 会检查 push/server/play 的 `stop` 事件已写入 JSONL
+  文件，作为正常 `Stop()` 后 flush 的回归门禁。
 - CI artifact 收集日志文件。
 - 故障 case 能在日志中定位到角色、track、receiver、packet 或 status code。
 
@@ -1043,6 +1045,7 @@ scripts/verify_phase5_logging.sh
 
 - push/server/play 都生成日志文件。
 - 日志包含 start/stop/config/error 事件。
+- 正常 `Stop()` 后 stop 事件已 flush 到日志文件。
 - 日志文件轮转生效。
 - 默认不输出 RTP/H264 payload bytes。
 - stdout 只保留 summary，不承载 SDK 运行日志。
@@ -1171,7 +1174,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - role facade 接入 `RuntimeLogConfig`。
 - demo/external sample 支持 `--log-dir`。
 - stdout 只保留 summary。
-- 日志轮转、flush、CI artifact 收集通过。
+- 日志轮转、`Stop()` flush、CI artifact 收集通过。
 
 ### M3：Metrics / Alerts / Debug Bundle
 

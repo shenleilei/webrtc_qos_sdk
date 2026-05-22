@@ -113,6 +113,8 @@ require_doc_pattern webrtc_first_phase5_plan.md \
   'scripts/run_phase5_production_gate.sh' phase5_plan_production_gate
 require_doc_pattern scripts/verify_phase5_logging.sh \
   'validated_log_rotation' logging_rotation_gate
+require_doc_pattern scripts/verify_phase5_logging.sh \
+  'validated_stop_flush' logging_stop_flush_gate
 require_doc_pattern scripts/verify_phase5_metrics.sh \
   'validated_metrics_rotation' metrics_rotation_gate
 require_doc_pattern scripts/verify_phase5_alerts.sh \

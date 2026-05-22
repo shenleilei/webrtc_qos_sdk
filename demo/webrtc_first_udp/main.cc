@@ -772,6 +772,7 @@ int RunUdpSender(uint16_t local_port,
   RequireStatus(push->Process(final_time_us), "sender final process");
   for (int guard = 0; guard < 64 && pump_feedback(final_time_us); ++guard) {
   }
+  RequireStatus(push->Stop(), "sender stop");
 
   std::cout << "udp_sender backend=webrtc_first_facade"
             << " transport=udp"
@@ -880,6 +881,7 @@ int RunUdpServer(uint16_t local_port,
   const auto snapshot =
       server->GetQosSnapshot(1000000 +
                              static_cast<int64_t>(options.frames) * 33333);
+  RequireStatus(server->Stop(), "server stop");
   std::cout << "udp_server backend=webrtc_first_facade"
             << " transport=udp"
             << " peer_connection=false"
@@ -984,6 +986,7 @@ int RunUdpReceiver(uint16_t local_port,
     }
     RequireStatus(play->Process(now_us), "receiver process");
   }
+  RequireStatus(play->Stop(), "receiver stop");
 
   std::cout << "udp_receiver backend=webrtc_first_facade"
             << " transport=udp"
@@ -1317,6 +1320,10 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   if (metrics.min_bad_fps == UINT32_MAX) {
     metrics.min_bad_fps = 0;
   }
+
+  RequireStatus(push->Stop(), "push stop");
+  RequireStatus(play->Stop(), "play stop");
+  RequireStatus(server->Stop(), "server stop");
 
   const double playable_ratio =
       metrics.pushed_frames == 0

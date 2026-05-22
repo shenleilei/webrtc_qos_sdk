@@ -93,15 +93,18 @@ play_logs=("${LOG_DIR}"/webrtc_qos_udp.play.*.log)
 (( ${#play_logs[@]} > 0 )) || fail "missing play role log file"
 
 require_log '"role":"push","event":"start"' "missing push start event"
+require_log '"role":"push","event":"stop"' "missing push stop event"
 require_log '"role":"push","event":"push_au"' "missing push access-unit event"
 require_log '"role":"push","event":"sender_rate_cap_update"' \
   "missing push rate-cap update event"
 require_log '"role":"server","event":"start"' "missing server start event"
+require_log '"role":"server","event":"stop"' "missing server stop event"
 require_log '"role":"server","event":"downlink_quality_update"' \
   "missing server downlink quality event"
 require_log '"role":"server","event":"local_retransmission_hit"' \
   "missing server local retransmission event"
 require_log '"role":"play","event":"start"' "missing play start event"
+require_log '"role":"play","event":"stop"' "missing play stop event"
 require_log '"role":"play","event":"decode_au_output"' \
   "missing play decoded access-unit event"
 require_log '"session_id":1' "missing transport identity fields"
@@ -130,6 +133,8 @@ required = {
     "receiver_id",
 }
 lines = 0
+roles = {"push", "server", "play"}
+event_ts = {role: {"start": [], "stop": []} for role in roles}
 for path in log_dir.glob("*.log"):
     with path.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, 1):
@@ -141,10 +146,31 @@ for path in log_dir.glob("*.log"):
                 raise SystemExit(
                     f"{path}:{line_no}: missing fields: {sorted(missing)}"
                 )
+            role = obj.get("role")
+            event = obj.get("event")
+            if role in event_ts and event in event_ts[role]:
+                event_ts[role][event].append(obj["ts_us"])
             lines += 1
 if lines == 0:
     raise SystemExit("no JSON log lines found")
+for role in sorted(roles):
+    starts = event_ts[role]["start"]
+    stops = event_ts[role]["stop"]
+    if not starts:
+        raise SystemExit(f"{role}: missing start event")
+    if not stops:
+        raise SystemExit(f"{role}: missing stop event")
+    if max(stops) < min(starts):
+        raise SystemExit(f"{role}: stop event timestamp is before start event")
 print(f"validated_json_lines={lines}")
+print(
+    "validated_stop_flush "
+    + " ".join(
+        f"{role}_starts={len(event_ts[role]['start'])} "
+        f"{role}_stops={len(event_ts[role]['stop'])}"
+        for role in sorted(roles)
+    )
+)
 PY
 
 rotation_output="$(run_demo "rotating UDP selftest" selftest 90 \

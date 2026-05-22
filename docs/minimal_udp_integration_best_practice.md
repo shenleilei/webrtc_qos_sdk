@@ -480,6 +480,8 @@ play_config.logging = logging;
 `webrtc_qos_udp.server.<pid>...log`、`webrtc_qos_udp.play.<pid>...log`。
 当 `max_file_bytes` 超过阈值时同一 role 会按 index 轮转，`max_files` 控制单个
 logger 实例保留的文件数；`verify_phase5_logging.sh` 会用低阈值把轮转作为硬门禁。
+正常 `Stop()` 会写入 `stop` 事件并 flush 文件，`verify_phase5_logging.sh`
+会把 push/server/play 三个 role 的 stop 事件落盘作为回归门禁。
 每条日志包含 `role`、`event`、`session_id`、`stream_id`、`transport_id`、
 `source_id`、`track_id`、`sender_ssrc`、`receiver_id`，warn/error 还会带
 `status_code` 和 `reason`。不要记录 H264 payload、RTP payload、鉴权 token
