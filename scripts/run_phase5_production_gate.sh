@@ -288,6 +288,11 @@ def valid_sha256(value):
     )
 
 
+def number_value(values, key, default=0):
+    parsed = parse_number(values.get(key, str(default)))
+    return parsed if isinstance(parsed, (int, float)) else default
+
+
 implementation_summary = os.path.join(
     implementation_dir, "phase5_implementation_gate_summary.txt"
 )
@@ -368,14 +373,18 @@ checks = {
     and phase2_audit.get("phase2_completion_status") == "complete",
     "phase2_completion_audit_metrics": has_file(phase2_audit_metrics),
     "production_soak": has_prefix(phase2_audit_summary, "check=production_soak status=pass "),
-    "real_renderer": has_prefix(phase2_audit_summary, "check=real_renderer status=pass "),
+    "real_renderer": has_prefix(phase2_audit_summary, "check=real_renderer status=pass ")
+    and real_renderer.get("real_renderer_status") == "pass"
+    and real_renderer.get("renderer_backend") != "xvfb"
+    and number_value(real_renderer, "rendered_frames") > 0,
     "production_soak_summary": has_file(production_soak_summary)
     and production_soak.get("rows", "0") != "0"
     and production_soak.get("rows") == production_soak.get("pass_rows"),
     "production_soak_csv": has_file(production_soak_csv),
     "production_soak_config": has_file(production_soak_config),
     "production_soak_archive": has_file(production_soak_archive),
-    "real_renderer_summary": real_renderer.get("real_renderer_status") == "pass",
+    "real_renderer_summary": real_renderer.get("real_renderer_status") == "pass"
+    and real_renderer.get("renderer_backend") != "xvfb",
     "real_renderer_metrics": has_file(real_renderer_metrics),
     "capture_library": has_prefix(
         phase2_audit_summary, "check=capture_library status=pass "
@@ -656,6 +665,7 @@ with open(release_summary, "w", encoding="utf-8") as fh:
     fh.write(f"production_soak_rows={doc['production_soak']['rows']}\n")
     fh.write(f"real_renderer_summary={rel(real_renderer_summary)}\n")
     fh.write(f"real_renderer_backend={doc['real_renderer']['backend']}\n")
+    fh.write(f"real_renderer_status={doc['real_renderer']['status']}\n")
     fh.write(
         f"capture_manifest_sha256={doc['capture_library']['manifest_sha256']}\n"
     )

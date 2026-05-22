@@ -471,6 +471,12 @@ require_doc_pattern scripts/verify_webrtc_first_qoe_production_soak_archive.sh \
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence real renderer used xvfb backend' production_gate_release_renderer_xvfb_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'renderer_backend.*!= "xvfb"' production_gate_release_rejects_xvfb_renderer
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'rendered_frames.*> 0' production_gate_release_requires_rendered_frames
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'real_renderer_status=' production_gate_release_renderer_status_summary
+require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_csv' production_gate_release_capture_qoe_index
 require_doc_pattern scripts/verify_capture_library_manifest.sh \
   'capture_manifest_sha256' production_gate_capture_manifest_sha256_collector
