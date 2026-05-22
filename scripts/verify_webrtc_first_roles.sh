@@ -135,6 +135,10 @@ if ! grep -q "walking_dead_zone_recover_dual_track.*pass=true" <<<"${demo_output
   echo "WebRTC-first demo did not pass dual-track weak-network recovery scenario" >&2
   exit 1
 fi
+if ! grep -q "walking_dead_zone_recover_dual_track.*decoded_tracks=2" <<<"${demo_output}"; then
+  echo "WebRTC-first demo dual-track scenario did not decode both tracks" >&2
+  exit 1
+fi
 udp_demo_output="$("${BUILD_DIR}/webrtc_qos_webrtc_first_udp_demo" selftest 36)"
 echo "${udp_demo_output}"
 if ! grep -q "udp_selftest backend=webrtc_first_facade" <<<"${udp_demo_output}"; then
@@ -153,6 +157,10 @@ if ! grep -q "pass=true" <<<"${udp_demo_output}"; then
   echo "WebRTC-first UDP demo selftest failed" >&2
   exit 1
 fi
+if ! grep -q "udp_selftest_dual_track.*decoded_tracks=2.*pass=true" <<<"${udp_demo_output}"; then
+  echo "WebRTC-first UDP demo dual-track selftest did not decode both tracks" >&2
+  exit 1
+fi
 udp_sender_output="$("${BUILD_DIR}/webrtc_qos_webrtc_first_udp_demo" \
   sender 0 127.0.0.1:9 3)"
 echo "${udp_sender_output}"
@@ -166,6 +174,10 @@ if ! grep -q "transport=udp" <<<"${udp_sender_output}"; then
 fi
 if ! grep -q "peer_connection=false" <<<"${udp_sender_output}"; then
   echo "WebRTC-first UDP sender role must not use PeerConnection" >&2
+  exit 1
+fi
+if ! grep -q "tracks=2" <<<"${udp_sender_output}"; then
+  echo "WebRTC-first UDP sender role did not use the default multi-track profile" >&2
   exit 1
 fi
 udp_server_output="$("${BUILD_DIR}/webrtc_qos_webrtc_first_udp_demo" \
@@ -183,6 +195,10 @@ if ! grep -q "peer_connection=false" <<<"${udp_server_output}"; then
   echo "WebRTC-first UDP server role must not use PeerConnection" >&2
   exit 1
 fi
+if ! grep -q "tracks=2" <<<"${udp_server_output}"; then
+  echo "WebRTC-first UDP server role did not use the default multi-track profile" >&2
+  exit 1
+fi
 udp_receiver_output="$("${BUILD_DIR}/webrtc_qos_webrtc_first_udp_demo" \
   receiver 0 127.0.0.1:9 3)"
 echo "${udp_receiver_output}"
@@ -196,6 +212,10 @@ if ! grep -q "transport=udp" <<<"${udp_receiver_output}"; then
 fi
 if ! grep -q "peer_connection=false" <<<"${udp_receiver_output}"; then
   echo "WebRTC-first UDP receiver role must not use PeerConnection" >&2
+  exit 1
+fi
+if ! grep -q "tracks=2" <<<"${udp_receiver_output}"; then
+  echo "WebRTC-first UDP receiver role did not use the default multi-track profile" >&2
   exit 1
 fi
 

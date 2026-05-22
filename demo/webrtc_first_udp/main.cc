@@ -11,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -53,6 +54,7 @@ struct Metrics {
   int bad_pushed_frames = 0;
   int recovery_ticks = 0;
   int recovery_pushed_frames = 0;
+  std::set<uint32_t> decoded_track_ids;
   uint32_t min_bad_target_bps = UINT32_MAX;
   uint32_t max_recovery_target_bps = 0;
   uint32_t min_bad_fps = UINT32_MAX;
@@ -482,17 +484,21 @@ bool CheckMetrics(const Metrics& metrics, size_t track_total) {
           : static_cast<double>(metrics.decoded_frames) /
                 metrics.pushed_frames;
   const uint32_t max_bad_fps = track_total > 1 ? 15u : 10u;
+  const double max_bad_send_rps = track_total > 1 ? 30.0 : 15.0;
+  const double min_recovery_send_rps = track_total > 1 ? 50.0 : 25.0;
   return playable_ratio >= 0.85 && metrics.sender_rtp > 0 &&
+         metrics.decoded_track_ids.size() == track_total &&
          metrics.sender_rtcp > 0 && metrics.receiver_rtcp > 0 &&
          metrics.sender_rate_caps > 0 && metrics.downlink_dropped > 0 &&
          metrics.retransmissions > 0 && metrics.min_bad_target_bps > 0 &&
          metrics.min_bad_target_bps <= 600000 &&
          metrics.min_bad_fps <= max_bad_fps &&
-         TickRate(metrics.bad_pushed_frames, metrics.bad_ticks) <= 15.0 &&
+         TickRate(metrics.bad_pushed_frames, metrics.bad_ticks) <=
+             max_bad_send_rps &&
          metrics.max_recovery_target_bps >= 1000000 &&
          metrics.max_recovery_fps >= 25 &&
          TickRate(metrics.recovery_pushed_frames, metrics.recovery_ticks) >=
-             25.0;
+             min_recovery_send_rps;
 }
 
 int RunUdpSender(uint16_t local_port,
@@ -506,7 +512,7 @@ int RunUdpSender(uint16_t local_port,
 
   Metrics metrics;
   const webrtc_qos::SessionConfig session =
-      MakeSingleTrackSession("webrtc_first_udp_sender");
+      MakeDualTrackSession("webrtc_first_udp_sender");
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
   push_config.transport_output =
@@ -567,22 +573,33 @@ int RunUdpSender(uint16_t local_port,
     const auto snapshot = push->GetQosSnapshot(now_us);
     metrics.final_target_bps = snapshot.sender_rates.final_target_bps;
     metrics.final_fps = adaptation.max_fps;
-    if (frame % FpsInterval(adaptation.max_fps) != 0) {
-      continue;
-    }
-
-    const std::vector<uint8_t> au =
-        MakeIdrAccessUnit(static_cast<uint8_t>(frame & 0xff));
-    webrtc_qos::AnnexBAccessUnitView view;
-    view.bytes = au.data();
-    view.size = au.size();
-    view.capture_time_us = now_us;
-    view.keyframe = true;
-    view.ids = session.video_tracks.front().ids;
-    RequireStatus(push->PushAnnexBAccessUnit(view), "sender push AU");
-    ++metrics.pushed_frames;
-    RequireStatus(push->Process(now_us + 1000), "sender process after AU");
-    for (int guard = 0; guard < 32 && pump_feedback(now_us + 1000); ++guard) {
+    for (size_t track_index = 0; track_index < session.video_tracks.size();
+         ++track_index) {
+      const auto& track = session.video_tracks[track_index];
+      webrtc_qos::EncoderAdaptation track_adaptation;
+      if (!push->GetTrackEncoderAdaptation(track.ids.track_id, now_us,
+                                           &track_adaptation)) {
+        continue;
+      }
+      if (frame % FpsInterval(track_adaptation.max_fps) != 0) {
+        continue;
+      }
+      const std::vector<uint8_t> au = MakeIdrAccessUnit(
+          static_cast<uint8_t>((frame + track_index * 67) & 0xff));
+      webrtc_qos::AnnexBAccessUnitView view;
+      view.bytes = au.data();
+      view.size = au.size();
+      view.capture_time_us = now_us;
+      view.keyframe = true;
+      view.ids = track.ids;
+      RequireStatus(push->PushAnnexBAccessUnit(view), "sender push AU");
+      ++metrics.pushed_frames;
+      const int64_t post_push_time_us =
+          now_us + 1000 + static_cast<int64_t>(track_index) * 1000;
+      RequireStatus(push->Process(post_push_time_us), "sender process after AU");
+      for (int guard = 0; guard < 32 && pump_feedback(post_push_time_us);
+           ++guard) {
+      }
     }
   }
 
@@ -620,7 +637,7 @@ int RunUdpServer(uint16_t local_port,
 
   Metrics metrics;
   const webrtc_qos::SessionConfig session =
-      MakeSingleTrackSession("webrtc_first_udp_server");
+      MakeDualTrackSession("webrtc_first_udp_server");
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
   server_config.sender_output =
@@ -722,7 +739,7 @@ int RunUdpReceiver(uint16_t local_port,
 
   Metrics metrics;
   const webrtc_qos::SessionConfig session =
-      MakeSingleTrackSession("webrtc_first_udp_receiver");
+      MakeDualTrackSession("webrtc_first_udp_receiver");
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
   play_config.transport_output =
@@ -741,6 +758,7 @@ int RunUdpReceiver(uint16_t local_port,
               webrtc_qos::StatusCode::kInternalError, "empty decoded AU");
         }
         ++metrics.decoded_frames;
+        metrics.decoded_track_ids.insert(access_unit.ids.track_id);
         return webrtc_qos::Status::Ok();
       };
 
@@ -803,6 +821,7 @@ int RunUdpReceiver(uint16_t local_port,
             << " local=" << EndpointToString(udp.local_addr())
             << " server=" << EndpointToString(server_addr)
             << " decoded=" << metrics.decoded_frames
+            << " decoded_tracks=" << metrics.decoded_track_ids.size()
             << " receiver_rtcp=" << metrics.receiver_rtcp
             << " dropped=" << metrics.downlink_dropped
             << " retransmission=" << metrics.retransmissions
@@ -859,6 +878,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
               webrtc_qos::StatusCode::kInternalError, "empty decoded AU");
         }
         ++metrics.decoded_frames;
+        metrics.decoded_track_ids.insert(access_unit.ids.track_id);
         return webrtc_qos::Status::Ok();
       };
 
@@ -1057,27 +1077,38 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
       metrics.max_recovery_fps =
           std::max(metrics.max_recovery_fps, adaptation.max_fps);
     }
-    if (frame % FpsInterval(adaptation.max_fps) != 0) {
-      continue;
+    for (size_t track_index = 0; track_index < session.video_tracks.size();
+         ++track_index) {
+      const auto& track = session.video_tracks[track_index];
+      webrtc_qos::EncoderAdaptation track_adaptation;
+      if (!push->GetTrackEncoderAdaptation(track.ids.track_id, now_us,
+                                           &track_adaptation)) {
+        continue;
+      }
+      if (frame % FpsInterval(track_adaptation.max_fps) != 0) {
+        continue;
+      }
+      if (InBadWindow(frame, frames)) {
+        ++metrics.bad_pushed_frames;
+      }
+      if (InRecoveryWindow(frame, frames)) {
+        ++metrics.recovery_pushed_frames;
+      }
+      const std::vector<uint8_t> au = MakeIdrAccessUnit(
+          static_cast<uint8_t>((frame + track_index * 67) & 0xff));
+      webrtc_qos::AnnexBAccessUnitView view;
+      view.bytes = au.data();
+      view.size = au.size();
+      view.capture_time_us = now_us;
+      view.keyframe = true;
+      view.ids = track.ids;
+      RequireStatus(push->PushAnnexBAccessUnit(view), "push UDP AU");
+      ++metrics.pushed_frames;
+      const int64_t post_push_time_us =
+          now_us + 1000 + static_cast<int64_t>(track_index) * 1000;
+      RequireStatus(push->Process(post_push_time_us), "push process after AU");
+      pump_all(frame, post_push_time_us + 1000);
     }
-    if (InBadWindow(frame, frames)) {
-      ++metrics.bad_pushed_frames;
-    }
-    if (InRecoveryWindow(frame, frames)) {
-      ++metrics.recovery_pushed_frames;
-    }
-    const std::vector<uint8_t> au =
-        MakeIdrAccessUnit(static_cast<uint8_t>(frame & 0xff));
-    webrtc_qos::AnnexBAccessUnitView view;
-    view.bytes = au.data();
-    view.size = au.size();
-    view.capture_time_us = now_us;
-    view.keyframe = true;
-    view.ids = session.video_tracks.front().ids;
-    RequireStatus(push->PushAnnexBAccessUnit(view), "push UDP AU");
-    ++metrics.pushed_frames;
-    RequireStatus(push->Process(now_us + 1000), "push process after AU");
-    pump_all(frame, now_us + 2000);
   }
 
   const int64_t final_time_us =
@@ -1113,6 +1144,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
             << " receiver_port=" << receiver_udp.port()
             << " pushed=" << metrics.pushed_frames
             << " decoded=" << metrics.decoded_frames
+            << " decoded_tracks=" << metrics.decoded_track_ids.size()
             << " playable_ratio=" << playable_ratio
             << " sender_rtp=" << metrics.sender_rtp
             << " sender_rtcp=" << metrics.sender_rtcp

@@ -190,11 +190,11 @@ cmake --build build-webrtc-first \
 ```text
 backend=webrtc_first_facade transport=custom_bytes peer_connection=false
 track_profile=single_track tracks=1
-good_static_single_track ... pass=true
-walking_dead_zone_recover_single_track ... pass=true
+good_static_single_track ... decoded_tracks=1 ... pass=true
+walking_dead_zone_recover_single_track ... decoded_tracks=1 ... pass=true
 track_profile=dual_track tracks=2
-good_static_dual_track ... pass=true
-walking_dead_zone_recover_dual_track ... pass=true
+good_static_dual_track ... decoded_tracks=2 ... pass=true
+walking_dead_zone_recover_dual_track ... decoded_tracks=2 ... pass=true
 ```
 
 这个 demo 的意义是补齐 Phase-2 的独立可运行入口：业务传输仍只是搬运 bytes，server 只做最小 relay/QoS router，弱网场景能触发 `NACK / retransmission`、rate cap 下探和恢复回升，并明确不创建 `PeerConnection`。
@@ -219,7 +219,7 @@ cmake --build build-webrtc-first \
   sender 50001 127.0.0.1:50000 90
 ```
 
-`selftest` 最新本地输出显示 `transport=udp` 且 `peer_connection=false`，默认会依次输出 `udp_selftest_single_track`、`udp_selftest_dual_track` 和总体 `udp_selftest profiles=single_track,dual_track pass=true`；双轨场景下坏网阶段允许 shared source cap 把 `min_bad_fps` 拉到 `15`，同时仍要求弱网下探、恢复回升和 `NACK / retransmission` 链路成立。独立角色 smoke 输出分别为 `udp_sender`、`udp_server`、`udp_receiver`，用于确认 demo 不再只有单进程入口。
+`selftest` 最新本地输出显示 `transport=udp` 且 `peer_connection=false`，默认会依次输出 `udp_selftest_single_track decoded_tracks=1`、`udp_selftest_dual_track decoded_tracks=2` 和总体 `udp_selftest profiles=single_track,dual_track pass=true`；双轨场景下坏网阶段允许 shared source cap 把 `min_bad_fps` 拉到 `15`，同时仍要求弱网下探、恢复回升和 `NACK / retransmission` 链路成立。独立角色 smoke 输出分别为 `udp_sender tracks=2`、`udp_server tracks=2`、`udp_receiver tracks=2`，用于确认 demo 不再只有单进程入口，也不再退回单轨 profile。
 
 ## CMake 集成
 

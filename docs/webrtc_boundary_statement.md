@@ -186,7 +186,7 @@ media-plane 直接接入”的终点。
 - per-track push/play/server 状态隔离
 - 外部 consumer 可验证
 - 仓库内默认 loopback demo 和 UDP selftest 也会同时覆盖 single-track 与
-  dual-track 两组场景
+  dual-track 两组场景，并在输出中显式报告 `decoded_tracks`
 - 现有 single-track smoke/qoe/production 短时门禁未回归
 
 当前仍未做到：

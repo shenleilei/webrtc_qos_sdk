@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,6 +35,7 @@ struct Metrics {
   int bad_pushed_frames = 0;
   int recovery_ticks = 0;
   int recovery_pushed_frames = 0;
+  std::set<uint32_t> decoded_track_ids;
   uint32_t min_bad_target_bps = UINT32_MAX;
   uint32_t max_recovery_target_bps = 0;
   uint32_t min_bad_fps = UINT32_MAX;
@@ -201,6 +203,7 @@ Metrics RunScenario(const TrackProfile& profile, const Scenario& scenario) {
               webrtc_qos::StatusCode::kInternalError, "empty decoded AU");
         }
         ++metrics.decoded_frames;
+        metrics.decoded_track_ids.insert(access_unit.ids.track_id);
         return webrtc_qos::Status::Ok();
       };
 
@@ -360,33 +363,40 @@ Metrics RunScenario(const TrackProfile& profile, const Scenario& scenario) {
           std::max(metrics.max_recovery_fps, adaptation.max_fps);
     }
 
-    if (frame % FpsInterval(adaptation.max_fps) != 0) {
-      continue;
-    }
+    for (size_t track_index = 0; track_index < session.video_tracks.size();
+         ++track_index) {
+      const auto& track = session.video_tracks[track_index];
+      webrtc_qos::EncoderAdaptation track_adaptation;
+      if (!push->GetTrackEncoderAdaptation(track.ids.track_id, now_us,
+                                           &track_adaptation)) {
+        continue;
+      }
+      if (frame % FpsInterval(track_adaptation.max_fps) != 0) {
+        continue;
+      }
 
-    if (bad) {
-      ++metrics.bad_pushed_frames;
+      const std::vector<uint8_t> au = MakeIdrAccessUnit(
+          static_cast<uint8_t>((frame + track_index * 67) & 0xff));
+      webrtc_qos::AnnexBAccessUnitView view;
+      view.bytes = au.data();
+      view.size = au.size();
+      view.capture_time_us = now_us;
+      view.keyframe = true;
+      view.ids = track.ids;
+      RequireStatus(push->PushAnnexBAccessUnit(view), "push AU");
+      ++metrics.pushed_frames;
+      if (bad) {
+        ++metrics.bad_pushed_frames;
+      }
+      if (recovery) {
+        ++metrics.recovery_pushed_frames;
+      }
+      const int64_t post_push_time_us =
+          now_us + 1000 + static_cast<int64_t>(track_index) * 1000;
+      RequireStatus(push->Process(post_push_time_us), "push process after AU");
+      drain_push_output(frame, post_push_time_us);
+      pump(frame, post_push_time_us + 1000);
     }
-    if (recovery) {
-      ++metrics.recovery_pushed_frames;
-    }
-
-    const std::vector<uint8_t> au =
-        MakeIdrAccessUnit(static_cast<uint8_t>(frame & 0xff));
-    webrtc_qos::AnnexBAccessUnitView view;
-    view.bytes = au.data();
-    view.size = au.size();
-    view.capture_time_us = now_us;
-    view.keyframe = true;
-    if (!session.video_tracks.empty()) {
-      view.ids = session.video_tracks.front().ids;
-    }
-    RequireStatus(push->PushAnnexBAccessUnit(view), "push AU");
-    ++metrics.pushed_frames;
-
-    RequireStatus(push->Process(now_us + 1000), "push process after AU");
-    drain_push_output(frame, now_us + 1000);
-    pump(frame, now_us + 2000);
   }
 
   const int64_t final_time_us =
@@ -423,6 +433,9 @@ bool CheckScenario(const Scenario& scenario,
   if (playable_ratio < 0.85) {
     return false;
   }
+  if (metrics.decoded_track_ids.size() != track_total) {
+    return false;
+  }
   if (!scenario.inject_rate_cap) {
     return metrics.final_target_bps >= 1000000 && metrics.final_fps >= 25;
   }
@@ -432,12 +445,16 @@ bool CheckScenario(const Scenario& scenario,
   const double recovery_send_rps =
       TickRate(metrics.recovery_pushed_frames, metrics.recovery_ticks);
   const uint32_t max_bad_fps = track_total > 1 ? 15u : 10u;
+  const double max_bad_send_rps = track_total > 1 ? 30.0 : 15.0;
+  const double min_recovery_send_rps = track_total > 1 ? 50.0 : 25.0;
   return metrics.downlink_dropped > 0 && metrics.receiver_rtcp > 0 &&
          metrics.retransmissions > 0 && metrics.min_bad_target_bps > 0 &&
          metrics.min_bad_target_bps <= 600000 &&
          metrics.min_bad_fps <= max_bad_fps &&
-         bad_send_rps <= 15.0 && metrics.max_recovery_target_bps >= 1000000 &&
-         metrics.max_recovery_fps >= 25 && recovery_send_rps >= 25.0;
+         bad_send_rps <= max_bad_send_rps &&
+         metrics.max_recovery_target_bps >= 1000000 &&
+         metrics.max_recovery_fps >= 25 &&
+         recovery_send_rps >= min_recovery_send_rps;
 }
 
 void PrintScenario(const Scenario& scenario,
@@ -450,6 +467,7 @@ void PrintScenario(const Scenario& scenario,
                 metrics.pushed_frames;
   std::cout << scenario.name << " pushed=" << metrics.pushed_frames
             << " decoded=" << metrics.decoded_frames
+            << " decoded_tracks=" << metrics.decoded_track_ids.size()
             << " playable_ratio=" << playable_ratio
             << " dropped=" << metrics.downlink_dropped
             << " receiver_rtcp=" << metrics.receiver_rtcp
