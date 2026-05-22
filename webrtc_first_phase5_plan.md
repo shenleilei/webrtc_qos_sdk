@@ -220,10 +220,17 @@ PHASE2_EVIDENCE_BUNDLE_DIR=/path/to/phase2_evidence_bundle \
 导入路径由 `scripts/import_phase5_phase2_evidence_bundle.sh` 负责。它会复制外部
 bundle 到 P5 gate 目录内，复验 bundle `manifest.sha256`，重新运行
 `verify_webrtc_first_phase2_completion_audit.sh`，要求 production soak、真实 renderer、
-正式 capture library 和 evidence bundle 全部 pass，并默认要求 bundle 里的 git head
-与当前 P5 gate 的 git head 一致。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
-`external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
-和业务素材；但 release evidence 和 production gate verifier 仍会离线复验导入报告。
+正式 capture library manifest、capture QoE CSV 和 evidence bundle 全部 pass，并默认要求
+bundle 里的 git head 与当前 P5 gate 的 git head 一致。readiness 在存在
+`PHASE2_EVIDENCE_BUNDLE_DIR` 时会用 `external_phase2_evidence_bundle` 作为生产环境证据
+来源，不再要求当前机器也有真实显示器和业务素材；但 release evidence 和 production gate
+verifier 仍会离线复验导入报告。
+
+正式 capture library 不能只证明 manifest 存在。`scripts/verify_capture_library_qoe_csv.sh`
+会离线复验 `webrtc_first_qoe_capture_library_720p.csv`：所有行必须 `pass=true`，必需类别
+必须覆盖，`playable_ratio / avg_psnr_y / avg_ssim_y` 不能低于门槛，`decode_errors /
+freeze_count / renderer_proxy_drop_frames` 必须为 0。Phase-2 completion audit 和外部
+bundle 导入都会调用该 verifier。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
 `PHASE5_GATE_DIR` 指向已经 `REQUIRE_PASS=1` 验证通过的 Phase-5 production gate；
@@ -1318,7 +1325,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - Phase-5 debug bundle collect/verify。
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
 - 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 manifest、completion
-  audit、git head、production soak、真实 renderer 和正式 capture library。
+  audit、git head、production soak、真实 renderer、正式 capture library manifest 和
+  capture QoE CSV。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
 - production wrapper 必须在进入 readiness/soak 前复验 implementation gate，不能只
   运行不校验。

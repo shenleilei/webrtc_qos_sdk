@@ -130,6 +130,9 @@ copy_file capture_qoe_csv \
 copy_file capture_qoe_log \
   "${CAPTURE_LIBRARY_SOURCE_DIR}/webrtc_first_qoe_capture_library_720p.log" \
   "${OUTPUT_DIR}/capture_library/webrtc_first_qoe_capture_library_720p.log"
+copy_file capture_qoe_summary \
+  "${CAPTURE_LIBRARY_SOURCE_DIR}/capture_qoe_summary.txt" \
+  "${OUTPUT_DIR}/capture_library/capture_qoe_summary.txt"
 
 if [[ "${INCLUDE_LOGS}" == "1" ]]; then
   copy_dir_if_exists smoke_logs "${SMOKE_VERIFY_DIR}/logs" "${OUTPUT_DIR}/smoke/logs"

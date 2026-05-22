@@ -11,9 +11,15 @@ QOE_SUMMARY="${QOE_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_qoe
 PRODUCTION_SOAK_DIR="${PRODUCTION_SOAK_DIR:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/production_soak}"
 REAL_RENDERER_SUMMARY="${REAL_RENDERER_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/real_renderer/real_renderer_summary.txt}"
 CAPTURE_MANIFEST_SUMMARY="${CAPTURE_MANIFEST_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/capture_manifest_summary.txt}"
+CAPTURE_QOE_CSV="${CAPTURE_QOE_CSV:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/webrtc_first_qoe_capture_library_720p.csv}"
+CAPTURE_QOE_SUMMARY="${CAPTURE_QOE_SUMMARY:-${OUTPUT_DIR}/capture_qoe_summary.txt}"
 
 MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
 MIN_PRODUCTION_ROWS="${MIN_PRODUCTION_ROWS:-1}"
+MIN_CAPTURE_QOE_ROWS="${MIN_CAPTURE_QOE_ROWS:-1}"
+MIN_CAPTURE_PLAYABLE_RATIO="${MIN_CAPTURE_PLAYABLE_RATIO:-0.8}"
+MIN_CAPTURE_AVG_PSNR_Y="${MIN_CAPTURE_AVG_PSNR_Y:-20.0}"
+MIN_CAPTURE_AVG_SSIM_Y="${MIN_CAPTURE_AVG_SSIM_Y:-0.80}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE:-0}"
 REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
@@ -27,6 +33,8 @@ if [[ -n "${EVIDENCE_BUNDLE_DIR}" ]]; then
   PRODUCTION_SOAK_DIR="${EVIDENCE_BUNDLE_DIR}/production_soak"
   REAL_RENDERER_SUMMARY="${EVIDENCE_BUNDLE_DIR}/real_renderer/real_renderer_summary.txt"
   CAPTURE_MANIFEST_SUMMARY="${EVIDENCE_BUNDLE_DIR}/capture_library/capture_manifest_summary.txt"
+  CAPTURE_QOE_CSV="${EVIDENCE_BUNDLE_DIR}/capture_library/webrtc_first_qoe_capture_library_720p.csv"
+  CAPTURE_QOE_SUMMARY="${EVIDENCE_BUNDLE_DIR}/capture_library/capture_qoe_summary.txt"
 fi
 
 write_summary() {
@@ -223,16 +231,33 @@ if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
       category_missing=1
     fi
   done
+  capture_qoe_output=""
+  capture_qoe_status=0
+  if ! capture_qoe_output="$(env CAPTURE_QOE_CSV="${CAPTURE_QOE_CSV}" \
+      MIN_CAPTURE_QOE_ROWS="${MIN_CAPTURE_QOE_ROWS}" \
+      MIN_PLAYABLE_RATIO="${MIN_CAPTURE_PLAYABLE_RATIO}" \
+      MIN_AVG_PSNR_Y="${MIN_CAPTURE_AVG_PSNR_Y}" \
+      MIN_AVG_SSIM_Y="${MIN_CAPTURE_AVG_SSIM_Y}" \
+      REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
+      SUMMARY_FILE="${CAPTURE_QOE_SUMMARY}" \
+      "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh" 2>&1)"; then
+    capture_qoe_status=1
+  fi
   if [[ "${capture_verified}" == "true" &&
       "${category_missing}" -eq 0 &&
-      "${capture_entries:-0}" -gt 0 ]]; then
+      "${capture_entries:-0}" -gt 0 &&
+      "${capture_qoe_status}" -eq 0 ]]; then
     if [[ "${capture_fixture}" -eq 1 && "${ALLOW_FIXTURE_CAPTURE}" != "1" ]]; then
       audit_fail capture_library "fixture_library_not_formal dir=${capture_dir} manifest=${capture_manifest}"
     else
-      audit_pass capture_library "summary=${CAPTURE_MANIFEST_SUMMARY} entries=${capture_entries} categories=${capture_categories}"
+      audit_pass capture_library "summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV} entries=${capture_entries} categories=${capture_categories}"
     fi
   else
-    audit_fail capture_library "manifest_not_valid entries=${capture_entries:-missing} categories=${capture_categories:-missing} summary=${CAPTURE_MANIFEST_SUMMARY}"
+    reason="manifest_not_valid"
+    if [[ "${capture_qoe_status}" -ne 0 ]]; then
+      reason="qoe_not_valid:${capture_qoe_output}"
+    fi
+    audit_fail capture_library "${reason} entries=${capture_entries:-missing} categories=${capture_categories:-missing} summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV}"
   fi
 else
   if [[ -n "${EVIDENCE_BUNDLE_DIR}" ]]; then
