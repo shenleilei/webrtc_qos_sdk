@@ -219,6 +219,14 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_failed_implementation_evidence' production_gate_failed_implementation_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'capture_qoe_csv' production_gate_release_capture_qoe_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'capture_qoe_minima' production_gate_release_capture_qoe_minima
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_capture_library_qoe_csv.sh' production_gate_release_capture_qoe_reverify
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence capture QoE rows are incomplete' production_gate_release_capture_qoe_rows
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
   'verify_capture_library_qoe_csv.sh' production_gate_capture_qoe_csv_audit
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \

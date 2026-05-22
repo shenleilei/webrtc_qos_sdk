@@ -178,9 +178,19 @@ phase2_audit_summary = os.path.join(
     "phase2_completion_audit_summary.txt",
 )
 phase2_evidence_bundle = os.path.join(phase2_dir, "phase2_evidence_bundle")
+capture_evidence_dir = os.path.join(phase2_evidence_bundle, "capture_library")
+capture_manifest_summary = os.path.join(
+    capture_evidence_dir, "capture_manifest_summary.txt"
+)
+capture_qoe_csv = os.path.join(
+    capture_evidence_dir, "webrtc_first_qoe_capture_library_720p.csv"
+)
+capture_qoe_summary = os.path.join(capture_evidence_dir, "capture_qoe_summary.txt")
 
 readiness = kv_summary(readiness_summary)
 phase2_audit = kv_summary(phase2_audit_summary)
+capture_manifest = kv_summary(capture_manifest_summary)
+capture_qoe = kv_summary(capture_qoe_summary)
 slo_status = "missing"
 if os.path.exists(debug_slo):
     with open(debug_slo, "r", encoding="utf-8") as fh:
@@ -208,6 +218,13 @@ checks = {
     "capture_library": has_prefix(
         phase2_audit_summary, "check=capture_library status=pass "
     ),
+    "capture_manifest_summary": capture_manifest.get(
+        "capture_manifest_verification"
+    )
+    == "true",
+    "capture_qoe_csv": os.path.exists(capture_qoe_csv)
+    and capture_qoe.get("capture_qoe_verification") == "true",
+    "capture_qoe_summary": capture_qoe.get("capture_qoe_verification") == "true",
     "evidence_bundle": has_prefix(
         phase2_audit_summary, "check=evidence_bundle status=pass "
     )
@@ -262,6 +279,21 @@ evidence = [
             rel(phase2_audit_summary),
         ),
         (
+            "capture_manifest_summary",
+            checks["capture_manifest_summary"],
+            rel(capture_manifest_summary),
+        ),
+        (
+            "capture_qoe_csv",
+            checks["capture_qoe_csv"],
+            rel(capture_qoe_csv),
+        ),
+        (
+            "capture_qoe_summary",
+            checks["capture_qoe_summary"],
+            rel(capture_qoe_summary),
+        ),
+        (
             "evidence_bundle",
             checks["evidence_bundle"],
             rel(os.path.join(phase2_evidence_bundle, "manifest.sha256")),
@@ -292,6 +324,27 @@ doc = {
         "debug_bundle_slo_status": slo_status,
         "debug_bundle_slo_report": rel(debug_slo),
     },
+    "capture_library": {
+        "manifest_summary": rel(capture_manifest_summary),
+        "qoe_csv": rel(capture_qoe_csv),
+        "qoe_summary": rel(capture_qoe_summary),
+        "categories": capture_qoe.get(
+            "categories", capture_manifest.get("categories", "")
+        ),
+        "required_categories": capture_qoe.get(
+            "required_categories", capture_manifest.get("required_categories", "")
+        ),
+        "rows": parse_number(capture_qoe.get("rows", "0")),
+        "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
+        "playable_ratio_min": parse_number(capture_qoe.get("playable_ratio_min", "0")),
+        "avg_psnr_y_min": parse_number(capture_qoe.get("avg_psnr_y_min", "0")),
+        "avg_ssim_y_min": parse_number(capture_qoe.get("avg_ssim_y_min", "0")),
+        "decode_errors": parse_number(capture_qoe.get("decode_errors", "0")),
+        "freeze_count": parse_number(capture_qoe.get("freeze_count", "0")),
+        "renderer_proxy_drop_frames": parse_number(
+            capture_qoe.get("renderer_proxy_drop_frames", "0")
+        ),
+    },
     "evidence": evidence,
     "artifacts": {
         "gate_summary": rel(summary_file),
@@ -302,6 +355,9 @@ doc = {
         "phase2_production_gate": rel(phase2_dir),
         "phase2_evidence_bundle": rel(phase2_evidence_bundle),
         "phase2_completion_audit": rel(phase2_audit_summary),
+        "capture_manifest_summary": rel(capture_manifest_summary),
+        "capture_qoe_csv": rel(capture_qoe_csv),
+        "capture_qoe_summary": rel(capture_qoe_summary),
     },
     "phase2_evidence_source": "external_bundle"
     if imported_phase2_evidence_bundle
@@ -327,6 +383,15 @@ with open(release_summary, "w", encoding="utf-8") as fh:
             f"evidence={item['id']} status={item['status']} "
             f"artifact={item['artifact']}\n"
         )
+    fh.write(f"capture_qoe_csv={rel(capture_qoe_csv)}\n")
+    fh.write(f"capture_qoe_summary={rel(capture_qoe_summary)}\n")
+    fh.write(f"capture_qoe_rows={doc['capture_library']['rows']}\n")
+    fh.write(
+        "capture_qoe_minima="
+        f"playable_ratio={doc['capture_library']['playable_ratio_min']} "
+        f"psnr_y={doc['capture_library']['avg_psnr_y_min']} "
+        f"ssim_y={doc['capture_library']['avg_ssim_y_min']}\n"
+    )
 
 if release_status != "pass":
     failed = ",".join(name for name, passed in checks.items() if not passed)

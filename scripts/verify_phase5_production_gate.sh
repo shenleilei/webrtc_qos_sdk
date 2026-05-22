@@ -27,6 +27,8 @@ require_file "${GATE_DIR}/manifest.sha256"
   fail "missing debug bundle verifier: ${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh"
 [[ -x "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh" ]] ||
   fail "missing implementation gate verifier: ${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh"
+[[ -x "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh" ]] ||
+  fail "missing capture QoE CSV verifier: ${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh"
 
 (
   cd "${GATE_DIR}"
@@ -414,8 +416,28 @@ require_phase2_completion_evidence() {
     fail "underlying completion audit missing passed real renderer check"
   rg -q '^check=capture_library status=pass ' "${completion_audit}" ||
     fail "underlying completion audit missing passed capture library check"
+  rg -q ' qoe_csv=' "${completion_audit}" ||
+    fail "underlying completion audit missing capture QoE CSV pointer"
   rg -q '^check=evidence_bundle status=pass ' "${completion_audit}" ||
     fail "underlying completion audit missing passed evidence bundle check"
+  require_file "${evidence_bundle}/capture_library/capture_manifest_summary.txt"
+  require_file "${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv"
+  require_file "${evidence_bundle}/capture_library/capture_qoe_summary.txt"
+  rg -q '^capture_manifest_verification=true$' \
+    "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
+    fail "capture manifest summary did not verify"
+  rg -q '^capture_qoe_verification=true$' \
+    "${evidence_bundle}/capture_library/capture_qoe_summary.txt" ||
+    fail "capture QoE summary did not verify"
+  local required_capture_categories
+  required_capture_categories="$(
+    awk -F= '$1=="required_categories"{gsub(/,/," ",$2); print $2}' \
+      "${evidence_bundle}/capture_library/capture_qoe_summary.txt" | tail -1
+  )"
+  required_capture_categories="${required_capture_categories:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
+  CAPTURE_QOE_CSV="${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv" \
+    REQUIRED_CAPTURE_CATEGORIES="${required_capture_categories}" \
+    "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh" >/dev/null
 }
 
 require_release_evidence() {
@@ -474,6 +496,9 @@ required_evidence = {
     "production_soak",
     "real_renderer",
     "capture_library",
+    "capture_manifest_summary",
+    "capture_qoe_csv",
+    "capture_qoe_summary",
     "evidence_bundle",
 }
 evidence = doc.get("evidence")
@@ -500,10 +525,86 @@ for key in (
     "phase2_production_gate",
     "phase2_evidence_bundle",
     "phase2_completion_audit",
+    "capture_manifest_summary",
+    "capture_qoe_csv",
+    "capture_qoe_summary",
 ):
     rel = artifacts.get(key)
     if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
         raise SystemExit(f"release evidence bad artifact pointer {key}")
+
+capture = doc.get("capture_library", {})
+for key in ("manifest_summary", "qoe_csv", "qoe_summary"):
+    rel = capture.get(key)
+    if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
+        raise SystemExit(f"release evidence bad capture pointer {key}")
+
+def normalize_rel(path):
+    return os.path.normpath(path).replace(os.sep, "/")
+
+capture_artifact_base = normalize_rel(
+    os.path.join(artifacts.get("phase2_evidence_bundle", ""), "capture_library")
+)
+expected_capture_artifacts = {
+    "capture_manifest_summary": normalize_rel(
+        os.path.join(capture_artifact_base, "capture_manifest_summary.txt")
+    ),
+    "capture_qoe_csv": normalize_rel(
+        os.path.join(
+            capture_artifact_base, "webrtc_first_qoe_capture_library_720p.csv"
+        )
+    ),
+    "capture_qoe_summary": normalize_rel(
+        os.path.join(capture_artifact_base, "capture_qoe_summary.txt")
+    ),
+}
+capture_pointer_keys = {
+    "capture_manifest_summary": "manifest_summary",
+    "capture_qoe_csv": "qoe_csv",
+    "capture_qoe_summary": "qoe_summary",
+}
+for evidence_id, expected_rel in expected_capture_artifacts.items():
+    artifact_rel = artifacts.get(evidence_id)
+    capture_rel = capture.get(capture_pointer_keys[evidence_id])
+    evidence_rel = by_id[evidence_id].get("artifact")
+    if normalize_rel(artifact_rel) != expected_rel:
+        raise SystemExit(
+            f"release evidence artifact {evidence_id} points to "
+            f"{artifact_rel}, expected {expected_rel}"
+        )
+    if normalize_rel(capture_rel) != expected_rel:
+        raise SystemExit(
+            f"release evidence capture pointer {evidence_id} points to "
+            f"{capture_rel}, expected {expected_rel}"
+        )
+    if normalize_rel(evidence_rel) != expected_rel:
+        raise SystemExit(
+            f"release evidence item {evidence_id} points to "
+            f"{evidence_rel}, expected {expected_rel}"
+        )
+
+def capture_number(key, default=0):
+    value = capture.get(key, default)
+    if value is None or value == "":
+        value = default
+    return float(value)
+
+rows = int(capture.get("rows", 0) or 0)
+pass_rows = int(capture.get("pass_rows", 0) or 0)
+if rows <= 0 or pass_rows != rows:
+    raise SystemExit("release evidence capture QoE rows are incomplete")
+if capture_number("playable_ratio_min") <= 0:
+    raise SystemExit("release evidence capture playable ratio missing")
+if capture_number("avg_psnr_y_min") <= 0:
+    raise SystemExit("release evidence capture PSNR missing")
+if capture_number("avg_ssim_y_min") <= 0:
+    raise SystemExit("release evidence capture SSIM missing")
+if capture_number("decode_errors", 1) != 0:
+    raise SystemExit("release evidence capture decode errors are non-zero")
+if capture_number("freeze_count", 1) != 0:
+    raise SystemExit("release evidence capture freeze count is non-zero")
+if capture_number("renderer_proxy_drop_frames", 1) != 0:
+    raise SystemExit("release evidence capture renderer drops are non-zero")
 
 for expected in (
     "release_status=pass",
@@ -513,6 +614,9 @@ for expected in (
     "evidence=production_soak status=pass",
     "evidence=real_renderer status=pass",
     "evidence=capture_library status=pass",
+    "evidence=capture_qoe_csv status=pass",
+    "capture_qoe_csv=",
+    "capture_qoe_rows=",
 ):
     if expected not in summary:
         raise SystemExit(f"release evidence summary missing {expected}")
