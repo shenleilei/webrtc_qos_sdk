@@ -1134,6 +1134,24 @@ def valid_sha256(value):
         ch in "0123456789abcdefABCDEF" for ch in value
     )
 
+
+def read_top_manifest(gate_dir):
+    manifest = {}
+    with open(os.path.join(gate_dir, "manifest.sha256"), "r", encoding="utf-8") as fh:
+        for line_no, line in enumerate(fh, 1):
+            parts = line.strip().split(None, 1)
+            if len(parts) != 2:
+                raise SystemExit(f"top manifest line {line_no} is malformed")
+            digest, rel = parts
+            rel = rel.lstrip("*")
+            if not valid_sha256(digest):
+                raise SystemExit(f"top manifest line {line_no} has invalid sha256")
+            manifest[rel] = digest
+    return manifest
+
+
+top_manifest = read_top_manifest(gate_dir)
+
 def category_tokens(value):
     return {
         token.strip()
@@ -1217,6 +1235,8 @@ for key in (
     "phase5_gate_files",
     "phase5_gate_manifest",
     "phase5_production_gate_metrics",
+    "phase5_release_evidence_json",
+    "phase5_release_evidence_summary",
     "git_tracked_status",
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
@@ -1255,6 +1275,18 @@ for key in (
     rel = artifacts.get(key)
     if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
         raise SystemExit(f"release evidence bad artifact pointer {key}")
+
+for key, expected_rel in (
+    ("phase5_release_evidence_json", "phase5_release_evidence.json"),
+    ("phase5_release_evidence_summary", "phase5_release_evidence.txt"),
+):
+    rel = artifacts.get(key)
+    if rel != expected_rel:
+        raise SystemExit(
+            f"release evidence artifact {key} points to {rel}, expected {expected_rel}"
+        )
+    if rel not in top_manifest:
+        raise SystemExit(f"top manifest missing release evidence artifact {rel}")
 
 expected_gate_artifacts = {
     "phase5_gate_files": "files.txt",
@@ -1540,6 +1572,8 @@ for expected in (
     "phase5_gate_files=files.txt",
     "phase5_gate_manifest=manifest.sha256",
     "phase5_production_gate_metrics=phase5_production_gate_metrics.prom",
+    "phase5_release_evidence_json=phase5_release_evidence.json",
+    "phase5_release_evidence_summary=phase5_release_evidence.txt",
     "evidence=phase5_gate_files status=pass",
     "evidence=phase5_gate_manifest status=pass",
     "evidence=phase5_production_gate_metrics status=pass",

@@ -213,16 +213,16 @@ release evidence 生成阶段也会拒绝 `renderer_backend=xvfb` 或没有实�
 `phase5_production_gate_metrics.prom` 是顶层 gate 的 Prometheus/textfile 指标出口：
 导出 pass/fail/dry_run、各 step 状态、failure debug bundle 状态和 release evidence
 状态，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
-顶层 `files.txt`、顶层 `manifest.sha256`、顶层 `phase5_production_gate_metrics.prom`、
+顶层 `files.txt`、顶层 `manifest.sha256`、顶层 `phase5_production_gate_metrics.prom`、release evidence JSON/summary 自身、
 implementation gate、implementation gate `.prom` 指标、clean tracked worktree、production readiness summary、
 readiness report、next required actions、risk milestone report、readiness `.prom` 指标、readiness check records、debug bundle
 manifest、runtime config、health/SLO report、monitoring metrics、alert policy、incident report/runbook、timeline、first problem、alerts summary、底层 Phase-2
 production gate、底层 Phase-2 completion audit `.prom` 指标、production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、
 正式 capture library、capture manifest summary、capture manifest/media sha256、capture QoE CSV、capture QoE summary、
 evidence bundle 和 completion audit 的 pass 状态及相对 artifact 路径，同时记录
-production soak rows、real renderer backend、readiness report/metrics/risk milestone 指针、debug health/monitoring/incident 指针、顶层 gate 文件清单/sha256 manifest/metrics 指针、capture QoE rows/minima 和
+production soak rows、real renderer backend、readiness report/metrics/risk milestone 指针、debug health/monitoring/incident 指针、顶层 gate 文件清单/sha256 manifest/metrics 指针、release evidence 自身指针、capture QoE rows/minima 和
 `multi_receiver_fanout=deferred_before_p5_completion`。release evidence verifier 会按固定
-evidence id 集合校验，重复 id 或未知 id 都会失败，避免发布证据里混入未审计条目。
+evidence id 集合校验，重复 id 或未知 id 都会失败，并确认 release evidence JSON/summary 自身已纳入最终顶层 `manifest.sha256`，避免发布证据里混入未审计条目。
 非 dry-run 失败时会自动收集并校验
 `failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和 runtime
 config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包存在且
@@ -239,7 +239,7 @@ readiness `.prom` 指标、clean tracked worktree 证据，并直接复验顶层
 `manifest.sha256` 文件集合一致、底层 Phase-2 evidence bundle manifest、
 `phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`、`phase2_completion_audit_metrics.prom`，同时强制复验 `phase5_release_evidence.json` 和
-release evidence 里索引的 production soak archive、真实 renderer summary/metrics、capture manifest/media sha256 和 capture QoE
+release evidence 里索引的自身 JSON/summary、production soak archive、真实 renderer summary/metrics、capture manifest/media sha256 和 capture QoE
 CSV；production soak 证据会通过 `verify_webrtc_first_qoe_production_soak_evidence.sh`
 复验 `SOAK_MINUTES>=120`、summary/CSV/config/archive 一致性、clean tracked worktree
 metadata、弱网低发送预算和恢复时间分布，真实 renderer 证据会通过
@@ -1445,7 +1445,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 成功路径必须生成并离线复验 `phase5_release_evidence.json`，确认 production soak、
   production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、正式
   capture library、capture manifest/media sha256、capture QoE CSV、evidence bundle 和 completion audit 都有 pass
-  证据指针，并通过 `verify_webrtc_first_qoe_production_soak_evidence.sh` 确认长时 soak
+  证据指针，且 release evidence JSON/summary 自身已被最终顶层 `manifest.sha256` 覆盖，并通过 `verify_webrtc_first_qoe_production_soak_evidence.sh` 确认长时 soak
   summary/CSV/config/archive 一致且满足 P5 下限，通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，通过 `verify_capture_library_evidence.sh` 确认 capture manifest/QoE 绑定和质量门槛均通过，同时写出 production soak rows、real renderer backend 和 capture QoE
   rows/minima 供排障。
 - 成功路径必须离线复验底层 Phase-2 evidence bundle 和 completion audit，确认

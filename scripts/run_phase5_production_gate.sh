@@ -83,7 +83,8 @@ PY
 
 mkdir -p "${OUTPUT_ROOT}" "${LOG_DIR}"
 rm -f "${SUMMARY_FILE}" "${METADATA_FILE}" "${GIT_TRACKED_STATUS_FILE}" \
-  "${FILES_FILE}" "${MANIFEST_FILE}"
+  "${FILES_FILE}" "${MANIFEST_FILE}" "${RELEASE_EVIDENCE_JSON}" \
+  "${RELEASE_EVIDENCE_SUMMARY}" "${PHASE5_GATE_METRICS_PROM}"
 
 write_summary() {
   printf '%s\n' "$*" | tee -a "${SUMMARY_FILE}"
@@ -833,6 +834,8 @@ doc = {
         "phase5_gate_files": rel(gate_files),
         "phase5_gate_manifest": rel(gate_manifest),
         "phase5_production_gate_metrics": rel(gate_metrics),
+        "phase5_release_evidence_json": rel(release_json),
+        "phase5_release_evidence_summary": rel(release_summary),
         "git_tracked_status": rel(
             os.path.join(output_root, "git_tracked_status.txt")
         ),
@@ -896,6 +899,8 @@ with open(release_summary, "w", encoding="utf-8") as fh:
     fh.write(f"phase5_gate_files={rel(gate_files)}\n")
     fh.write(f"phase5_gate_manifest={rel(gate_manifest)}\n")
     fh.write(f"phase5_production_gate_metrics={rel(gate_metrics)}\n")
+    fh.write(f"phase5_release_evidence_json={rel(release_json)}\n")
+    fh.write(f"phase5_release_evidence_summary={rel(release_summary)}\n")
     for item in evidence:
         fh.write(
             f"evidence={item['id']} status={item['status']} "

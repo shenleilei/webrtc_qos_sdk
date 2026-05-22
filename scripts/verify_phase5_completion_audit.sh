@@ -824,6 +824,10 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
   'phase5_gate_files' production_gate_release_top_files_index
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'phase5_production_gate_metrics' production_gate_release_top_metrics_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_release_evidence_json' production_gate_release_self_json_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_release_evidence_summary' production_gate_release_self_summary_index
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_top_manifest_consistency' production_gate_top_manifest_file_set_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
@@ -832,6 +836,8 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   '\{label\} files.txt and manifest.sha256 file sets differ' production_gate_manifest_file_set_template
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence missing production gate metrics' production_gate_release_top_metrics_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'top manifest missing release evidence artifact' production_gate_release_self_manifest_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence contains duplicate ids' production_gate_release_duplicate_id_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
