@@ -146,6 +146,116 @@ cat >"${OUTPUT_DIR}/session_config.json" <<'EOF'
 }
 EOF
 
+python3 - "${OUTPUT_DIR}/runtime_config.json" "${FRAMES}" \
+  "${RUN_SELFTEST}" "${REQUIRE_SELFTEST_PASS}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+frames = int(sys.argv[2])
+run_selftest = sys.argv[3] == "1"
+require_selftest_pass = sys.argv[4] == "1"
+
+runtime_config = {
+    "schema_version": 1,
+    "source": "demo/webrtc_first_udp",
+    "transport": {
+        "kind": "udp",
+        "wire_envelope": "WQUD/v1",
+        "peer_connection": False,
+        "transport_bytes": "opaque",
+    },
+    "selftest": {
+        "frames": frames,
+        "run_enabled": run_selftest,
+        "require_pass": require_selftest_pass,
+    },
+    "roles": [
+        {
+            "role": "push",
+            "factory": "CreateVideoPushClient",
+            "worker_model": "single_role_worker",
+            "artifacts": {
+                "log": "log/push.log",
+                "metrics": "metrics/push_metrics.jsonl",
+                "alerts": "alerts/push_alerts.jsonl",
+            },
+        },
+        {
+            "role": "server",
+            "factory": "CreateServerQosRouter",
+            "worker_model": "single_role_worker",
+            "artifacts": {
+                "log": "log/server.log",
+                "metrics": "metrics/server_metrics.jsonl",
+                "alerts": "alerts/server_alerts.jsonl",
+            },
+        },
+        {
+            "role": "play",
+            "factory": "CreateVideoPlayClient",
+            "worker_model": "single_role_worker",
+            "artifacts": {
+                "log": "log/play.log",
+                "metrics": "metrics/play_metrics.jsonl",
+                "alerts": "alerts/play_alerts.jsonl",
+            },
+        },
+    ],
+    "runtime": {
+        "logging": {
+            "enabled": True,
+            "min_level": "INFO",
+            "basename": "webrtc_qos_udp",
+            "json_lines": True,
+            "also_stderr": False,
+            "max_file_bytes": 1048576,
+            "max_files": 4,
+        },
+        "metrics": {
+            "enabled": True,
+            "basename": "webrtc_qos_udp_metrics",
+            "interval_ms": 100,
+            "include_track_snapshots": True,
+            "max_file_bytes": 1048576,
+            "max_files": 4,
+        },
+        "alerts": {
+            "enabled": True,
+            "basename": "webrtc_qos_udp_alerts",
+            "suppress_repeated_alerts_ms": 0,
+            "high_loss_fraction_q8": 128,
+            "video_drop_frames_threshold": 1,
+            "low_target_bps": 700000,
+            "low_encoder_fps": 20,
+            "max_file_bytes": 1048576,
+            "max_files": 4,
+        },
+    },
+    "artifacts": {
+        "metadata": "metadata.txt",
+        "build_config": "build_config.txt",
+        "git_status": "git_status.txt",
+        "session_config": "session_config.json",
+        "runtime_config": "runtime_config.json",
+        "metrics_summary": "metrics/summary.csv",
+        "alerts_summary": "alerts/alerts_summary.txt",
+        "timeline": "timeline/events.jsonl",
+        "first_problem": "timeline/first_problem.json",
+    },
+    "redaction": {
+        "media_bytes": "omitted",
+        "raw_frames": "omitted",
+        "auth_material": "omitted",
+        "absolute_runtime_paths": "omitted",
+    },
+}
+
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(runtime_config, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+
 write_summary "phase5_debug_bundle=collecting"
 write_summary "output_dir=${OUTPUT_DIR}"
 
@@ -317,6 +427,7 @@ PY
   write_summary "build_config=${OUTPUT_DIR}/build_config.txt"
   write_summary "git_status=${OUTPUT_DIR}/git_status.txt"
   write_summary "session_config=${OUTPUT_DIR}/session_config.json"
+  write_summary "runtime_config=${OUTPUT_DIR}/runtime_config.json"
   write_summary "metrics_summary=${OUTPUT_DIR}/metrics/summary.csv"
   write_summary "alerts_summary=${OUTPUT_DIR}/alerts/alerts_summary.txt"
   write_summary "timeline=${OUTPUT_DIR}/timeline/events.jsonl"

@@ -546,12 +546,16 @@ BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
 ```
 
 bundle 固定包含 `metadata.txt`、`build_config.txt`、`git_status.txt`、
-`session_config.json`、`log/{push,server,play}.log`、
+`session_config.json`、`runtime_config.json`、`log/{push,server,play}.log`、
 `metrics/{push,server,play}_metrics.jsonl`、`metrics/summary.csv`、
 `alerts/alerts.jsonl`、`alerts/alerts_summary.txt`、`timeline/events.jsonl`、
 `timeline/first_problem.json` 和 `manifest.sha256`。这些文件可以回答
 “第一条 warn/error 在哪个角色、哪个 track、哪个 receiver 出现”以及“弱网前后
 bitrate/FPS/NACK/retransmission 怎么变化”。
+
+`runtime_config.json` 是脱敏后的运行配置 dump，只记录 role、factory、UDP 边界、
+log/metrics/alerts 开关和 bundle 内相对路径，不记录媒体 bytes、原始帧、鉴权材料或
+运行机绝对目录。`verify_phase5_debug_bundle.sh` 会把这些脱敏标记作为硬门禁检查。
 
 ## 8. 错误码和运行契约
 
@@ -712,6 +716,7 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   transport failure 和 decode failure 告警。
 - 所有 SDK `Status` 失败都打印 `status_code` 和 `reason`，完整上下文写入角色日志文件。
 - 每次问题复现都收集 debug bundle，并用 `manifest.sha256` 做离线完整性校验。
+- debug bundle 里必须有 `runtime_config.json`，并通过配置 dump 脱敏校验。
 - 业务没有直接依赖 WebRTC 内部头、`PeerConnection`、ICE、DTLS 或 SRTP。
 
 ## 13. 参考文档

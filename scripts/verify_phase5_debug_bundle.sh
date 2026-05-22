@@ -28,6 +28,7 @@ required_files=(
   build_config.txt
   git_status.txt
   session_config.json
+  runtime_config.json
   debug_bundle_summary.txt
   manifest.sha256
   files.txt
@@ -157,6 +158,35 @@ if len(profiles) < 2:
 dual = next((profile for profile in profiles if profile.get("label") == "dual_track"), None)
 if not dual or len(dual.get("tracks", [])) != 2:
     raise SystemExit("session_config.json missing dual-track definition")
+
+runtime = json.loads((root / "runtime_config.json").read_text())
+if runtime.get("schema_version") != 1:
+    raise SystemExit("runtime_config.json missing schema_version=1")
+transport = runtime.get("transport", {})
+if transport.get("kind") != "udp" or transport.get("peer_connection") is not False:
+    raise SystemExit("runtime_config.json has unexpected transport boundary")
+selftest = runtime.get("selftest", {})
+if selftest.get("frames", 0) <= 0:
+    raise SystemExit("runtime_config.json missing positive selftest frames")
+runtime_section = runtime.get("runtime", {})
+for section in ("logging", "metrics", "alerts"):
+    if runtime_section.get(section, {}).get("enabled") is not True:
+        raise SystemExit(f"runtime_config.json missing enabled {section}")
+roles_config = runtime.get("roles", [])
+if {item.get("role") for item in roles_config} != roles:
+    raise SystemExit("runtime_config.json does not cover push/server/play roles")
+for item in roles_config:
+    artifacts = item.get("artifacts", {})
+    for artifact_kind in ("log", "metrics", "alerts"):
+        rel = artifacts.get(artifact_kind)
+        if not rel or not (root / rel).exists():
+            raise SystemExit(
+                f"runtime_config.json role {item.get('role')} bad {artifact_kind} artifact"
+            )
+redaction = runtime.get("redaction", {})
+for key in ("media_bytes", "raw_frames", "auth_material", "absolute_runtime_paths"):
+    if redaction.get(key) != "omitted":
+        raise SystemExit(f"runtime_config.json missing redaction marker {key}")
 
 print(
     "validated_phase5_debug_bundle roles=%s alerts=%d timeline=%d"

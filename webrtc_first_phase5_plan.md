@@ -591,11 +591,12 @@ output failure、decode output failure，同时确认对应 warn/error 日志落
 新增排查 bundle 规范：
 
 ```text
-debug_bundle/
+  debug_bundle/
   metadata.txt
   build_config.txt
   git_status.txt
   session_config.json
+  runtime_config.json
   log/
     push.log
     server.log
@@ -629,6 +630,7 @@ debug_bundle/
   build_config.txt
   git_status.txt
   session_config.json
+  runtime_config.json
   log/
     push.log
     server.log
@@ -662,6 +664,11 @@ debug_bundle/
 `timeline/first_problem.json` 指向第一条 WARN/ERROR 或 alert，便于快速定位
 “第一个坏点”在哪个 role/track/receiver。
 
+`runtime_config.json` 是脱敏后的运行配置 dump，固定记录 schema version、UDP
+transport boundary、三角色 factory、selftest 参数、日志/metrics/alerts 运行开关和
+bundle 内相对路径；媒体 bytes、原始帧、鉴权材料和运行机绝对目录只记录为
+`omitted` 标记。
+
 离线 verifier 会检查：
 
 - 必需文件存在。
@@ -670,6 +677,7 @@ debug_bundle/
 - metrics summary 覆盖三类 role。
 - weak-network alert 规则齐全。
 - timeline 同时包含 log/metric/alert 三类事件。
+- runtime config 覆盖 push/server/play、日志/metrics/alerts 开关和脱敏标记。
 - `manifest.sha256` 可校验。
 - bundle 中不出现 `payload/annexb_bytes/rtp_bytes/token/secret/password` 类字段。
 
