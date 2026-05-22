@@ -27,7 +27,7 @@ fail() {
 require_log() {
   local pattern="$1"
   local message="$2"
-  if ! rg -q "${pattern}" "${LOG_DIR}"; then
+  if ! rg --no-ignore -q "${pattern}" "${LOG_DIR}"; then
     find "${LOG_DIR}" -maxdepth 1 -type f -print >&2 || true
     fail "${message}"
   fi

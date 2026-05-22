@@ -33,10 +33,15 @@ require_output() {
 require_log() {
   local pattern="$1"
   local message="$2"
-  if ! rg -q "${pattern}" "${LOG_DIR}"; then
-    find "${LOG_DIR}" -maxdepth 1 -type f -print >&2 || true
-    fail "${message}"
-  fi
+  local attempt
+  for attempt in {1..50}; do
+    if rg --no-ignore -q "${pattern}" "${LOG_DIR}"; then
+      return
+    fi
+    sleep 0.1
+  done
+  find "${LOG_DIR}" -maxdepth 1 -type f -print >&2 || true
+  fail "${message}"
 }
 
 verify_runtime_logging_contract() {
@@ -131,7 +136,7 @@ require_log '"role":"play","event":"decode_au_output"' \
   "missing play decoded access-unit event"
 require_log '"session_id":1' "missing transport identity fields"
 
-if rg -q '"payload"|"annexb_bytes"|"rtp_bytes"' "${LOG_DIR}"; then
+if rg --no-ignore -q '"payload"|"annexb_bytes"|"rtp_bytes"' "${LOG_DIR}"; then
   fail "logs contain media payload-like fields"
 fi
 
