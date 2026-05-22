@@ -541,6 +541,16 @@ evidence = [
             rel(gate_metrics),
         ),
         (
+            "phase5_release_evidence_json",
+            True,
+            rel(release_json),
+        ),
+        (
+            "phase5_release_evidence_summary",
+            True,
+            rel(release_summary),
+        ),
+        (
             "phase5_implementation_gate",
             checks["phase5_implementation_gate"],
             rel(implementation_summary),

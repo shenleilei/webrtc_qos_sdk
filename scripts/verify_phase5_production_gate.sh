@@ -1171,6 +1171,8 @@ required_evidence = {
     "phase5_gate_files",
     "phase5_gate_manifest",
     "phase5_production_gate_metrics",
+    "phase5_release_evidence_json",
+    "phase5_release_evidence_summary",
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
     "phase5_production_readiness",
@@ -1284,6 +1286,11 @@ for key, expected_rel in (
     if rel != expected_rel:
         raise SystemExit(
             f"release evidence artifact {key} points to {rel}, expected {expected_rel}"
+        )
+    if by_id[key].get("artifact") != expected_rel:
+        raise SystemExit(
+            f"release evidence item {key} points to "
+            f"{by_id[key].get('artifact')}, expected {expected_rel}"
         )
     if rel not in top_manifest:
         raise SystemExit(f"top manifest missing release evidence artifact {rel}")
