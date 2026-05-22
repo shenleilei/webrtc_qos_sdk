@@ -217,6 +217,16 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_failed_implementation_evidence' production_gate_failed_implementation_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_release_evidence.json' production_gate_release_evidence_collector
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'require_release_evidence' production_gate_release_evidence_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'phase5 formal production release evidence' production_gate_release_evidence_scope
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'evidence=production_soak status=pass' production_gate_release_evidence_soak
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'step=phase5_release_evidence status=pass' production_gate_release_evidence_step
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'phase5_production_readiness_status=' production_readiness_status_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \

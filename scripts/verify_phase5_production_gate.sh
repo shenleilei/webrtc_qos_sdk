@@ -342,6 +342,107 @@ require_phase2_completion_evidence() {
     fail "underlying completion audit missing passed evidence bundle check"
 }
 
+require_release_evidence() {
+  summary_has '^phase5_release_evidence=' ||
+    fail "passed gate summary missing release evidence json pointer"
+  summary_has '^phase5_release_evidence_summary=' ||
+    fail "passed gate summary missing release evidence summary pointer"
+  require_file "${GATE_DIR}/phase5_release_evidence.json"
+  require_file "${GATE_DIR}/phase5_release_evidence.txt"
+  python3 - "${GATE_DIR}" <<'PY'
+import json
+import os
+import sys
+
+gate_dir = sys.argv[1]
+json_path = os.path.join(gate_dir, "phase5_release_evidence.json")
+summary_path = os.path.join(gate_dir, "phase5_release_evidence.txt")
+
+with open(json_path, "r", encoding="utf-8") as fh:
+    doc = json.load(fh)
+with open(summary_path, "r", encoding="utf-8") as fh:
+    summary = fh.read()
+
+if doc.get("schema_version") != 1:
+    raise SystemExit("release evidence schema_version must be 1")
+if doc.get("source") != "phase5_production_gate":
+    raise SystemExit("release evidence source mismatch")
+if doc.get("scope") != "phase5 formal production release evidence":
+    raise SystemExit("release evidence scope mismatch")
+if doc.get("release_status") != "pass":
+    raise SystemExit("release evidence status is not pass")
+if doc.get("formal_completion_status") != "complete":
+    raise SystemExit("release evidence formal completion status is not complete")
+
+requirements = doc.get("requirements", {})
+if float(requirements.get("soak_minutes", 0)) < float(
+    requirements.get("min_production_soak_minutes", 120)
+):
+    raise SystemExit("release evidence soak minutes below minimum")
+if requirements.get("multi_receiver_fanout") != "deferred_before_p5_completion":
+    raise SystemExit("release evidence fanout requirement mismatch")
+
+observability = doc.get("observability", {})
+if observability.get("debug_bundle_slo_status") not in {"pass", "warn", "fail"}:
+    raise SystemExit("release evidence missing debug bundle SLO status")
+fanout = doc.get("fanout", {})
+if fanout.get("status") != "deferred":
+    raise SystemExit("release evidence fanout status must be deferred")
+
+required_evidence = {
+    "phase5_implementation_gate",
+    "phase5_production_readiness",
+    "phase5_debug_bundle",
+    "phase2_production_gate",
+    "phase2_completion_audit",
+    "production_soak",
+    "real_renderer",
+    "capture_library",
+    "evidence_bundle",
+}
+evidence = doc.get("evidence")
+if not isinstance(evidence, list):
+    raise SystemExit("release evidence list missing")
+by_id = {item.get("id"): item for item in evidence}
+missing = required_evidence - by_id.keys()
+if missing:
+    raise SystemExit(f"release evidence missing ids: {sorted(missing)}")
+for evidence_id, item in by_id.items():
+    if item.get("status") != "pass":
+        raise SystemExit(f"release evidence {evidence_id} did not pass")
+    artifact = item.get("artifact")
+    if not artifact or not os.path.exists(os.path.join(gate_dir, artifact)):
+        raise SystemExit(f"release evidence {evidence_id} has bad artifact pointer")
+
+artifacts = doc.get("artifacts", {})
+for key in (
+    "gate_summary",
+    "metadata",
+    "phase5_implementation_gate",
+    "phase5_production_readiness",
+    "phase5_debug_bundle",
+    "phase2_production_gate",
+    "phase2_evidence_bundle",
+    "phase2_completion_audit",
+):
+    rel = artifacts.get(key)
+    if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
+        raise SystemExit(f"release evidence bad artifact pointer {key}")
+
+for expected in (
+    "release_status=pass",
+    "formal_completion_status=complete",
+    "scope=phase5_formal_production_release_evidence",
+    "fanout_status=deferred",
+    "evidence=production_soak status=pass",
+    "evidence=real_renderer status=pass",
+    "evidence=capture_library status=pass",
+):
+    if expected not in summary:
+        raise SystemExit(f"release evidence summary missing {expected}")
+PY
+}
+
 summary_has '^phase5_production_gate=running$' ||
   fail "summary missing gate start marker"
 summary_has '^step=phase5_implementation_gate status=(planned|pass|fail|skipped)( |$)' ||
@@ -372,6 +473,9 @@ fi
 if summary_has '^step=webrtc_first_production_gate status=(planned|pass|fail)( |$)'; then
   require_file "${GATE_DIR}/logs/webrtc_first_production_gate.log"
 fi
+if summary_has '^step=phase5_release_evidence status=(planned|pass|fail)( |$)'; then
+  require_file "${GATE_DIR}/logs/phase5_release_evidence.log"
+fi
 
 if ! summary_has '^phase5_production_gate_status=fail$'; then
   if ! summary_has '^step=phase5_debug_bundle status=skipped'; then
@@ -386,6 +490,10 @@ if ! summary_has '^phase5_production_gate_status=fail$'; then
   fi
   summary_has '^step=webrtc_first_production_gate status=(planned|pass|fail)( |$)' ||
     fail "summary missing production gate step"
+  if ! summary_has '^phase5_production_gate_status=dry_run$'; then
+    summary_has '^step=phase5_release_evidence status=(pass|fail)( |$)' ||
+      fail "summary missing release evidence step"
+  fi
 fi
 
 if [[ "${REQUIRE_PASS}" == "1" ]]; then
@@ -405,10 +513,13 @@ if [[ "${REQUIRE_PASS}" == "1" ]]; then
     fail "debug bundle verify step did not pass"
   summary_has '^step=webrtc_first_production_gate status=pass ' ||
     fail "production gate step did not pass"
+  summary_has '^step=phase5_release_evidence status=pass ' ||
+    fail "release evidence step did not pass"
   require_success_implementation_gate
   require_success_debug_bundle
   require_success_readiness
   require_phase2_completion_evidence
+  require_release_evidence
 else
   summary_has '^phase5_production_gate_status=(dry_run|pass|fail)$' ||
     fail "summary missing dry_run/pass/fail status"
@@ -426,12 +537,21 @@ else
     require_success_readiness
     require_success_debug_bundle
     require_phase2_completion_evidence
+    require_release_evidence
   fi
 fi
 
+scan_files=("${GATE_DIR}/metadata.txt" "${SUMMARY_FILE}")
+for optional_scan_file in \
+    "${GATE_DIR}/phase5_release_evidence.json" \
+    "${GATE_DIR}/phase5_release_evidence.txt"; do
+  if [[ -f "${optional_scan_file}" ]]; then
+    scan_files+=("${optional_scan_file}")
+  fi
+done
 if rg -q 'payload|annexb_bytes|rtp_bytes|token|secret|password' \
-  "${GATE_DIR}/metadata.txt" "${SUMMARY_FILE}"; then
-  fail "gate metadata/summary contains payload-like or sensitive field"
+  "${scan_files[@]}"; then
+  fail "gate metadata/summary/release evidence contains payload-like or sensitive field"
 fi
 
 echo "phase5_production_gate_verify pass gate_dir=${GATE_DIR} require_pass=${REQUIRE_PASS}"

@@ -16,6 +16,8 @@ SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_ROOT}/phase5_production_gate_summary.txt}
 METADATA_FILE="${METADATA_FILE:-${OUTPUT_ROOT}/metadata.txt}"
 FILES_FILE="${FILES_FILE:-${OUTPUT_ROOT}/files.txt}"
 MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_ROOT}/manifest.sha256}"
+RELEASE_EVIDENCE_JSON="${RELEASE_EVIDENCE_JSON:-${OUTPUT_ROOT}/phase5_release_evidence.json}"
+RELEASE_EVIDENCE_SUMMARY="${RELEASE_EVIDENCE_SUMMARY:-${OUTPUT_ROOT}/phase5_release_evidence.txt}"
 
 SOAK_MINUTES="${SOAK_MINUTES:-120}"
 MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-${SOAK_MINUTES}}"
@@ -77,6 +79,248 @@ write_manifest() {
       sha256sum "${file}"
     done <"${FILES_FILE}" >"${MANIFEST_FILE}"
   )
+}
+
+write_release_evidence() {
+  python3 - \
+    "${OUTPUT_ROOT}" \
+    "${SUMMARY_FILE}" \
+    "${METADATA_FILE}" \
+    "${PHASE5_IMPLEMENTATION_GATE_DIR}" \
+    "${PHASE5_READINESS_DIR}" \
+    "${PHASE5_DEBUG_BUNDLE_DIR}" \
+    "${PHASE2_OUTPUT_ROOT}" \
+    "${RELEASE_EVIDENCE_JSON}" \
+    "${RELEASE_EVIDENCE_SUMMARY}" \
+    "${SOAK_MINUTES}" \
+    "${MIN_PRODUCTION_SOAK_MINUTES}" \
+    "${ALLOW_XVFB_RENDERER}" \
+    "${REAL_RENDERER_USE_XVFB}" \
+    "${CAPTURE_LIBRARY_DIR}" \
+    "${CAPTURE_LIBRARY_MANIFEST}" <<'PY'
+import json
+import os
+import sys
+
+(
+    output_root,
+    summary_file,
+    metadata_file,
+    implementation_dir,
+    readiness_dir,
+    debug_bundle_dir,
+    phase2_dir,
+    release_json,
+    release_summary,
+    soak_minutes,
+    min_soak_minutes,
+    allow_xvfb_renderer,
+    real_renderer_use_xvfb,
+    capture_library_dir,
+    capture_library_manifest,
+) = sys.argv[1:16]
+
+
+def rel(path):
+    return os.path.relpath(path, output_root)
+
+
+def kv_summary(path):
+    values = {}
+    if not os.path.exists(path):
+        return values
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key] = value
+    return values
+
+
+def has_line(path, expected):
+    if not os.path.exists(path):
+        return False
+    with open(path, "r", encoding="utf-8") as fh:
+        return any(line.strip() == expected for line in fh)
+
+
+def has_prefix(path, prefix):
+    if not os.path.exists(path):
+        return False
+    with open(path, "r", encoding="utf-8") as fh:
+        return any(line.startswith(prefix) for line in fh)
+
+
+def parse_number(value):
+    try:
+        number = float(value)
+    except ValueError:
+        return value
+    if number.is_integer():
+        return int(number)
+    return number
+
+
+implementation_summary = os.path.join(
+    implementation_dir, "phase5_implementation_gate_summary.txt"
+)
+readiness_summary = os.path.join(readiness_dir, "phase5_production_readiness_summary.txt")
+debug_slo = os.path.join(debug_bundle_dir, "monitoring", "slo_report.json")
+phase2_summary = os.path.join(phase2_dir, "phase2_production_gate_summary.txt")
+phase2_audit_summary = os.path.join(
+    phase2_dir,
+    "phase2_completion_audit",
+    "phase2_completion_audit_summary.txt",
+)
+phase2_evidence_bundle = os.path.join(phase2_dir, "phase2_evidence_bundle")
+
+readiness = kv_summary(readiness_summary)
+phase2_audit = kv_summary(phase2_audit_summary)
+slo_status = "missing"
+if os.path.exists(debug_slo):
+    with open(debug_slo, "r", encoding="utf-8") as fh:
+        slo_status = json.load(fh).get("slo_status", "missing")
+
+checks = {
+    "phase5_implementation_gate": has_line(
+        implementation_summary, "phase5_implementation_gate_status=pass"
+    ),
+    "phase5_production_readiness": readiness.get(
+        "phase5_production_readiness_status"
+    )
+    == "ready",
+    "phase5_debug_bundle": os.path.exists(
+        os.path.join(debug_bundle_dir, "manifest.sha256")
+    )
+    and os.path.exists(debug_slo),
+    "phase2_production_gate": has_line(phase2_summary, "phase2_production_gate_status=pass"),
+    "phase2_completion_audit": has_line(
+        phase2_audit_summary, "phase2_completion_audit=pass"
+    )
+    and phase2_audit.get("phase2_completion_status") == "complete",
+    "production_soak": has_prefix(phase2_audit_summary, "check=production_soak status=pass "),
+    "real_renderer": has_prefix(phase2_audit_summary, "check=real_renderer status=pass "),
+    "capture_library": has_prefix(
+        phase2_audit_summary, "check=capture_library status=pass "
+    ),
+    "evidence_bundle": has_prefix(
+        phase2_audit_summary, "check=evidence_bundle status=pass "
+    )
+    and os.path.exists(os.path.join(phase2_evidence_bundle, "manifest.sha256")),
+}
+
+evidence = [
+    {
+        "id": name,
+        "status": "pass" if passed else "fail",
+        "artifact": artifact,
+    }
+    for name, passed, artifact in (
+        (
+            "phase5_implementation_gate",
+            checks["phase5_implementation_gate"],
+            rel(implementation_summary),
+        ),
+        (
+            "phase5_production_readiness",
+            checks["phase5_production_readiness"],
+            rel(readiness_summary),
+        ),
+        (
+            "phase5_debug_bundle",
+            checks["phase5_debug_bundle"],
+            rel(os.path.join(debug_bundle_dir, "manifest.sha256")),
+        ),
+        (
+            "phase2_production_gate",
+            checks["phase2_production_gate"],
+            rel(phase2_summary),
+        ),
+        (
+            "phase2_completion_audit",
+            checks["phase2_completion_audit"],
+            rel(phase2_audit_summary),
+        ),
+        (
+            "production_soak",
+            checks["production_soak"],
+            rel(phase2_audit_summary),
+        ),
+        (
+            "real_renderer",
+            checks["real_renderer"],
+            rel(phase2_audit_summary),
+        ),
+        (
+            "capture_library",
+            checks["capture_library"],
+            rel(phase2_audit_summary),
+        ),
+        (
+            "evidence_bundle",
+            checks["evidence_bundle"],
+            rel(os.path.join(phase2_evidence_bundle, "manifest.sha256")),
+        ),
+    )
+]
+release_status = "pass" if all(checks.values()) else "fail"
+doc = {
+    "schema_version": 1,
+    "source": "phase5_production_gate",
+    "scope": "phase5 formal production release evidence",
+    "release_status": release_status,
+    "formal_completion_status": "complete" if release_status == "pass" else "incomplete",
+    "requirements": {
+        "soak_minutes": parse_number(soak_minutes),
+        "min_production_soak_minutes": parse_number(min_soak_minutes),
+        "allow_xvfb_renderer": allow_xvfb_renderer == "1",
+        "real_renderer_use_xvfb": real_renderer_use_xvfb,
+        "capture_library_dir": capture_library_dir,
+        "capture_library_manifest": capture_library_manifest,
+        "multi_receiver_fanout": "deferred_before_p5_completion",
+    },
+    "observability": {
+        "debug_bundle_slo_status": slo_status,
+        "debug_bundle_slo_report": rel(debug_slo),
+    },
+    "evidence": evidence,
+    "artifacts": {
+        "gate_summary": rel(summary_file),
+        "metadata": rel(metadata_file),
+        "phase5_implementation_gate": rel(implementation_dir),
+        "phase5_production_readiness": rel(readiness_dir),
+        "phase5_debug_bundle": rel(debug_bundle_dir),
+        "phase2_production_gate": rel(phase2_dir),
+        "phase2_evidence_bundle": rel(phase2_evidence_bundle),
+        "phase2_completion_audit": rel(phase2_audit_summary),
+    },
+    "fanout": {
+        "status": "deferred",
+        "reason": "P5 baseline excludes multi-receiver fanout",
+    },
+}
+
+with open(release_json, "w", encoding="utf-8") as fh:
+    json.dump(doc, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+
+with open(release_summary, "w", encoding="utf-8") as fh:
+    fh.write(f"release_status={release_status}\n")
+    fh.write(f"formal_completion_status={doc['formal_completion_status']}\n")
+    fh.write("scope=phase5_formal_production_release_evidence\n")
+    fh.write("fanout_status=deferred\n")
+    for item in evidence:
+        fh.write(
+            f"evidence={item['id']} status={item['status']} "
+            f"artifact={item['artifact']}\n"
+        )
+
+if release_status != "pass":
+    failed = ",".join(name for name, passed in checks.items() if not passed)
+    raise SystemExit(f"phase5 release evidence incomplete: {failed}")
+PY
 }
 
 collect_failure_debug_bundle() {
@@ -261,6 +505,10 @@ run_step webrtc_first_production_gate \
     REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
     "${SDK_ROOT}/scripts/run_webrtc_first_phase2_production_gate.sh"
 
+if [[ "${PHASE5_DRY_RUN}" != "1" ]]; then
+  run_step phase5_release_evidence write_release_evidence
+fi
+
 if [[ "${PHASE5_DRY_RUN}" == "1" ]]; then
   write_summary "phase5_production_gate_status=dry_run"
 else
@@ -271,6 +519,10 @@ write_summary "phase5_implementation_gate=${PHASE5_IMPLEMENTATION_GATE_DIR}"
 write_summary "phase5_production_readiness=${PHASE5_READINESS_DIR}"
 write_summary "phase5_debug_bundle=${PHASE5_DEBUG_BUNDLE_DIR}"
 write_summary "webrtc_first_production_gate=${PHASE2_OUTPUT_ROOT}"
+if [[ "${PHASE5_DRY_RUN}" != "1" ]]; then
+  write_summary "phase5_release_evidence=${RELEASE_EVIDENCE_JSON}"
+  write_summary "phase5_release_evidence_summary=${RELEASE_EVIDENCE_SUMMARY}"
+fi
 write_summary "manifest=${MANIFEST_FILE}"
 write_manifest
 

@@ -187,8 +187,13 @@ readiness 和 debug bundle 门禁，然后调用底层
 `run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
 正式 capture library、evidence bundle 和 completion audit。默认输出目录为
 `artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
-`files.txt` 和 `manifest.sha256`；`phase5_implementation_gate/` 固定在 production
-gate 目录内，保证正式证据自包含。非 dry-run 失败时会自动收集并校验
+`phase5_release_evidence.json`、`phase5_release_evidence.txt`、`files.txt` 和
+`manifest.sha256`；`phase5_implementation_gate/` 固定在 production gate 目录内，
+保证正式证据自包含。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
+implementation gate、production readiness、debug bundle SLO、底层 Phase-2
+production gate、production soak、真实 renderer、正式 capture library、evidence
+bundle 和 completion audit 的 pass 状态及相对 artifact 路径，同时记录
+`multi_receiver_fanout=deferred_before_p5_completion`。非 dry-run 失败时会自动收集并校验
 `failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和 runtime
 config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包存在且
 manifest 可离线校验；如果 implementation gate 已经 pass，即使后续 readiness 或 soak
@@ -200,7 +205,8 @@ manifest 可离线校验；如果 implementation gate 已经 pass，即使后续
 alerts、timeline 和 runtime config，离线复验
 `phase5_production_readiness/` 的 ready 状态，并直接复验底层 Phase-2
 evidence bundle manifest、`phase2_completion_audit=pass` 和
-`phase2_completion_status=complete`，避免只相信 summary。
+`phase2_completion_status=complete`，同时强制复验 `phase5_release_evidence.json`，
+避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
@@ -1302,6 +1308,9 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   gate 内闭合。
 - 成功路径必须离线复验 `phase5_debug_bundle/`，确认日志、metrics、alerts、
   timeline 和 runtime config 都可用。
+- 成功路径必须生成并离线复验 `phase5_release_evidence.json`，确认 production soak、
+  真实 renderer、正式 capture library、evidence bundle 和 completion audit 都有 pass
+  证据指针。
 - 成功路径必须离线复验底层 Phase-2 evidence bundle 和 completion audit，确认
   production soak、真实 renderer、正式 capture library 均为 pass。
 - 非 dry-run 失败时自动输出 verified `failure_debug_bundle/`，并由顶层 verifier
