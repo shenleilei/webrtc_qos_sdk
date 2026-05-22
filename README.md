@@ -153,6 +153,8 @@ OUTPUT_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
   scripts/collect_phase5_debug_bundle.sh
 BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
   scripts/verify_phase5_debug_bundle.sh
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_minimal_udp_external_app.sh
 ```
 
 `verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口。`VERIFY_LEVEL=smoke` 会串起 no-selfmade、WebRTC module smoke、外部 CMake package、loopback、pacing probe、role facade 和 synthetic 弱网矩阵；`VERIFY_LEVEL=qoe` 在 smoke 基础上增加低 RPS/低码率真实 H264 QoE 和恢复时间分布；`VERIFY_LEVEL=production` 会继续进入 production soak，并可通过 `REQUIRE_REAL_RENDERER=1 / REQUIRE_CAPTURE_LIBRARY=1` 把真实 renderer 和正式采集素材库变成硬门禁。当前 `SOAK_MINUTES=0` 的默认本地 production smoke 只验证 runner/archive 链路，默认配置为 `FRAMES_PER_CYCLE=12 / CONTENT_MODES=block_motion / SCENARIOS=weak_network_low_rps_low_bitrate`；正式验收仍必须显式跑 `SOAK_MINUTES>=120`。
@@ -192,6 +194,8 @@ BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
 
 `collect_phase5_debug_bundle.sh` / `verify_phase5_debug_bundle.sh` 是 Phase-5 排障包门禁：collector 默认跑一次 UDP selftest，同时开启 `--log-dir / --metrics-dir / --alerts-dir`，把 metadata、build config、git status、session config、push/server/play 日志、metrics、alerts、timeline、first problem 和 sha256 manifest 收集到一个目录；verifier 离线校验必需文件、JSON 字段、弱网告警规则、timeline、manifest，以及 bundle 中不能出现 payload/token/secret/password 类字段。
 
+`verify_phase5_minimal_udp_external_app.sh` 是 Phase-5 外部最小 UDP 业务样板门禁：它先从当前源码安装一个临时 SDK prefix，再从 `examples/minimal_udp_app` 用 `find_package(WebRtcQosSdk)` 构建 sender/server/receiver/selftest，验证样板不 include SDK `src/` 或 WebRTC PeerConnection 内部头，并检查 selftest 生成三角色日志、metrics 和 alerts。
+
 ## WebRTC-first Demo
 
 已新增仓库内 demo：`webrtc_qos_webrtc_first_loopback_demo`。当前默认 source build 就会构建它；如果显式关闭 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE`，该 demo 会随 facade 一起关闭。它直接使用 `VideoPushClient / ServerQosRouter / VideoPlayClient` 三个 role facade，不直接 include WebRTC adapter，也不使用旧自研 RTP/RTCP/pacer/video jitter 入口。当前默认会同时覆盖 `single_track` 和 `dual_track` 两组场景。
@@ -227,6 +231,8 @@ walking_dead_zone_recover_dual_track ... decoded_tracks=2 ... pass=true
 同时新增仓库内 UDP role demo：`webrtc_qos_webrtc_first_udp_demo`。它保留自动化 `selftest`，并提供独立 `sender/server/receiver` 三个进程模式，便于手工验证自定义 UDP transport 下的 WebRTC-first facade bytes 边界。当前默认 `selftest` 会同时覆盖 `single_track` 和 `dual_track` 两组场景，并输出总体 `udp_selftest profiles=single_track,dual_track pass=...` 结果。
 
 业务外围只实现 UDP socket、packet envelope 和编解码/渲染时，推荐按 [最小 UDP 集成最佳实践](docs/minimal_udp_integration_best_practice.md) 接入 `VideoPushClient / ServerQosRouter / VideoPlayClient`，track 通过 `SessionConfig.video_tracks` 声明，不直接依赖 WebRTC `PeerConnection` 或内部 `AddTrack` API。
+
+如果要看安装包外部工程形态，参考 [Minimal UDP App](examples/minimal_udp_app/README.md)。它只通过 `find_package(WebRtcQosSdk)` 链接 `role_*` 或 `role_*_bundle` target，提供 `minimal_udp_sender / minimal_udp_server / minimal_udp_receiver / minimal_udp_selftest` 四个入口，并支持 `--log-dir / --metrics-dir / --alerts-dir`。
 
 ```bash
 cmake --build build-webrtc-first \

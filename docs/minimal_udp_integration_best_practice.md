@@ -131,6 +131,13 @@ struct WirePacket {
 [`demo/webrtc_first_udp/main.cc`](../demo/webrtc_first_udp/main.cc)，它只是
 示例 wire format，不是必须照抄的公共协议。
 
+安装包外部工程参考在
+[`examples/minimal_udp_app`](../examples/minimal_udp_app/README.md)。该样板只用
+`find_package(WebRtcQosSdk)` 和 public headers，代码结构更接近业务仓库：
+`common/wire_packet.h` 放 UDP envelope，`common/udp_socket.h` 放 socket glue，
+`codec/synthetic_h264_source.h` 代表业务 encoder 输出 Annex-B AU，
+`sender/server/receiver` 分别链接 `role_push / role_server / role_play` 或 bundle。
+
 ## 3. Session 和 Track
 
 所有角色必须使用同一份 `SessionConfig` 语义：sender、server、receiver
@@ -623,6 +630,8 @@ OUTPUT_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
   scripts/collect_phase5_debug_bundle.sh
 BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
   scripts/verify_phase5_debug_bundle.sh
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_minimal_udp_external_app.sh
 ```
 
 ## 11. 集成检查清单

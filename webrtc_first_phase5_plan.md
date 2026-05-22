@@ -735,6 +735,48 @@ examples/minimal_udp_app/
 - 默认 dual-track。
 - 可选接入 FFmpeg H264 encoder/decoder，但默认不强依赖 FFmpeg。
 
+当前已落地 `examples/minimal_udp_app`：
+
+```text
+examples/minimal_udp_app/
+  CMakeLists.txt
+  README.md
+  common/options.h
+  common/run_loops.h
+  common/session.h
+  common/udp_socket.h
+  common/wire_packet.h
+  codec/synthetic_h264_source.h
+  sender/main.cc
+  server/main.cc
+  receiver/main.cc
+  selftest/main.cc
+```
+
+该工程只通过 `find_package(WebRtcQosSdk)` 消费安装 prefix，CMake 优先链接
+`WebRtcQosSdk::role_push_bundle / role_server_bundle / role_play_bundle`，缺失时
+fallback 到普通 `role_*` target。四个入口分别是：
+
+- `minimal_udp_sender`
+- `minimal_udp_server`
+- `minimal_udp_receiver`
+- `minimal_udp_selftest`
+
+样板默认 dual-track，支持 `--frames / --tracks / --log-dir / --metrics-dir /
+--alerts-dir`。`minimal_udp_selftest` 用三个 localhost UDP socket 串起
+sender/server/receiver，验证 `transport=udp`、`peer_connection=false`、弱网下探、
+NACK/重传和恢复回升。
+
+当前门禁：
+
+```bash
+scripts/verify_phase5_minimal_udp_external_app.sh
+```
+
+该脚本会临时安装当前 SDK，从 `examples/minimal_udp_app` 构建外部工程，验证样板不
+include SDK `src/` 或 WebRTC PeerConnection 内部头，运行 selftest 并检查
+push/server/play 日志、metrics 和 alerts 文件。
+
 #### 验收标准
 
 - `scripts/verify_phase5_minimal_udp_external_app.sh` 可从 install prefix 构建并运行。
