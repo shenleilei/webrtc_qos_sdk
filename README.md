@@ -214,7 +214,7 @@ REQUIRE_PRODUCTION_EVIDENCE=0 \
 
 `run_phase5_implementation_gate.sh` 是 Phase-5 非生产实现证据 wrapper：它串起 no-selfmade、logging、metrics、alerts、error contract、minimal UDP external app、release contract 和 debug bundle 门禁，并在 `artifacts/phase5_implementation_gate/<utc_build_id>/` 下保留 summary、logs、关键运行产物、`files.txt` 和 `manifest.sha256`。`verify_phase5_implementation_gate.sh` 会离线复验所有子门禁 pass、三角色日志/metrics/alerts 产物、debug bundle manifest 和运行 JSON 统一身份字段，避免 completion audit 只相信脚本存在。
 
-`verify_phase5_completion_audit.sh` 是 Phase-5 完成度审计入口：默认要求传入已通过的 `PHASE5_GATE_DIR` 并验证正式 production evidence；如果该 production gate 内包含 `phase5_implementation_gate/`，audit 会自动复验实现证据，也可以显式传 `PHASE5_IMPLEMENTATION_GATE_DIR`。本地可用 `REQUIRE_PRODUCTION_EVIDENCE=0` 审计“除正式生产证据外的 P5 实现项是否齐全”，但仍需要 implementation gate 证据，且不会把 P5 判定为生产完成。
+`verify_phase5_completion_audit.sh` 是 Phase-5 完成度审计入口：默认要求传入已通过的 `PHASE5_GATE_DIR` 并验证正式 production evidence；如果该 production gate 内包含 `phase5_implementation_gate/`，audit 会自动复验实现证据，也可以显式传 `PHASE5_IMPLEMENTATION_GATE_DIR`。审计会输出 `phase5_completion_audit_summary.txt` 和 `phase5_completion_audit_metrics.prom`，其中 Prometheus/textfile 指标覆盖 completion status、audit status、pass/warn/fail check 数、单项 check 状态、production evidence 状态和 next required action，便于 CI/监控直接区分“正式完成”和“只缺生产证据”。本地可用 `REQUIRE_PRODUCTION_EVIDENCE=0` 审计“除正式生产证据外的 P5 实现项是否齐全”，但仍需要 implementation gate 证据，且不会把 P5 判定为生产完成。
 
 ## WebRTC-first Demo
 

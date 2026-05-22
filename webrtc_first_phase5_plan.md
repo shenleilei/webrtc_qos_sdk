@@ -252,7 +252,11 @@ bundle 导入都会调用该 verifier。
 如果该 gate 内包含 `phase5_implementation_gate/`，audit 会自动复验实现证据，也可以
 显式传 `PHASE5_IMPLEMENTATION_GATE_DIR`。如果设置 `REQUIRE_PRODUCTION_EVIDENCE=0`，
 仍必须提供 implementation gate 证据，但只返回
-`implemented_without_required_production_evidence`，不能用来宣布生产完成。
+`implemented_without_required_production_evidence`，不能用来宣布生产完成。completion
+audit 同时输出 `phase5_completion_audit_metrics.prom`，用 Prometheus/textfile 指标导出
+completion status、audit status、pass/warn/fail check 数、单项 check 状态、production
+evidence 状态和 next required action，供 CI、监控告警和发布系统直接判断“正式完成”与
+“只缺生产证据”的差异。
 
 #### 验收标准
 
@@ -1382,6 +1386,9 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   check status、M1/M6 里程碑、R4/R5 风险和 remediation action。
 - completion audit 对“implementation gate 已通过但正式生产证据缺失”和“正式完成”
   做硬区分。
+- completion audit 必须输出并自校验 `phase5_completion_audit_metrics.prom`，覆盖
+  audit/completion status、check status、production evidence status 和 next required
+  action。
 
 ## 7. 里程碑
 

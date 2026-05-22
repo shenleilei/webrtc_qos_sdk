@@ -4,6 +4,7 @@ set -euo pipefail
 SDK_ROOT="${SDK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SDK_ROOT}/artifacts/phase5_completion_audit}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_DIR}/phase5_completion_audit_summary.txt}"
+PHASE5_COMPLETION_AUDIT_METRICS_PROM="${PHASE5_COMPLETION_AUDIT_METRICS_PROM:-${OUTPUT_DIR}/phase5_completion_audit_metrics.prom}"
 PHASE5_GATE_DIR="${PHASE5_GATE_DIR:-}"
 PHASE5_DEBUG_BUNDLE_DIR="${PHASE5_DEBUG_BUNDLE_DIR:-${SDK_ROOT}/artifacts/phase5_debug_bundle}"
 if [[ -z "${PHASE5_IMPLEMENTATION_GATE_DIR:-}" && -n "${PHASE5_GATE_DIR}" &&
@@ -16,10 +17,174 @@ REQUIRE_PRODUCTION_EVIDENCE="${REQUIRE_PRODUCTION_EVIDENCE:-1}"
 ALLOW_DRY_RUN_GATE="${ALLOW_DRY_RUN_GATE:-0}"
 
 mkdir -p "${OUTPUT_DIR}"
-rm -f "${SUMMARY_FILE}"
+rm -f "${SUMMARY_FILE}" "${PHASE5_COMPLETION_AUDIT_METRICS_PROM}"
 
 write_summary() {
   printf '%s\n' "$*" | tee -a "${SUMMARY_FILE}"
+}
+
+write_audit_metrics() {
+  python3 - \
+    "${SUMMARY_FILE}" \
+    "${PHASE5_COMPLETION_AUDIT_METRICS_PROM}" \
+    "${REQUIRE_PRODUCTION_EVIDENCE}" <<'PY'
+import collections
+import re
+import sys
+
+summary_path, metrics_path, require_production_evidence = sys.argv[1:4]
+audit_status = "unknown"
+completion_status = "unknown"
+next_required_action = "none"
+checks = []
+check_re = re.compile(r"^check=([^ ]+) status=([^ ]+)(?: |$)")
+with open(summary_path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        line = line.strip()
+        match = check_re.match(line)
+        if match:
+            checks.append(match.groups())
+            continue
+        if line.startswith("phase5_completion_audit="):
+            audit_status = line.split("=", 1)[1]
+        elif line.startswith("phase5_completion_status="):
+            completion_status = line.split("=", 1)[1]
+        elif line.startswith("next_required_actions="):
+            next_required_action = line.split("=", 1)[1]
+
+
+def prom_escape(value):
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def prom_labels(**labels):
+    items = [
+        f'{key}="{prom_escape(value)}"'
+        for key, value in sorted(labels.items())
+        if value is not None and value != ""
+    ]
+    return "{" + ",".join(items) + "}" if items else ""
+
+
+status_counts = collections.Counter(status for _, status in checks)
+production_evidence_status = "missing"
+for check, status in checks:
+    if check == "production_evidence":
+        production_evidence_status = status
+
+with open(metrics_path, "w", encoding="utf-8") as fh:
+    fh.write("# HELP webrtc_qos_phase5_completion_audit_info Phase-5 completion audit status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_completion_audit_info gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_completion_audit_info"
+        f"{prom_labels(audit_status=audit_status, completion_status=completion_status, require_production_evidence=require_production_evidence, source='phase5_completion_audit')} 1\n"
+    )
+    fh.write("# HELP webrtc_qos_phase5_completion_audit_checks_total Phase-5 completion audit check count by status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_completion_audit_checks_total gauge\n")
+    for status in ("pass", "warn", "fail"):
+        fh.write(
+            "webrtc_qos_phase5_completion_audit_checks_total"
+            f"{prom_labels(status=status)} {status_counts.get(status, 0)}\n"
+        )
+    fh.write("# HELP webrtc_qos_phase5_completion_audit_check_status Phase-5 completion audit observed check status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_completion_audit_check_status gauge\n")
+    for check, status in checks:
+        fh.write(
+            "webrtc_qos_phase5_completion_audit_check_status"
+            f"{prom_labels(check=check, status=status)} 1\n"
+        )
+    fh.write("# HELP webrtc_qos_phase5_completion_audit_production_evidence_status Phase-5 completion audit production evidence status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_completion_audit_production_evidence_status gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_completion_audit_production_evidence_status"
+        f"{prom_labels(status=production_evidence_status)} 1\n"
+    )
+    fh.write("# HELP webrtc_qos_phase5_completion_audit_next_required_action_info Phase-5 completion audit next required action marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_completion_audit_next_required_action_info gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_completion_audit_next_required_action_info"
+        f"{prom_labels(action=next_required_action)} 1\n"
+    )
+
+text = open(metrics_path, "r", encoding="utf-8").read()
+for required_text in (
+    "# TYPE webrtc_qos_phase5_completion_audit_info gauge",
+    "webrtc_qos_phase5_completion_audit_info",
+    "webrtc_qos_phase5_completion_audit_checks_total",
+    "webrtc_qos_phase5_completion_audit_check_status",
+    "webrtc_qos_phase5_completion_audit_production_evidence_status",
+    "webrtc_qos_phase5_completion_audit_next_required_action_info",
+):
+    if required_text not in text:
+        raise SystemExit(f"completion audit metrics missing {required_text}")
+
+line_re = re.compile(
+    r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{([^{}]*)\})?\s+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[+-]?Inf|NaN)$"
+)
+label_re = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"')
+records = []
+for line_no, line in enumerate(text.splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    match = line_re.match(line)
+    if not match:
+        raise SystemExit(
+            f"completion audit metrics line {line_no} is invalid: {line}"
+        )
+    labels = {}
+    raw_labels = match.group(3) or ""
+    position = 0
+    while position < len(raw_labels):
+        label_match = label_re.match(raw_labels, position)
+        if not label_match:
+            raise SystemExit(
+                f"completion audit metrics line {line_no} has invalid labels"
+            )
+        labels[label_match.group(1)] = label_match.group(2)
+        position = label_match.end()
+        if position < len(raw_labels):
+            if raw_labels[position] != ",":
+                raise SystemExit(
+                    f"completion audit metrics line {line_no} has malformed labels"
+                )
+            position += 1
+    records.append({
+        "name": match.group(1),
+        "labels": labels,
+        "value": float(match.group(4)),
+    })
+if not records:
+    raise SystemExit("completion audit metrics file has no samples")
+
+
+def has(name, value=None, **labels):
+    for record in records:
+        if record["name"] != name:
+            continue
+        if not all(record["labels"].get(key) == label for key, label in labels.items()):
+            continue
+        if value is not None and record["value"] != value:
+            continue
+        return True
+    return False
+
+
+if not has(
+    "webrtc_qos_phase5_completion_audit_info",
+    value=1,
+    audit_status=audit_status,
+    completion_status=completion_status,
+    require_production_evidence=require_production_evidence,
+):
+    raise SystemExit("completion audit metrics missing matching audit info sample")
+if not has(
+    "webrtc_qos_phase5_completion_audit_production_evidence_status",
+    value=1,
+    status=production_evidence_status,
+):
+    raise SystemExit("completion audit metrics missing production evidence sample")
+PY
 }
 
 has_file() {
@@ -301,6 +466,12 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'webrtc_qos_phase5_production_gate_step_status' production_gate_metrics_step_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'webrtc_qos_phase5_production_gate_failure_debug_bundle_status' production_gate_metrics_failure_bundle_gate
+require_doc_pattern scripts/verify_phase5_completion_audit.sh \
+  'phase5_completion_audit_metrics.prom' completion_audit_metrics_collector
+require_doc_pattern scripts/verify_phase5_completion_audit.sh \
+  'webrtc_qos_phase5_completion_audit_info' completion_audit_metrics_info_gate
+require_doc_pattern scripts/verify_phase5_completion_audit.sh \
+  'webrtc_qos_phase5_completion_audit_production_evidence_status' completion_audit_metrics_production_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'phase5_production_readiness_status=' production_readiness_status_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
@@ -404,6 +575,8 @@ if [[ "${failures}" -eq 0 && "${REQUIRE_PRODUCTION_EVIDENCE}" == "1" ]]; then
   write_summary "phase5_completion_audit=pass"
   write_summary "pass_count=${pass_count}"
   write_summary "warning_count=${warnings}"
+  write_summary "phase5_completion_audit_metrics=${PHASE5_COMPLETION_AUDIT_METRICS_PROM}"
+  write_audit_metrics
   exit 0
 fi
 
@@ -412,6 +585,9 @@ if [[ "${failures}" -eq 0 ]]; then
   write_summary "phase5_completion_audit=pass_non_production"
   write_summary "pass_count=${pass_count}"
   write_summary "warning_count=${warnings}"
+  write_summary "next_required_actions=rerun_phase5_completion_audit_with_REQUIRE_PRODUCTION_EVIDENCE_1_after_passed_phase5_production_gate"
+  write_summary "phase5_completion_audit_metrics=${PHASE5_COMPLETION_AUDIT_METRICS_PROM}"
+  write_audit_metrics
   exit 0
 fi
 
@@ -421,4 +597,6 @@ write_summary "pass_count=${pass_count}"
 write_summary "warning_count=${warnings}"
 write_summary "failure_count=${failures}"
 write_summary "next_required_actions=run_phase5_implementation_gate_then_run_phase5_production_gate_with_SOAK_MINUTES_ge_120_real_renderer_pass_formal_capture_library"
+write_summary "phase5_completion_audit_metrics=${PHASE5_COMPLETION_AUDIT_METRICS_PROM}"
+write_audit_metrics
 exit 1
