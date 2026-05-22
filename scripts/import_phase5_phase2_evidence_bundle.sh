@@ -45,6 +45,19 @@ write_manifest() {
 
 [[ -n "${SOURCE_EVIDENCE_BUNDLE_DIR}" ]] ||
   fail "set PHASE2_EVIDENCE_BUNDLE_DIR or SOURCE_EVIDENCE_BUNDLE_DIR"
+
+python3 - "${MIN_PRODUCTION_SOAK_MINUTES}" <<'PY'
+import sys
+
+min_soak_minutes = float(sys.argv[1])
+phase5_minimum = 120.0
+if min_soak_minutes < phase5_minimum:
+    raise SystemExit(
+        "MIN_PRODUCTION_SOAK_MINUTES=%g<%g"
+        % (min_soak_minutes, phase5_minimum)
+    )
+PY
+
 [[ -d "${SOURCE_EVIDENCE_BUNDLE_DIR}" ]] ||
   fail "missing source evidence bundle dir: ${SOURCE_EVIDENCE_BUNDLE_DIR}"
 [[ -s "${SOURCE_EVIDENCE_BUNDLE_DIR}/manifest.sha256" ]] ||
@@ -193,6 +206,14 @@ def valid_sha256(value):
     )
 
 
+phase5_min_soak_minutes = 120.0
+configured_min_soak_minutes = float(min_soak_minutes)
+if configured_min_soak_minutes < phase5_min_soak_minutes:
+    raise SystemExit(
+        "external phase2 evidence import minimum soak below phase5 minimum"
+    )
+
+
 metadata = read_kv(os.path.join(bundle_dir, "metadata.env"))
 audit_metrics = os.path.join(
     os.path.dirname(audit_summary), "phase2_completion_audit_metrics.prom"
@@ -224,6 +245,9 @@ capture_qoe_csv = os.path.join(
 capture_qoe_summary = os.path.join(bundle_dir, "capture_library", "capture_qoe_summary.txt")
 production_soak = read_kv(production_soak_summary)
 production_soak_runtime = read_kv(production_soak_config)
+production_soak_minutes = parse_number(
+    production_soak_runtime.get("SOAK_MINUTES", "0")
+)
 real_renderer = read_kv(real_renderer_summary)
 capture_manifest = read_kv(capture_manifest_summary)
 capture_qoe = read_kv(capture_qoe_summary)
@@ -250,7 +274,10 @@ checks = {
     "production_soak_raw_evidence": has_file(production_soak_summary)
     and has_file(production_soak_csv)
     and has_file(production_soak_config)
-    and has_file(production_soak_archive),
+    and has_file(production_soak_archive)
+    and isinstance(production_soak_minutes, (int, float))
+    and production_soak_minutes >= configured_min_soak_minutes
+    and production_soak_minutes >= phase5_min_soak_minutes,
     "real_renderer_raw_evidence": has_file(real_renderer_summary)
     and has_file(real_renderer_metrics)
     and real_renderer.get("real_renderer_status") == "pass",
@@ -290,7 +317,7 @@ report = {
         "csv": rel(production_soak_csv),
         "config": rel(production_soak_config),
         "archive": rel(production_soak_archive),
-        "soak_minutes": parse_number(production_soak_runtime.get("SOAK_MINUTES", "0")),
+        "soak_minutes": production_soak_minutes,
         "rows": parse_number(production_soak.get("rows", "0")),
         "pass_rows": parse_number(production_soak.get("pass_rows", "0")),
         "decode_errors": parse_number(production_soak.get("decode_errors", "0")),

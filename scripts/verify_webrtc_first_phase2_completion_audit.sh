@@ -215,6 +215,28 @@ write_summary "output_dir=${OUTPUT_DIR}"
 write_summary "evidence_bundle_dir=${EVIDENCE_BUNDLE_DIR}"
 write_summary "min_production_soak_minutes=${MIN_PRODUCTION_SOAK_MINUTES}"
 
+min_soak_config_output=""
+min_soak_config_status=0
+if ! min_soak_config_output="$(python3 - "${MIN_PRODUCTION_SOAK_MINUTES}" <<'PY'
+import sys
+
+min_soak_minutes = float(sys.argv[1])
+phase5_minimum = 120.0
+if min_soak_minutes < phase5_minimum:
+    print("MIN_PRODUCTION_SOAK_MINUTES=%g<%g" % (min_soak_minutes, phase5_minimum))
+    raise SystemExit(1)
+print("ok")
+PY
+)"
+then
+  min_soak_config_status=1
+fi
+if [[ "${min_soak_config_status}" -eq 0 && "${min_soak_config_output}" == "ok" ]]; then
+  audit_pass production_soak_minimum_config "MIN_PRODUCTION_SOAK_MINUTES=${MIN_PRODUCTION_SOAK_MINUTES}"
+else
+  audit_fail production_soak_minimum_config "${min_soak_config_output}"
+fi
+
 if [[ -n "${EVIDENCE_BUNDLE_DIR}" ]]; then
   if [[ ! -f "${EVIDENCE_BUNDLE_DIR}/manifest.sha256" || ! -f "${EVIDENCE_BUNDLE_DIR}/files.txt" ]]; then
     audit_fail evidence_bundle "missing_manifest bundle=${EVIDENCE_BUNDLE_DIR}"
@@ -422,7 +444,7 @@ if [[ "${failures}" -eq 0 ]]; then
   exit 0
 fi
 
-audit_warn next_required_actions "run_VERIFY_LEVEL_production_with_SOAK_MINUTES_ge_${MIN_PRODUCTION_SOAK_MINUTES}_REQUIRE_REAL_RENDERER_1_REQUIRE_CAPTURE_LIBRARY_1"
+audit_warn next_required_actions "run_VERIFY_LEVEL_production_with_SOAK_MINUTES_ge_120_REQUIRE_REAL_RENDERER_1_REQUIRE_CAPTURE_LIBRARY_1"
 write_summary "phase2_completion_audit=fail"
 write_summary "phase2_completion_status=incomplete"
 write_summary "failure_count=${failures}"

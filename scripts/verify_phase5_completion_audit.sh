@@ -553,6 +553,22 @@ require_doc_pattern scripts/verify_phase5_completion_audit.sh \
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'phase5_production_readiness_status=' production_readiness_status_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'invalid_production_soak_config' production_readiness_min_soak_config_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'MIN_PRODUCTION_SOAK_MINUTES=%g<%g' production_readiness_min_soak_floor_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'SOAK_MINUTES_ge_120' production_readiness_min_soak_action_floor
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'MIN_PRODUCTION_SOAK_MINUTES=%g<%g' production_import_min_soak_floor_gate
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'production_soak_minutes >= phase5_min_soak_minutes' production_import_soak_minutes_floor_gate
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'production_soak_minimum_config' phase2_completion_audit_min_soak_config_gate
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'MIN_PRODUCTION_SOAK_MINUTES=%g<%g' phase2_completion_audit_min_soak_floor_gate
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'SOAK_MINUTES_ge_120' phase2_completion_audit_min_soak_action_floor
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'readiness_status="ready"' production_readiness_ready_branch
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'next_required_actions_file' production_readiness_actions_file
