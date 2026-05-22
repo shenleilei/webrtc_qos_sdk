@@ -410,6 +410,12 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence missing implementation gate metrics' production_gate_release_implementation_metrics_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase5_implementation_gate_metrics.prom' production_gate_verifies_implementation_metrics
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'git_worktree_clean' production_readiness_git_worktree_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'GIT_TRACKED_WORKTREE_CLEAN' production_gate_git_worktree_metadata
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'evidence=git_worktree_clean status=pass' production_gate_release_git_worktree_gate
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
   'phase2_completion_audit_metrics.prom' production_gate_phase2_completion_metrics_collector
 require_doc_pattern scripts/run_phase5_production_gate.sh \

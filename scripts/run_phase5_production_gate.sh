@@ -15,6 +15,7 @@ PHASE5_READINESS_DIR="${PHASE5_READINESS_DIR:-${OUTPUT_ROOT}/phase5_production_r
 LOG_DIR="${LOG_DIR:-${OUTPUT_ROOT}/logs}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_ROOT}/phase5_production_gate_summary.txt}"
 METADATA_FILE="${METADATA_FILE:-${OUTPUT_ROOT}/metadata.txt}"
+GIT_TRACKED_STATUS_FILE="${GIT_TRACKED_STATUS_FILE:-${OUTPUT_ROOT}/git_tracked_status.txt}"
 FILES_FILE="${FILES_FILE:-${OUTPUT_ROOT}/files.txt}"
 MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_ROOT}/manifest.sha256}"
 RELEASE_EVIDENCE_JSON="${RELEASE_EVIDENCE_JSON:-${OUTPUT_ROOT}/phase5_release_evidence.json}"
@@ -55,7 +56,8 @@ if [[ "${PHASE5_IMPLEMENTATION_GATE_DIR}" != "${DEFAULT_PHASE5_IMPLEMENTATION_GA
 fi
 
 mkdir -p "${OUTPUT_ROOT}" "${LOG_DIR}"
-rm -f "${SUMMARY_FILE}" "${METADATA_FILE}" "${FILES_FILE}" "${MANIFEST_FILE}"
+rm -f "${SUMMARY_FILE}" "${METADATA_FILE}" "${GIT_TRACKED_STATUS_FILE}" \
+  "${FILES_FILE}" "${MANIFEST_FILE}"
 
 write_summary() {
   printf '%s\n' "$*" | tee -a "${SUMMARY_FILE}"
@@ -221,6 +223,11 @@ def kv_summary(path):
     return values
 
 
+def metadata_value(path, key, default=""):
+    values = kv_summary(path)
+    return values.get(key, default)
+
+
 def has_line(path, expected):
     if not os.path.exists(path):
         return False
@@ -295,6 +302,7 @@ capture_qoe_csv = os.path.join(
 capture_qoe_summary = os.path.join(capture_evidence_dir, "capture_qoe_summary.txt")
 
 readiness = kv_summary(readiness_summary)
+metadata = kv_summary(metadata_file)
 phase2_audit = kv_summary(phase2_audit_summary)
 production_soak = kv_summary(production_soak_summary)
 production_soak_runtime = kv_summary(production_soak_config)
@@ -315,6 +323,8 @@ checks = {
         "phase5_production_readiness_status"
     )
     == "ready",
+    "git_worktree_clean": metadata.get("GIT_TRACKED_WORKTREE_CLEAN") == "1"
+    and has_prefix(readiness_summary, "check=git_worktree_clean status=pass "),
     "phase5_debug_bundle": has_file(
         os.path.join(debug_bundle_dir, "manifest.sha256")
     )
@@ -372,6 +382,11 @@ evidence = [
             "phase5_production_readiness",
             checks["phase5_production_readiness"],
             rel(readiness_summary),
+        ),
+        (
+            "git_worktree_clean",
+            checks["git_worktree_clean"],
+            rel(os.path.join(output_root, "git_tracked_status.txt")),
         ),
         (
             "phase5_debug_bundle",
@@ -472,6 +487,13 @@ doc = {
         "min_production_soak_minutes": parse_number(min_soak_minutes),
         "allow_xvfb_renderer": allow_xvfb_renderer == "1",
         "real_renderer_use_xvfb": real_renderer_use_xvfb,
+        "git_head": metadata_value(metadata_file, "GIT_HEAD", ""),
+        "git_branch": metadata_value(metadata_file, "GIT_BRANCH", ""),
+        "git_tracked_worktree_clean": metadata.get("GIT_TRACKED_WORKTREE_CLEAN")
+        == "1",
+        "git_tracked_status": rel(
+            os.path.join(output_root, "git_tracked_status.txt")
+        ),
         "capture_library_dir": capture_library_dir,
         "capture_library_manifest": capture_library_manifest,
         "phase2_evidence_source": "external_bundle"
@@ -545,6 +567,9 @@ doc = {
     "artifacts": {
         "gate_summary": rel(summary_file),
         "metadata": rel(metadata_file),
+        "git_tracked_status": rel(
+            os.path.join(output_root, "git_tracked_status.txt")
+        ),
         "phase5_implementation_gate": rel(implementation_dir),
         "phase5_implementation_gate_metrics": rel(implementation_metrics),
         "phase5_production_readiness": rel(readiness_dir),
@@ -703,6 +728,16 @@ require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.
   if git -C "${SDK_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
     printf 'GIT_HEAD=%s\n' "$(git -C "${SDK_ROOT}" rev-parse HEAD)"
     printf 'GIT_BRANCH=%s\n' "$(git -C "${SDK_ROOT}" rev-parse --abbrev-ref HEAD)"
+    git -C "${SDK_ROOT}" status --short --untracked-files=no >"${GIT_TRACKED_STATUS_FILE}"
+    if [[ -s "${GIT_TRACKED_STATUS_FILE}" ]]; then
+      printf 'GIT_TRACKED_WORKTREE_CLEAN=0\n'
+    else
+      printf 'GIT_TRACKED_WORKTREE_CLEAN=1\n'
+      printf 'tracked_changes=0\n' >"${GIT_TRACKED_STATUS_FILE}"
+    fi
+  else
+    printf 'GIT_TRACKED_WORKTREE_CLEAN=0\n'
+    printf 'git_status=not_a_git_checkout\n' >"${GIT_TRACKED_STATUS_FILE}"
   fi
 } >"${METADATA_FILE}"
 

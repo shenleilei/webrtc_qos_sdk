@@ -19,6 +19,7 @@ require_file() {
 [[ -d "${GATE_DIR}" ]] || fail "missing gate directory: ${GATE_DIR}"
 
 require_file "${GATE_DIR}/metadata.txt"
+require_file "${GATE_DIR}/git_tracked_status.txt"
 require_file "${SUMMARY_FILE}"
 require_file "${GATE_DIR}/files.txt"
 require_file "${GATE_DIR}/manifest.sha256"
@@ -732,6 +733,8 @@ PY
   )
   rg -q '^phase5_production_readiness_status=ready$' "${readiness_summary}" ||
     fail "phase5 production readiness was not ready"
+  rg -q '^check=git_worktree_clean status=pass ' "${readiness_summary}" ||
+    fail "phase5 production readiness missing clean git worktree pass"
   rg -q '^failure_count=0$' "${readiness_summary}" ||
     fail "phase5 production readiness recorded failures"
   rg -q '^skipped_count=0$' "${readiness_summary}" ||
@@ -879,6 +882,13 @@ with open(json_path, "r", encoding="utf-8") as fh:
     doc = json.load(fh)
 with open(summary_path, "r", encoding="utf-8") as fh:
     summary = fh.read()
+metadata = {}
+with open(os.path.join(gate_dir, "metadata.txt"), "r", encoding="utf-8") as fh:
+    for line in fh:
+        line = line.strip()
+        if line and "=" in line:
+            key, value = line.split("=", 1)
+            metadata[key] = value
 
 if doc.get("schema_version") != 1:
     raise SystemExit("release evidence schema_version must be 1")
@@ -898,6 +908,18 @@ if float(requirements.get("soak_minutes", 0)) < float(
     raise SystemExit("release evidence soak minutes below minimum")
 if requirements.get("multi_receiver_fanout") != "deferred_before_p5_completion":
     raise SystemExit("release evidence fanout requirement mismatch")
+if metadata.get("GIT_TRACKED_WORKTREE_CLEAN") != "1":
+    raise SystemExit("production gate metadata was not generated from a clean tracked worktree")
+if requirements.get("git_head") and requirements.get("git_head") != metadata.get("GIT_HEAD"):
+    raise SystemExit("release evidence git head does not match metadata")
+if requirements.get("git_tracked_worktree_clean") is not True:
+    raise SystemExit("release evidence was not generated from a clean tracked worktree")
+git_status = requirements.get("git_tracked_status")
+if not git_status or not os.path.exists(os.path.join(gate_dir, git_status)):
+    raise SystemExit("release evidence missing tracked git status artifact")
+with open(os.path.join(gate_dir, git_status), "r", encoding="utf-8") as fh:
+    if fh.read().strip() != "tracked_changes=0":
+        raise SystemExit("release evidence tracked git status is not clean")
 
 observability = doc.get("observability", {})
 implementation_metrics = observability.get("implementation_gate_metrics")
@@ -920,6 +942,7 @@ required_evidence = {
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
     "phase5_production_readiness",
+    "git_worktree_clean",
     "phase5_debug_bundle",
     "phase2_production_gate",
     "phase2_completion_audit",
@@ -956,6 +979,7 @@ artifacts = doc.get("artifacts", {})
 for key in (
     "gate_summary",
     "metadata",
+    "git_tracked_status",
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
     "phase5_production_readiness",
@@ -1144,6 +1168,7 @@ for expected in (
     "scope=phase5_formal_production_release_evidence",
     "fanout_status=deferred",
     "evidence=phase5_implementation_gate_metrics status=pass",
+    "evidence=git_worktree_clean status=pass",
     "evidence=phase2_completion_audit_metrics status=pass",
     "evidence=production_soak status=pass",
     "evidence=production_soak_csv status=pass",
@@ -1272,7 +1297,11 @@ else
   fi
 fi
 
-scan_files=("${GATE_DIR}/metadata.txt" "${SUMMARY_FILE}")
+scan_files=(
+  "${GATE_DIR}/metadata.txt"
+  "${GATE_DIR}/git_tracked_status.txt"
+  "${SUMMARY_FILE}"
+)
 for optional_scan_file in \
     "${GATE_DIR}/phase5_release_evidence.json" \
     "${GATE_DIR}/phase5_release_evidence.txt"; do

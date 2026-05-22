@@ -71,6 +71,9 @@ action_for_check() {
     external_phase2_evidence_bundle)
       printf 'provide a Phase-2 evidence bundle from the formal renderer/capture/soak host and set PHASE2_EVIDENCE_BUNDLE_DIR'
       ;;
+    git_worktree_clean)
+      printf 'commit_or_stash tracked source changes before generating formal Phase-5 production evidence'
+      ;;
     *)
       printf 'fix check=%s and rerun scripts/verify_phase5_production_readiness.sh' "${name}"
       ;;
@@ -291,12 +294,14 @@ def gate_backed_blockers(names):
 
 if phase2_evidence_bundle_dir:
     production_checks = [
+        "git_worktree_clean",
         "soak_config",
         "webrtc_modules",
         "external_phase2_evidence_bundle",
     ]
 else:
     production_checks = [
+        "git_worktree_clean",
         "soak_config",
         "webrtc_modules",
         "capture_manifest",
@@ -655,6 +660,18 @@ write_summary "require_ready=${REQUIRE_READY}"
 if git -C "${SDK_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
   write_summary "git_head=$(git -C "${SDK_ROOT}" rev-parse HEAD)"
   write_summary "git_branch=$(git -C "${SDK_ROOT}" rev-parse --abbrev-ref HEAD)"
+  git_status_log="${LOG_DIR}/git_tracked_status.log"
+  git -C "${SDK_ROOT}" status --short --untracked-files=no >"${git_status_log}"
+  if [[ -s "${git_status_log}" ]]; then
+    write_summary "git_tracked_worktree_clean=0"
+    record_fail "git_worktree_clean" "tracked_changes_present log=${git_status_log}"
+  else
+    write_summary "git_tracked_worktree_clean=1"
+    record_pass "git_worktree_clean" "tracked_changes=0 log=${git_status_log}"
+  fi
+else
+  write_summary "git_tracked_worktree_clean=0"
+  record_fail "git_worktree_clean" "not_a_git_checkout"
 fi
 
 for script in \

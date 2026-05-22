@@ -139,6 +139,7 @@ Phase-5 第一阶段先把生产证据链跑实并制度化：
   `artifacts/phase5_production_gate/<date_or_build_id>/`
 - 每次正式验收必须包含：
   - git commit
+  - tracked worktree clean 状态
   - SDK build config
   - WebRTC module prefix
   - capture manifest sha256
@@ -177,7 +178,7 @@ completion audit 只靠脚本存在和文档 pattern。
 
 `verify_phase5_production_readiness.sh` 是正式验收前的轻量 preflight。它不跑长时
 soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture manifest、
-真实 renderer 可用性和 Phase-5 gate/audit 脚本是否齐全，并输出带 manifest 的
+tracked worktree 是否干净、真实 renderer 可用性和 Phase-5 gate/audit 脚本是否齐全，并输出带 manifest 的
 readiness 报告、`readiness_report.json`、`next_required_actions.json` 和
 `risk_milestone_report.json`、`risk_milestone_summary.txt`、
 `phase5_production_readiness_metrics.prom`、`next_required_actions.txt`。
@@ -195,13 +196,13 @@ readiness 和 debug bundle 门禁，然后调用底层
 `run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
 正式 capture library、evidence bundle 和 completion audit。默认输出目录为
 `artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
-`phase5_release_evidence.json`、`phase5_release_evidence.txt`、
+`git_tracked_status.txt`、`phase5_release_evidence.json`、`phase5_release_evidence.txt`、
 `phase5_production_gate_metrics.prom`、`files.txt` 和 `manifest.sha256`；
 `phase5_implementation_gate/` 固定在 production gate 目录内，保证正式证据自包含。
 `phase5_production_gate_metrics.prom` 是顶层 gate 的 Prometheus/textfile 指标出口：
 导出 pass/fail/dry_run、各 step 状态、failure debug bundle 状态和 release evidence
 状态，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
-implementation gate、implementation gate `.prom` 指标、production readiness、debug bundle SLO、底层 Phase-2
+implementation gate、implementation gate `.prom` 指标、clean tracked worktree、production readiness、debug bundle SLO、底层 Phase-2
 production gate、底层 Phase-2 completion audit `.prom` 指标、production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、
 正式 capture library、capture manifest summary、capture QoE CSV、capture QoE summary、
 evidence bundle 和 completion audit 的 pass 状态及相对 artifact 路径，同时记录
@@ -218,7 +219,7 @@ manifest 可离线校验；如果 implementation gate 已经 pass，即使后续
 `phase5_implementation_gate/` 的实现证据和 `.prom` 指标、`phase5_debug_bundle/` 的日志、
 metrics、alerts、timeline 和 runtime config，离线复验
 `phase5_production_readiness/` 的 ready 状态、production gate `.prom` 指标和
-readiness `.prom` 指标，并直接复验底层 Phase-2 evidence bundle manifest、
+readiness `.prom` 指标、clean tracked worktree 证据，并直接复验底层 Phase-2 evidence bundle manifest、
 `phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`、`phase2_completion_audit_metrics.prom`，同时强制复验 `phase5_release_evidence.json` 和
 release evidence 里索引的 production soak archive、真实 renderer metrics 和 capture QoE
@@ -1367,6 +1368,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
   capture QoE CSV。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
+- 正式 production gate metadata 和 release evidence 必须证明 tracked worktree clean；
+  未跟踪 artifacts/build 目录不阻塞，但未提交的 tracked 源码修改不能生成 pass 证据。
 - 顶层 `phase5_implementation_gate_metrics.prom` 必须覆盖 implementation gate
   status、step status 和 debug bundle status。
 - 顶层 `phase5_production_gate_metrics.prom` 必须覆盖 gate status、step status、
@@ -1377,6 +1380,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   运行不校验。
 - 成功路径必须离线复验 `phase5_implementation_gate/`，确认实现证据在 production
   gate 内闭合。
+- 成功路径必须离线复验 `git_tracked_status.txt` 和
+  `GIT_TRACKED_WORKTREE_CLEAN=1`，确认正式证据对应已提交源码。
 - 成功路径 release evidence 必须索引并离线复验
   `phase5_implementation_gate/phase5_implementation_gate_metrics.prom`。
 - 成功路径 release evidence 必须索引并离线复验底层
