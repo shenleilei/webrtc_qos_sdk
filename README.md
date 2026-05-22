@@ -2,7 +2,13 @@
 
 这是一个 Linux native C/S 架构下的 WebRTC-first QoS SDK 原型。目标不是做完整 WebRTC Client、PeerConnection 或 SFU，而是在业务自定义传输上复用 WebRTC 的 QoS、RTP/RTCP、NACK、pacing 和视频 jitter 能力。
 
-`webrtc_first_phase2_master_plan.md` 是当前 Phase-2 实施规划；[WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md) 记录如何从 WebRTC 源码树拆出当前 SDK 使用的 GoogCC、pacing、RTP/RTCP、video jitter 和 NACKRequester 静态库，并记录拆分过程中遇到的 protobuf/perfetto 闭包、pacing padding、CMake role target 顺序、archive 聚合和 ABI 问题及解决方式；[推拉客户端 SDK 集成说明](docs/sdk_push_play_integration.md) 说明业务侧如何集成 `VideoPushClient`、`VideoPlayClient` 和 `ServerQosRouter`。
+## 文档导航
+
+- [WebRTC QoS 总览与 SDK 设计说明](docs/webrtc_qos_overview.md)
+- [QoS 测试与验证方法](docs/qos_test_validation_methodology.md)
+- [推拉客户端 SDK 集成说明](docs/sdk_push_play_integration.md)
+- [WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md)
+- [Phase-2 主实施文档](webrtc_first_phase2_master_plan.md)
 
 ## 当前状态
 

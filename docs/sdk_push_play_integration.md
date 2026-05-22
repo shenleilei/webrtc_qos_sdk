@@ -302,3 +302,9 @@ const auto cap = server->CurrentSenderRateCap(now_us);
   [demo/webrtc_first_udp/main.cc](../demo/webrtc_first_udp/main.cc)
 - 外部工程集成验证：
   [scripts/verify_cmake_package.sh](../scripts/verify_cmake_package.sh)
+
+## 11. 延伸阅读
+
+- [WebRTC QoS 总览与 SDK 设计说明](webrtc_qos_overview.md)
+- [QoS 测试与验证方法](qos_test_validation_methodology.md)
+- [WebRTC 子模块拆分编译说明](webrtc_module_split_build.md)
