@@ -437,6 +437,8 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'production_soak_archive' production_gate_release_soak_archive_index
 require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'min_production_soak_minutes=' production_gate_release_min_soak_summary
+require_doc_pattern scripts/run_phase5_production_gate.sh \
   'MIN_PRODUCTION_SOAK_MINUTES="\$\{MIN_PRODUCTION_SOAK_MINUTES:-120\}"' production_gate_min_soak_default
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'SOAK_MINUTES=%g<%g' production_gate_soak_minutes_preflight
@@ -452,6 +454,12 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
   'real_renderer_metrics' production_gate_release_renderer_metrics_index
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_webrtc_first_qoe_production_soak_archive.sh' production_gate_release_soak_reverify
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence minimum soak minutes below phase5 floor' production_gate_release_min_soak_floor_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'production soak minutes below declared minimum' production_gate_release_declared_min_soak_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'min_production_soak_minutes=' production_gate_release_min_soak_summary_verifier
 require_doc_pattern scripts/run_webrtc_first_qoe_production_soak.sh \
   'sdk_git_tracked_worktree_clean' production_soak_archive_git_clean_metadata
 require_doc_pattern scripts/run_webrtc_first_qoe_production_soak.sh \

@@ -641,6 +641,10 @@ with open(release_summary, "w", encoding="utf-8") as fh:
     fh.write("scope=phase5_formal_production_release_evidence\n")
     fh.write(f"phase2_evidence_source={doc['phase2_evidence_source']}\n")
     fh.write("fanout_status=deferred\n")
+    fh.write(
+        "min_production_soak_minutes="
+        f"{doc['requirements']['min_production_soak_minutes']}\n"
+    )
     for item in evidence:
         fh.write(
             f"evidence={item['id']} status={item['status']} "

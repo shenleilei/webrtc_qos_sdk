@@ -205,6 +205,8 @@ readiness 和 debug bundle 门禁，然后调用底层
 避免短时 production run 先消耗测试机再由末端审计判无效。standalone readiness、
 外部 Phase-2 evidence bundle import 和 Phase-2 completion audit 也不能把
 `MIN_PRODUCTION_SOAK_MINUTES` 降到 `120` 以下，防止绕过顶层 gate 生成弱生产证据。
+release evidence summary 会写出 `min_production_soak_minutes`，verifier 会确认声明最低值
+不低于 120，且实际 production soak 分钟数不低于该声明最低值。
 `phase5_production_gate_metrics.prom` 是顶层 gate 的 Prometheus/textfile 指标出口：
 导出 pass/fail/dry_run、各 step 状态、failure debug bundle 状态和 release evidence
 状态，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出

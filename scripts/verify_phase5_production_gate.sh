@@ -915,9 +915,14 @@ if doc.get("formal_completion_status") != "complete":
     raise SystemExit("release evidence formal completion status is not complete")
 
 requirements = doc.get("requirements", {})
-if float(requirements.get("soak_minutes", 0)) < float(
-    requirements.get("min_production_soak_minutes", 120)
-):
+phase5_min_soak_minutes = 120.0
+release_soak_minutes = float(requirements.get("soak_minutes", 0))
+release_min_soak_minutes = float(
+    requirements.get("min_production_soak_minutes", 0)
+)
+if release_min_soak_minutes < phase5_min_soak_minutes:
+    raise SystemExit("release evidence minimum soak minutes below phase5 floor")
+if release_soak_minutes < release_min_soak_minutes:
     raise SystemExit("release evidence soak minutes below minimum")
 if requirements.get("multi_receiver_fanout") != "deferred_before_p5_completion":
     raise SystemExit("release evidence fanout requirement mismatch")
@@ -1151,7 +1156,9 @@ def evidence_number(section, key, default=0):
         value = default
     return float(value)
 
-if evidence_number(production_soak, "soak_minutes") < 120:
+if evidence_number(production_soak, "soak_minutes") < release_min_soak_minutes:
+    raise SystemExit("release evidence production soak minutes below declared minimum")
+if evidence_number(production_soak, "soak_minutes") < phase5_min_soak_minutes:
     raise SystemExit("release evidence production soak minutes below minimum")
 rows = int(production_soak.get("rows", 0) or 0)
 pass_rows = int(production_soak.get("pass_rows", 0) or 0)
@@ -1198,6 +1205,7 @@ for expected in (
     "formal_completion_status=complete",
     "scope=phase5_formal_production_release_evidence",
     "fanout_status=deferred",
+    "min_production_soak_minutes=",
     "evidence=phase5_implementation_gate_metrics status=pass",
     "evidence=git_worktree_clean status=pass",
     "evidence=phase2_completion_audit_metrics status=pass",
