@@ -9,6 +9,7 @@
 
 #include "compound_rtcp.h"
 #include "runtime_logger.h"
+#include "runtime_metrics_writer.h"
 #include "video_track_config_utils.h"
 #include "webrtc_qos/googcc_adapter.h"
 #include "webrtc_qos/h264_rtp_adapter.h"
@@ -47,6 +48,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   explicit WebRtcVideoPushClient(VideoPushClientConfig config)
       : config_(std::move(config)),
         logger_(config_.logging, "push"),
+        metrics_writer_(config_.metrics, "push"),
         googcc_(GoogCcAdapterConfig{config_.session.start_bitrate_bps,
                                     config_.session.min_bitrate_bps,
                                     config_.session.max_bitrate_bps}),
@@ -100,6 +102,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     started_ = false;
     logger_.Info("stop", config_.session.ids);
     logger_.Flush();
+    metrics_writer_.Flush();
     return Status::Ok();
   }
 
@@ -118,7 +121,12 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     googcc_.OnProcessInterval(now_us);
     ApplyProbeClusters();
     ApplyGoogCcRates(now_us);
-    return MaybeSendSenderReports(now_us);
+    Status rtcp_status = MaybeSendSenderReports(now_us);
+    if (!rtcp_status) {
+      return rtcp_status;
+    }
+    MaybeWriteMetrics(now_us);
+    return Status::Ok();
   }
 
   Status PushAnnexBAccessUnit(const AnnexBAccessUnitView& access_unit) override {
@@ -875,8 +883,29 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     }
   }
 
+  void MaybeWriteMetrics(int64_t now_us) {
+    if (!metrics_writer_.ShouldWrite(now_us)) {
+      return;
+    }
+    const EncoderAdaptation session_adaptation = GetEncoderAdaptation(now_us);
+    metrics_writer_.WriteSession(GetQosSnapshot(now_us), &session_adaptation);
+    if (!metrics_writer_.include_track_snapshots()) {
+      return;
+    }
+    for (const auto& track_config : track_configs_) {
+      QosSnapshot snapshot;
+      EncoderAdaptation adaptation;
+      if (GetTrackQosSnapshot(track_config.ids.track_id, now_us, &snapshot) &&
+          GetTrackEncoderAdaptation(track_config.ids.track_id, now_us,
+                                    &adaptation)) {
+        metrics_writer_.WriteTrack(snapshot, &adaptation);
+      }
+    }
+  }
+
   VideoPushClientConfig config_;
   RuntimeLogger logger_;
+  RuntimeMetricsWriter metrics_writer_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   uint32_t primary_track_id_ = 0;

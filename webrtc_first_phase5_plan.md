@@ -383,10 +383,32 @@ using MetricsOutput =
 或者先以文件方式落地：
 
 ```text
-metrics.jsonl
+webrtc_qos_metrics.<role>.<pid>.<timestamp>.<index>.jsonl
 metrics_summary.csv
 qos_snapshot_<role>.json
 ```
+
+当前已落地第一版文件型 metrics：
+
+```cpp
+struct FileMetricsConfig {
+  bool enabled = false;
+  std::string directory;
+  std::string basename = "webrtc_qos_metrics";
+  uint64_t max_file_bytes = 64 * 1024 * 1024;
+  uint32_t max_files = 5;
+};
+
+struct RuntimeMetricsConfig {
+  FileMetricsConfig file;
+  uint32_t interval_ms = 1000;
+  bool include_track_snapshots = true;
+};
+```
+
+role config 已追加 `RuntimeMetricsConfig metrics`。当前 JSONL 覆盖
+`session/track` 两类 scope，包含身份字段、target bitrate、FPS、downlink
+loss、NACK、PLI、retransmission、drop、probe/padding 等字段。
 
 #### 指标分层
 
@@ -797,7 +819,21 @@ scripts/verify_phase5_logging.sh
 - 默认不输出 RTP/H264 payload bytes。
 - stdout 只保留 summary，不承载 SDK 运行日志。
 
-### 6.2 监控告警门禁
+### 6.2 Metrics 门禁
+
+```bash
+scripts/verify_phase5_metrics.sh
+```
+
+覆盖：
+
+- push/server/play 都生成 metrics JSONL 文件。
+- metrics 包含 session/track scope 和统一身份字段。
+- weak network 能看到 bitrate/FPS 下探和恢复。
+- server retransmission、play NACK、dual-track track_id 可定位。
+- 默认不输出 RTP/H264 payload bytes。
+
+### 6.3 监控告警门禁
 
 ```bash
 scripts/verify_phase5_alerts.sh
@@ -810,7 +846,7 @@ scripts/verify_phase5_alerts.sh
 - transport output failure 触发 availability alert。
 - malformed packet 触发 warn/error 日志和 alert。
 
-### 6.3 Debug bundle 门禁
+### 6.4 Debug bundle 门禁
 
 ```bash
 scripts/verify_phase5_debug_bundle.sh
@@ -822,7 +858,7 @@ scripts/verify_phase5_debug_bundle.sh
 - manifest sha256 校验通过。
 - bundle 不包含原始媒体 payload。
 
-### 6.4 External sample 门禁
+### 6.5 External sample 门禁
 
 ```bash
 scripts/verify_phase5_minimal_udp_external_app.sh
@@ -837,7 +873,7 @@ scripts/verify_phase5_minimal_udp_external_app.sh
 - no PeerConnection / no SDK src include。
 - 日志和 metrics 进入 output dir。
 
-### 6.5 生产验收门禁
+### 6.6 生产验收门禁
 
 继续使用：
 

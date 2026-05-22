@@ -7,6 +7,7 @@
 #include "webrtc_qos/control_messages.h"
 #include "webrtc_qos/qos_metrics.h"
 #include "webrtc_qos/runtime_logging.h"
+#include "webrtc_qos/runtime_metrics.h"
 #include "webrtc_qos/session_config.h"
 #include "webrtc_qos/status.h"
 #include "webrtc_qos/transport_io.h"
@@ -18,6 +19,7 @@ struct ServerQosRouterConfig {
   TransportOutput sender_output;
   TransportOutput receiver_output;
   RuntimeLogConfig logging;
+  RuntimeMetricsConfig metrics;
 };
 
 class ServerQosRouter {

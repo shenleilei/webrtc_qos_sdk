@@ -102,6 +102,7 @@ if(WEBRTC_QOS_ENABLE_WEBRTC_FACADE)
 
   add_library(webrtc_qos_facade_video STATIC
     src/runtime_logger.cc
+    src/runtime_metrics_writer.cc
     src/server_qos_router_webrtc.cc
     src/video_play_client_webrtc.cc
     src/video_push_client_webrtc.cc)
@@ -319,6 +320,7 @@ set(WEBRTC_QOS_PUBLIC_HEADERS
   include/webrtc_qos/qos_metrics.h
   include/webrtc_qos/rate_cap.h
   include/webrtc_qos/runtime_logging.h
+  include/webrtc_qos/runtime_metrics.h
   include/webrtc_qos/server_qos_router.h
   include/webrtc_qos/session_config.h
   include/webrtc_qos/status.h

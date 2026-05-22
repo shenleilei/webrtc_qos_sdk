@@ -20,6 +20,7 @@
 
 #include "webrtc_qos/rate_cap.h"
 #include "webrtc_qos/runtime_logging.h"
+#include "webrtc_qos/runtime_metrics.h"
 #include "webrtc_qos/server_qos_router.h"
 #include "webrtc_qos/video_play_client.h"
 #include "webrtc_qos/video_push_client.h"
@@ -69,6 +70,7 @@ struct Metrics {
 struct CommonOptions {
   int frames = 36;
   std::string log_dir;
+  std::string metrics_dir;
 };
 
 void PutU16(uint16_t value, std::vector<uint8_t>* out) {
@@ -459,6 +461,21 @@ webrtc_qos::RuntimeLogConfig MakeLogConfig(const std::string& log_dir) {
   return config;
 }
 
+webrtc_qos::RuntimeMetricsConfig MakeMetricsConfig(
+    const std::string& metrics_dir) {
+  webrtc_qos::RuntimeMetricsConfig config;
+  if (!metrics_dir.empty()) {
+    config.file.enabled = true;
+    config.file.directory = metrics_dir;
+    config.file.basename = "webrtc_qos_udp_metrics";
+    config.file.max_file_bytes = 1024 * 1024;
+    config.file.max_files = 4;
+    config.interval_ms = 100;
+    config.include_track_snapshots = true;
+  }
+  return config;
+}
+
 bool ParseOptionalArgs(int argc,
                        char** argv,
                        int start_index,
@@ -471,6 +488,14 @@ bool ParseOptionalArgs(int argc,
         return false;
       }
       options->log_dir = argv[++i];
+      continue;
+    }
+    if (arg == "--metrics-dir") {
+      if (i + 1 >= argc) {
+        std::cerr << "--metrics-dir requires a directory\n";
+        return false;
+      }
+      options->metrics_dir = argv[++i];
       continue;
     }
     char* end = nullptr;
@@ -564,6 +589,7 @@ int RunUdpSender(uint16_t local_port,
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
   push_config.logging = MakeLogConfig(options.log_dir);
+  push_config.metrics = MakeMetricsConfig(options.metrics_dir);
   push_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         if (packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp) {
@@ -690,6 +716,7 @@ int RunUdpServer(uint16_t local_port,
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
   server_config.logging = MakeLogConfig(options.log_dir);
+  server_config.metrics = MakeMetricsConfig(options.metrics_dir);
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         return udp.SendTo(sender_addr, EncodeTransportPacket(packet))
@@ -794,6 +821,7 @@ int RunUdpReceiver(uint16_t local_port,
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
   play_config.logging = MakeLogConfig(options.log_dir);
+  play_config.metrics = MakeMetricsConfig(options.metrics_dir);
   play_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         ++metrics.receiver_rtcp;
@@ -897,6 +925,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
   push_config.logging = MakeLogConfig(options.log_dir);
+  push_config.metrics = MakeMetricsConfig(options.metrics_dir);
   push_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         if (packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp) {
@@ -915,6 +944,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
   play_config.logging = MakeLogConfig(options.log_dir);
+  play_config.metrics = MakeMetricsConfig(options.metrics_dir);
   play_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         ++metrics.receiver_rtcp;
@@ -939,6 +969,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
   server_config.logging = MakeLogConfig(options.log_dir);
+  server_config.metrics = MakeMetricsConfig(options.metrics_dir);
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         return server_udp.SendTo(sender_udp.local_addr(),
@@ -1272,7 +1303,7 @@ int main(int argc, char** argv) {
     if (argc < 4) {
       std::cerr << "usage: " << argv[0]
                 << " sender <local_port> <server_ip:port> [frames]"
-                << " [--log-dir DIR]\n";
+                << " [--log-dir DIR] [--metrics-dir DIR]\n";
       return 2;
     }
     sockaddr_in server_addr {};
@@ -1294,7 +1325,8 @@ int main(int argc, char** argv) {
     if (argc < 5) {
       std::cerr << "usage: " << argv[0]
                 << " server <local_port> <sender_ip:port>"
-                << " <receiver_ip:port> [frames] [--log-dir DIR]\n";
+                << " <receiver_ip:port> [frames] [--log-dir DIR]"
+                << " [--metrics-dir DIR]\n";
       return 2;
     }
     sockaddr_in sender_addr {};
@@ -1321,7 +1353,7 @@ int main(int argc, char** argv) {
     if (argc < 4) {
       std::cerr << "usage: " << argv[0]
                 << " receiver <local_port> <server_ip:port> [frames]"
-                << " [--log-dir DIR]\n";
+                << " [--log-dir DIR] [--metrics-dir DIR]\n";
       return 2;
     }
     sockaddr_in server_addr {};
@@ -1340,15 +1372,16 @@ int main(int argc, char** argv) {
   }
 
   std::cerr << "usage:\n"
-            << "  " << argv[0] << " selftest [frames] [--log-dir DIR]\n"
+            << "  " << argv[0] << " selftest [frames] [--log-dir DIR]"
+            << " [--metrics-dir DIR]\n"
             << "  " << argv[0]
             << " sender <local_port> <server_ip:port> [frames]"
-            << " [--log-dir DIR]\n"
+            << " [--log-dir DIR] [--metrics-dir DIR]\n"
             << "  " << argv[0]
             << " server <local_port> <sender_ip:port> <receiver_ip:port>"
-            << " [frames] [--log-dir DIR]\n"
+            << " [frames] [--log-dir DIR] [--metrics-dir DIR]\n"
             << "  " << argv[0]
             << " receiver <local_port> <server_ip:port> [frames]"
-            << " [--log-dir DIR]\n";
+            << " [--log-dir DIR] [--metrics-dir DIR]\n";
   return 2;
 }

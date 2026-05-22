@@ -87,6 +87,7 @@ production_transport_adapter.h
 qos_metrics.h
 rate_cap.h
 runtime_logging.h
+runtime_metrics.h
 server_qos_router.h
 session_config.h
 status.h
@@ -143,6 +144,8 @@ PREFIX=/root/output SDK_ROOT=/root/webrtc_qos_sdk \
   scripts/verify_webrtc_first_roles.sh
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_logging.sh
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_metrics.sh
 ```
 
 `verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口。`VERIFY_LEVEL=smoke` 会串起 no-selfmade、WebRTC module smoke、外部 CMake package、loopback、pacing probe、role facade 和 synthetic 弱网矩阵；`VERIFY_LEVEL=qoe` 在 smoke 基础上增加低 RPS/低码率真实 H264 QoE 和恢复时间分布；`VERIFY_LEVEL=production` 会继续进入 production soak，并可通过 `REQUIRE_REAL_RENDERER=1 / REQUIRE_CAPTURE_LIBRARY=1` 把真实 renderer 和正式采集素材库变成硬门禁。当前 `SOAK_MINUTES=0` 的默认本地 production smoke 只验证 runner/archive 链路，默认配置为 `FRAMES_PER_CYCLE=12 / CONTENT_MODES=block_motion / SCENARIOS=weak_network_low_rps_low_bitrate`；正式验收仍必须显式跑 `SOAK_MINUTES>=120`。
@@ -175,6 +178,8 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 `verify_webrtc_first_roles.sh` 会继续调用 `verify_no_selfmade_media_stack.sh`、`verify_webrtc_first_loopback.sh`、`verify_webrtc_first_multitrack.sh` 和 `run_webrtc_first_multitrack_matrix.sh`，确认旧自研媒体栈没有回到 public API、CMake 或发布包，基础 WebRTC-first bytes 链路可外部消费，并且当前默认 multi-track 能力在双 track 情况下满足 shared source cap 分配、feedback isolation 和 per-track 身份输出。它也会构建 `webrtc_qos_webrtc_first_udp_demo`，跑 UDP selftest，并 smoke 检查独立 `sender/server/receiver` 三个角色入口都使用 `backend=webrtc_first_facade transport=udp peer_connection=false`。
 
 `verify_phase5_logging.sh` 是 Phase-5 第一条日志门禁：它验证默认不把 SDK 运行日志打到 stdout/stderr，显式传 `--log-dir` 后会生成 push/server/play 三类 JSONL 日志文件，并检查 start、access unit、downlink quality、retransmission、decode output 等关键事件和统一身份字段。
+
+`verify_phase5_metrics.sh` 是 Phase-5 metrics snapshot 门禁：它验证显式传 `--metrics-dir` 后会生成 push/server/play 三类 JSONL metrics 文件，并检查弱网下的 bitrate/FPS 下探、恢复回升、server retransmission、play NACK 和 dual-track 指标身份。
 
 ## WebRTC-first Demo
 
@@ -222,6 +227,10 @@ cmake --build build-webrtc-first \
 # 显式启用 Phase-5 文件日志：生成 webrtc_qos_udp.{push,server,play}.*.log。
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 36 --log-dir /tmp/webrtc_qos_udp_logs
+
+# 显式启用 Phase-5 metrics：生成 webrtc_qos_udp_metrics.{push,server,play}.*.jsonl。
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 36 --metrics-dir /tmp/webrtc_qos_udp_metrics
 
 # 三进程手工模式示例，端口可自行调整。
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \

@@ -9,6 +9,7 @@
 
 #include "compound_rtcp.h"
 #include "runtime_logger.h"
+#include "runtime_metrics_writer.h"
 #include "video_track_config_utils.h"
 #include "webrtc_qos/nack_requester_adapter.h"
 #include "webrtc_qos/rtcp_adapter.h"
@@ -43,7 +44,9 @@ uint32_t ResolveReceiverFeedbackSsrc(const SessionConfig& session) {
 class WebRtcVideoPlayClient final : public VideoPlayClient {
  public:
   explicit WebRtcVideoPlayClient(VideoPlayClientConfig config)
-      : config_(std::move(config)), logger_(config_.logging, "play") {
+      : config_(std::move(config)),
+        logger_(config_.logging, "play"),
+        metrics_writer_(config_.metrics, "play") {
     track_config_status_ =
         ResolveVideoTrackConfigs(config_.session, &track_configs_);
     if (track_config_status_) {
@@ -94,6 +97,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     started_ = false;
     logger_.Info("stop", config_.session.ids);
     logger_.Flush();
+    metrics_writer_.Flush();
     return Status::Ok();
   }
 
@@ -110,6 +114,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
         return status;
       }
     }
+    MaybeWriteMetrics(now_us);
     return Status::Ok();
   }
 
@@ -384,8 +389,25 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
                                  65536);
   }
 
+  void MaybeWriteMetrics(int64_t now_us) {
+    if (!metrics_writer_.ShouldWrite(now_us)) {
+      return;
+    }
+    metrics_writer_.WriteSession(GetQosSnapshot(now_us));
+    if (!metrics_writer_.include_track_snapshots()) {
+      return;
+    }
+    for (const auto& track_config : track_configs_) {
+      QosSnapshot snapshot;
+      if (GetTrackQosSnapshot(track_config.ids.track_id, now_us, &snapshot)) {
+        metrics_writer_.WriteTrack(snapshot);
+      }
+    }
+  }
+
   VideoPlayClientConfig config_;
   RuntimeLogger logger_;
+  RuntimeMetricsWriter metrics_writer_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   uint32_t primary_track_id_ = 0;

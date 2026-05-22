@@ -11,6 +11,7 @@
 
 #include "compound_rtcp.h"
 #include "runtime_logger.h"
+#include "runtime_metrics_writer.h"
 #include "video_track_config_utils.h"
 #include "webrtc_qos/rate_cap.h"
 #include "webrtc_qos/rtcp_adapter.h"
@@ -71,6 +72,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
   explicit WebRtcServerQosRouter(ServerQosRouterConfig config)
       : config_(std::move(config)),
         logger_(config_.logging, "server"),
+        metrics_writer_(config_.metrics, "server"),
         packet_history_(TransportPacketHistoryConfig{1000, 3000, 4096}) {
     track_config_status_ =
         ResolveVideoTrackConfigs(config_.session, &track_configs_);
@@ -104,6 +106,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     started_ = false;
     logger_.Info("stop", config_.session.ids);
     logger_.Flush();
+    metrics_writer_.Flush();
     return Status::Ok();
   }
 
@@ -144,6 +147,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                     relay_status);
       return relay_status;
     }
+    MaybeWriteMetrics(receive_time_us);
     return MaybeSendUplinkTwcc(receive_time_us);
   }
 
@@ -243,6 +247,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                                    "unsupported receiver RTCP packet dropped"));
       }
     }
+    MaybeWriteMetrics(receive_time_us);
     return status;
   }
 
@@ -256,6 +261,11 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     receiver_states_[receiver_id] =
         ReceiverState{stored_quality, BuildReceiverRateCap(stored_quality)};
     logger_.Info("downlink_quality_update", stored_quality.ids);
+    const int64_t report_time_us =
+        stored_quality.report_time_us == 0
+            ? 0
+            : static_cast<int64_t>(stored_quality.report_time_us);
+    MaybeWriteMetrics(report_time_us);
     return Status::Ok();
   }
 
@@ -284,6 +294,13 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
   }
 
  private:
+  void MaybeWriteMetrics(int64_t now_us) {
+    if (!metrics_writer_.ShouldWrite(now_us)) {
+      return;
+    }
+    metrics_writer_.WriteSession(GetQosSnapshot(now_us));
+  }
+
   struct ReceiverState {
     DownlinkQuality quality;
     SenderRateCap cap;
@@ -552,6 +569,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
   ServerQosRouterConfig config_;
   RuntimeLogger logger_;
+  RuntimeMetricsWriter metrics_writer_;
   Status track_config_status_ = Status::Ok();
   std::vector<VideoTrackConfig> track_configs_;
   std::unordered_map<uint32_t, TransportIds> sender_ssrc_to_ids_;

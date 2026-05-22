@@ -454,6 +454,37 @@ play_config.logging = logging;
 `status_code` 和 `reason`。不要记录 H264 payload、RTP payload、鉴权 token
 或用户隐私字段。
 
+同一套 facade 也支持 metrics snapshot 文件化。生产集成建议显式配置
+`RuntimeMetricsConfig`，把 session/track 级 QoS 快照按固定 interval 写入
+JSON Lines：
+
+```cpp
+webrtc_qos::RuntimeMetricsConfig metrics;
+metrics.file.enabled = true;
+metrics.file.directory = "/var/log/webrtc_qos";
+metrics.file.basename = "webrtc_qos_metrics";
+metrics.file.max_file_bytes = 64 * 1024 * 1024;
+metrics.file.max_files = 5;
+metrics.interval_ms = 1000;
+metrics.include_track_snapshots = true;
+
+push_config.metrics = metrics;
+server_config.metrics = metrics;
+play_config.metrics = metrics;
+```
+
+demo 可用 `--metrics-dir` 验证 metrics 文件：
+
+```bash
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 36 --metrics-dir /tmp/webrtc_qos_udp_metrics
+```
+
+metrics 文件包含 `final_target_bps`、`adaptation_target_bps`、
+`adaptation_max_fps`、`downlink_fraction_lost_q8`、`nack_count`、
+`pli_count`、`retransmission_count` 等字段，用于区分网络/QoS 恢复问题和
+上层 codec/render 问题。
+
 ## 8. 线程和时钟
 
 推荐线程模型：
@@ -502,6 +533,8 @@ cmake --build build-webrtc-first \
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo selftest 36
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 36 --log-dir /tmp/webrtc_qos_udp_logs
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 36 --metrics-dir /tmp/webrtc_qos_udp_metrics
 ```
 
 预期结果应包含：
@@ -519,6 +552,8 @@ SDK_ROOT=/root/webrtc_qos_sdk \
   scripts/verify_webrtc_first_roles.sh
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_logging.sh
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_metrics.sh
 ```
 
 ## 11. 集成检查清单
@@ -535,6 +570,7 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 - sender 使用 `GetTrackEncoderAdaptation()` 驱动每条 track 的码率、FPS 和关键帧。
 - receiver 按 `track_id` 或 `sender_ssrc` 分发 decoded AU。
 - sender/server/receiver 显式配置文件日志，stdout 只保留人工 summary。
+- sender/server/receiver 显式配置 metrics 文件，能看到弱网下探、恢复和恢复事件。
 - 业务没有直接依赖 WebRTC 内部头、`PeerConnection`、ICE、DTLS 或 SRTP。
 
 ## 12. 参考文档
