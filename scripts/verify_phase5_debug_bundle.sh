@@ -47,6 +47,8 @@ required_files=(
   timeline/events.jsonl
   timeline/first_problem.json
   timeline/summary.txt
+  monitoring/health_report.json
+  monitoring/health_summary.txt
   evidence/udp_selftest_output.txt
 )
 
@@ -278,6 +280,81 @@ for required_text in (
     if required_text not in timeline_summary:
         raise SystemExit(f"timeline summary missing {required_text}")
 
+health_report = json.loads((root / "monitoring" / "health_report.json").read_text())
+if health_report.get("schema_version") != 1:
+    raise SystemExit("health_report.json missing schema_version=1")
+if health_report.get("source") != "phase5_debug_bundle":
+    raise SystemExit("health_report.json has unexpected source")
+if health_report.get("health_status") not in {"ok", "attention_required"}:
+    raise SystemExit("health_report.json has unexpected health_status")
+health_roles = health_report.get("roles", {})
+if set(health_roles.keys()) != roles:
+    raise SystemExit("health_report.json does not cover push/server/play")
+for role, info in health_roles.items():
+    if info.get("status") not in {"ok", "attention_required"}:
+        raise SystemExit(f"health_report role {role} has unexpected status")
+    if int(info.get("metric_records", 0)) <= 0:
+        raise SystemExit(f"health_report role {role} missing metric records")
+    for key in (
+        "max_process_tick_gap_us",
+        "max_rtp_output_gap_us",
+        "max_rtp_input_gap_us",
+        "max_consecutive_transport_failures",
+    ):
+        if key not in info:
+            raise SystemExit(f"health_report role {role} missing {key}")
+    identity = info.get("max_tick_gap_identity", {})
+    for key in ("session_id", "track_id", "receiver_id"):
+        if key not in identity:
+            raise SystemExit(
+                f"health_report role {role} missing max tick gap identity {key}"
+            )
+totals = health_report.get("totals", {})
+if int(totals.get("timeline_events", 0)) != len(timeline):
+    raise SystemExit("health_report timeline total does not match timeline")
+if int(totals.get("alert_records", 0)) != len(alerts):
+    raise SystemExit("health_report alert total does not match alerts")
+if not health_report.get("top_alert_rules"):
+    raise SystemExit("health_report missing top_alert_rules")
+recommended_actions = health_report.get("recommended_actions", [])
+if not recommended_actions:
+    raise SystemExit("health_report missing recommended_actions")
+categories = {
+    action.get("category")
+    for action in recommended_actions
+    if action.get("category")
+}
+if not {"network_qos", "media_quality"}.issubset(categories):
+    raise SystemExit(
+        f"health_report recommended actions missing categories: {sorted(categories)}"
+    )
+artifacts = health_report.get("artifacts", {})
+for key in (
+    "metrics_summary",
+    "alerts_summary",
+    "timeline_summary",
+    "first_problem",
+):
+    rel = artifacts.get(key)
+    if not rel or not (root / rel).exists():
+        raise SystemExit(f"health_report bad artifact pointer {key}")
+health_first_problem = health_report.get("first_problem", {})
+if health_first_problem.get("status") != "found":
+    raise SystemExit("health_report missing first problem")
+health_summary = (root / "monitoring" / "health_summary.txt").read_text(
+    encoding="utf-8"
+)
+for required_text in (
+    "health_status=",
+    "first_problem=",
+    "recommended_action=",
+):
+    if required_text not in health_summary:
+        raise SystemExit(f"health summary missing {required_text}")
+for role in roles:
+    if f"role={role} status=" not in health_summary:
+        raise SystemExit(f"health summary missing role {role}")
+
 session = json.loads((root / "session_config.json").read_text())
 profiles = session.get("profiles", [])
 if len(profiles) < 2:
@@ -332,6 +409,11 @@ for item in roles_config:
             raise SystemExit(
                 f"runtime_config.json role {item.get('role')} bad {artifact_kind} artifact"
             )
+runtime_artifacts = runtime.get("artifacts", {})
+for artifact_kind in ("health_report", "health_summary"):
+    rel = runtime_artifacts.get(artifact_kind)
+    if not rel or not (root / rel).exists():
+        raise SystemExit(f"runtime_config.json bad {artifact_kind} artifact")
 redaction = runtime.get("redaction", {})
 for key in ("media_bytes", "raw_frames", "auth_material", "absolute_runtime_paths"):
     if redaction.get(key) != "omitted":

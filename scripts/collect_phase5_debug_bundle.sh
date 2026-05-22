@@ -30,6 +30,7 @@ trap cleanup EXIT
 rm -rf "${OUTPUT_DIR}" "${WORK_DIR}"
 mkdir -p "${OUTPUT_DIR}/log" "${OUTPUT_DIR}/metrics" "${OUTPUT_DIR}/alerts" \
   "${OUTPUT_DIR}/evidence" "${OUTPUT_DIR}/timeline" \
+  "${OUTPUT_DIR}/monitoring" \
   "${LOG_SOURCE_DIR}" "${METRICS_SOURCE_DIR}" "${ALERTS_SOURCE_DIR}"
 
 write_summary() {
@@ -247,6 +248,8 @@ runtime_config = {
         "alerts_summary": "alerts/alerts_summary.txt",
         "timeline": "timeline/events.jsonl",
         "first_problem": "timeline/first_problem.json",
+        "health_report": "monitoring/health_report.json",
+        "health_summary": "monitoring/health_summary.txt",
     },
     "redaction": {
         "media_bytes": "omitted",
@@ -473,6 +476,126 @@ with (root / "timeline" / "summary.txt").open("w", encoding="utf-8") as handle:
             f"track_id={problem.get('track_id', 0)} "
             f"receiver_id={problem.get('receiver_id', 0)}\n"
         )
+
+metric_by_role = {row["role"]: row for row in metric_rows}
+alert_records_by_role = Counter(a.get("role", "") for a in alerts)
+alert_categories_by_role = defaultdict(Counter)
+alert_rules_by_role = defaultdict(Counter)
+for alert in alerts:
+    role = alert.get("role", "")
+    alert_categories_by_role[role][alert.get("category", "")] += 1
+    alert_rules_by_role[role][alert.get("rule", "")] += 1
+
+top_alert_rules = [
+    {"severity": severity, "role": role, "rule": rule, "count": count}
+    for (severity, role, rule), count in alert_counts.most_common(10)
+]
+
+recommended_actions = []
+action_by_category = {
+    "availability": "inspect process tick gaps, RTP flow gaps, and transport callback failures for the affected role",
+    "media_quality": "inspect codec/render health, frame drops, and target bitrate/FPS adaptation for the affected track",
+    "network_qos": "inspect downlink loss, NACK rate, retransmission hit/miss, and UDP transport path",
+}
+for (role, category), count in sorted(alert_category_counts.items()):
+    if not category:
+        continue
+    recommended_actions.append({
+        "role": role,
+        "category": category,
+        "count": count,
+        "required": action_by_category.get(
+            category,
+            "inspect role logs, metrics, alerts, and timeline around the first problem",
+        ),
+    })
+
+role_health = {}
+for role in ("push", "server", "play"):
+    metrics = metric_by_role.get(role, {})
+    role_alert_count = alert_records_by_role.get(role, 0)
+    role_health[role] = {
+        "status": "attention_required" if role_alert_count else "ok",
+        "metric_records": int(metrics.get("records", 0) or 0),
+        "alert_records": role_alert_count,
+        "alert_categories": dict(sorted(alert_categories_by_role[role].items())),
+        "alert_rules": dict(sorted(alert_rules_by_role[role].items())),
+        "max_process_tick_gap_us": int(
+            metrics.get("max_process_tick_gap_us", 0) or 0
+        ),
+        "max_rtp_output_gap_us": int(metrics.get("max_rtp_output_gap_us", 0) or 0),
+        "max_rtp_input_gap_us": int(metrics.get("max_rtp_input_gap_us", 0) or 0),
+        "max_consecutive_transport_failures": int(
+            metrics.get("max_consecutive_transport_failures", 0) or 0
+        ),
+        "max_tick_gap_identity": {
+            "session_id": int(metrics.get("max_tick_gap_session_id", 0) or 0),
+            "track_id": int(metrics.get("max_tick_gap_track_id", 0) or 0),
+            "receiver_id": int(metrics.get("max_tick_gap_receiver_id", 0) or 0),
+        },
+    }
+
+health_status = "attention_required" if alerts or problem.get("status") == "found" else "ok"
+health_report = {
+    "schema_version": 1,
+    "source": "phase5_debug_bundle",
+    "health_status": health_status,
+    "roles": role_health,
+    "totals": {
+        "log_events": type_counts.get("log", 0),
+        "metric_events": type_counts.get("metric", 0),
+        "alert_events": type_counts.get("alert", 0),
+        "timeline_events": len(events),
+        "alert_records": len(alerts),
+    },
+    "first_problem": problem,
+    "top_alert_rules": top_alert_rules,
+    "recommended_actions": recommended_actions,
+    "artifacts": {
+        "metrics_summary": "metrics/summary.csv",
+        "alerts_summary": "alerts/alerts_summary.txt",
+        "timeline_summary": "timeline/summary.txt",
+        "first_problem": "timeline/first_problem.json",
+    },
+}
+with (root / "monitoring" / "health_report.json").open(
+    "w", encoding="utf-8"
+) as handle:
+    json.dump(health_report, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+
+with (root / "monitoring" / "health_summary.txt").open(
+    "w", encoding="utf-8"
+) as handle:
+    handle.write(f"health_status={health_status}\n")
+    handle.write(f"alert_records={len(alerts)}\n")
+    handle.write(f"timeline_events={len(events)}\n")
+    if problem.get("status") == "found":
+        handle.write(
+            "first_problem="
+            f"type={problem.get('type', '')} "
+            f"level={problem.get('level', '')} "
+            f"role={problem.get('role', '')} "
+            f"name={problem.get('name', '')} "
+            f"track_id={problem.get('track_id', 0)} "
+            f"receiver_id={problem.get('receiver_id', 0)}\n"
+        )
+    for role, info in sorted(role_health.items()):
+        handle.write(
+            f"role={role} status={info['status']} "
+            f"metric_records={info['metric_records']} "
+            f"alert_records={info['alert_records']} "
+            f"max_process_tick_gap_us={info['max_process_tick_gap_us']} "
+            f"max_rtp_output_gap_us={info['max_rtp_output_gap_us']} "
+            f"max_rtp_input_gap_us={info['max_rtp_input_gap_us']} "
+            f"max_consecutive_transport_failures={info['max_consecutive_transport_failures']}\n"
+        )
+    for action in recommended_actions:
+        handle.write(
+            f"recommended_action=role={action['role']} "
+            f"category={action['category']} count={action['count']} "
+            f"required={action['required']}\n"
+        )
 PY
 
 {
@@ -485,6 +608,8 @@ PY
   write_summary "alerts_summary=${OUTPUT_DIR}/alerts/alerts_summary.txt"
   write_summary "timeline=${OUTPUT_DIR}/timeline/events.jsonl"
   write_summary "first_problem=${OUTPUT_DIR}/timeline/first_problem.json"
+  write_summary "health_report=${OUTPUT_DIR}/monitoring/health_report.json"
+  write_summary "health_summary=${OUTPUT_DIR}/monitoring/health_summary.txt"
   write_summary "files=${FILES_FILE}"
   write_summary "manifest=${MANIFEST_FILE}"
   write_summary "phase5_debug_bundle_status=collected"

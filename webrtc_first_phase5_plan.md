@@ -697,6 +697,9 @@ availability alert，以及 sender/server `sender_rtp_output_gap`、play
   alerts/
     alerts.jsonl
     alerts_summary.txt
+  monitoring/
+    health_report.json
+    health_summary.txt
   evidence/
     qoe.csv
     renderer_summary.txt
@@ -738,6 +741,9 @@ debug_bundle/
     events.jsonl
     first_problem.json
     summary.txt
+  monitoring/
+    health_report.json
+    health_summary.txt
   evidence/
     udp_selftest_output.txt
     cmake_configure.log
@@ -757,9 +763,16 @@ session/track/receiver；`alerts/alerts_summary.txt` 会输出 `first_alert` 和
 role/category/rule 计数；`timeline/summary.txt` 会输出 log/metric/alert 事件计数
 和 `first_problem` 一行，方便不展开全部 JSONL 就能定位首个坏点和影响范围。
 
+`monitoring/health_report.json` 是给 CI/运维直接消费的聚合健康视图：按
+push/server/play 汇总 metric record 数、alert record 数、alert category/rule、
+最大 process tick gap、RTP input/output gap、连续 transport failure 和对应身份字段；
+同时输出总体 `health_status`、`first_problem`、top alert rules 和
+`recommended_actions`。`monitoring/health_summary.txt` 提供同样信息的文本摘要，
+方便人工在失败 artifact 中快速读取。
+
 `runtime_config.json` 是脱敏后的运行配置 dump，固定记录 schema version、UDP
 transport boundary、三角色 factory、selftest 参数、日志/metrics/alerts 运行开关和
-bundle 内相对路径；媒体 bytes、原始帧、鉴权材料和运行机绝对目录只记录为
+bundle 内相对路径、health report 路径；媒体 bytes、原始帧、鉴权材料和运行机绝对目录只记录为
 `omitted` 标记。
 
 离线 verifier 会检查：
@@ -772,6 +785,8 @@ bundle 内相对路径；媒体 bytes、原始帧、鉴权材料和运行机绝�
 - alerts summary 包含首个告警和 role/category/rule 计数。
 - weak-network alert 规则齐全。
 - timeline 同时包含 log/metric/alert 三类事件，并在 summary 中写出 first problem。
+- health report 覆盖三类 role、top alert rules、recommended actions 和 bundle 内
+  相对 artifact 指针。
 - push/server/play 日志中都有 `config_dump`，且只包含脱敏配置摘要。
 - runtime config 覆盖 push/server/play、日志/metrics/alerts 开关和脱敏标记。
 - `manifest.sha256` 可校验。
@@ -792,12 +807,14 @@ bundle 必须支持：
 - 关联 sender/server/play 三端时间线。
 - 找到第一次 error/warn。
 - 看到关键 metrics 的前后变化。
+- 看到可由 CI/运维直接消费的健康状态和推荐排查动作。
 - 校验 manifest sha256，避免证据被改。
 
 #### 验收标准
 
 - 任意 Phase-5 runner 失败时自动输出 debug bundle。
 - bundle verifier 能检查必需文件存在、manifest、JSON 字段和 weak-network alert。
+- health report 能按 role 汇总健康状态、首个问题、top alert rules 和推荐动作。
 - bundle 中无原始媒体 payload 和隐私敏感字段。
 
 ### 4.6 P1：外部最小 UDP 业务样板工程

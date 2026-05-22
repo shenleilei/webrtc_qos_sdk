@@ -155,6 +155,12 @@ require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'first_alert=' debug_bundle_alert_summary_gate
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'first_problem=' debug_bundle_timeline_summary_gate
+require_doc_pattern scripts/collect_phase5_debug_bundle.sh \
+  'health_report.json' debug_bundle_health_report_collector
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'health_report.json' debug_bundle_health_report_verifier
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'recommended_actions' debug_bundle_health_actions_gate
 require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
   'validated_phase5_implementation_records' implementation_gate_runtime_records
 require_doc_pattern scripts/run_phase5_implementation_gate.sh \
