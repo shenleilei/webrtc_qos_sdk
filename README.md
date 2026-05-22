@@ -10,7 +10,7 @@
 - [WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md)
 - [Phase-2 主实施文档](webrtc_first_phase2_master_plan.md)
 - [Phase-3 逻辑正确性收敛计划](webrtc_first_phase3_plan.md)
-- [Phase-4 多 Receiver / 多 Track 计划](webrtc_first_phase4_plan.md)
+- [Phase-4 多 Track / 多 SSRC 计划](webrtc_first_phase4_plan.md)
 
 ## 当前状态
 
@@ -21,6 +21,7 @@
 - 已保留 `transport_packet_history`：只保存 opaque RTP bytes，供 sender/server 在 WebRTC NACK 路由后按 `hop_id/ssrc/rtp_sequence_number` 找原包重传；它不解析 RTCP、不生成 NACK、不做恢复策略。
 - 已提供 WebRTC-backed `CreateVideoPushClient()` / `CreateVideoPlayClient()` / `CreateServerQosRouter()` 默认实现。push/play 使用 WebRTC H264 RTP、RTP packet、pacing、GoogCC、NackRequester 和 video jitter adapters；server 使用 WebRTC RTP/RTCP adapters 和 `transport_packet_history` 做 relay、uplink TWCC 生成、SR/RR RTT、NACK 本地重传、PLI/NACK 路由。
 - WebRTC adapter patch 已纳入 `third_party/webrtc_patches/webrtc_qos_sdk.patch`，不再依赖 `/root/src` 里的不可见本地改动。
+- 当前工作区还包含 Phase-4A 的第一条实现切片：`SessionConfig.video_tracks`、`source_id / track_id / sender_ssrc`、per-track snapshot/adaptation 查询，以及 shared `GoogCC / pacer` 下的多 track / 多 SSRC 主路径。它已经通过 `verify_webrtc_first_multitrack.sh`、`verify_webrtc_first_roles.sh` 和 Phase-2 smoke/qoe/production 短时门禁；但多 receiver fanout support 层仍未进入当前实现。
 
 当前可打包的 WebRTC 模块：
 
@@ -59,6 +60,16 @@ libwebrtc_qos_transport.a
 libwebrtc_qos_transport_packet_history.a
 libwebrtc_qos_facade_video.a
 ```
+
+当前安装包还会额外生成按角色聚合后的“大静态库”：
+
+```text
+libwebrtc_qos_role_push_bundle.a
+libwebrtc_qos_role_play_bundle.a
+libwebrtc_qos_role_server_bundle.a
+```
+
+它们把当前角色实际需要的 SDK archive 和 WebRTC 子模块 archive 聚合到单个 `.a` 里，便于 sender/play/server 分别直接集成。
 
 WebRTC 能力库由 `scripts/package_webrtc_modules.sh` 从 WebRTC 源码树单独构建并复制到同一个 prefix。当前 source build 默认开启 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE=ON`，并默认从仓库内 `dist/linux-x86_64` 查找 WebRTC modules；如需使用其它 prefix，显式传 `-DWEBRTC_QOS_WEBRTC_MODULE_PREFIX=<prefix>`。缺少 WebRTC modules 会直接配置失败，不会 fallback。
 
@@ -233,6 +244,14 @@ WebRtcQosSdk::role_server_bundle
 ```
 
 这几个 bundle 会把当前角色实际用到的 SDK 静态库和 WebRTC 子模块 archive 合并成单个 `.a` 文件；外部工程仍只需要再补系统库依赖（`Threads::Threads`、`dl`、`rt`、`atomic`）。
+
+如果你要接入当前 Phase-4A 的第一条多 track 切片，发送端和接收端已经支持：
+
+- `SessionConfig.video_tracks`
+- `AnnexBAccessUnitView.ids.{source_id,track_id,sender_ssrc}`
+- `VideoPushClient::GetTrackEncoderAdaptation(...)`
+- `VideoPushClient::GetTrackQosSnapshot(...)`
+- `VideoPlayClient::GetTrackQosSnapshot(...)`
 
 底层 WebRTC module targets：
 

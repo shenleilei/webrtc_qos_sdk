@@ -44,6 +44,7 @@ QoS 正不正确，通常不是靠单一场景能看出来的。
 - `scripts/verify_webrtc_first_loopback.sh`
 - `scripts/verify_webrtc_first_pacing_probe.sh`
 - `scripts/verify_webrtc_first_roles.sh`
+- `scripts/verify_webrtc_first_multitrack.sh`
 - `scripts/verify_webrtc_first_phase2.sh VERIFY_LEVEL=smoke`
 
 它证明的是：
@@ -51,6 +52,7 @@ QoS 正不正确，通常不是靠单一场景能看出来的。
 - 代码没坏
 - WebRTC-first 主路径能跑
 - 安装包和 role target 可消费
+- 当前 worktree 下的第一条 multi-track / multi-SSRC 切片可以作为外部 consumer 跑通
 
 它**不证明**：
 
