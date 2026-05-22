@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SDK_ROOT="${SDK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GATE_DIR="${GATE_DIR:-${1:-/root/webrtc_qos_sdk/artifacts/phase5_production_gate/latest}}"
 REQUIRE_PASS="${REQUIRE_PASS:-0}"
 SUMMARY_FILE="${GATE_DIR}/phase5_production_gate_summary.txt"
@@ -21,6 +22,9 @@ require_file "${GATE_DIR}/metadata.txt"
 require_file "${SUMMARY_FILE}"
 require_file "${GATE_DIR}/files.txt"
 require_file "${GATE_DIR}/manifest.sha256"
+
+[[ -x "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" ]] ||
+  fail "missing debug bundle verifier: ${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh"
 
 (
   cd "${GATE_DIR}"
@@ -45,6 +49,25 @@ require_failed_gate_debug_bundle() {
     cd "${GATE_DIR}/failure_debug_bundle"
     sha256sum -c manifest.sha256 >/dev/null
   )
+  BUNDLE_DIR="${GATE_DIR}/failure_debug_bundle" \
+    "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" >/dev/null
+}
+
+require_success_debug_bundle() {
+  summary_has '^phase5_debug_bundle=' ||
+    fail "passed gate summary missing phase5 debug bundle directory"
+  require_file "${GATE_DIR}/phase5_debug_bundle/manifest.sha256"
+  require_file "${GATE_DIR}/phase5_debug_bundle/runtime_config.json"
+  require_file "${GATE_DIR}/phase5_debug_bundle/log/push.log"
+  require_file "${GATE_DIR}/phase5_debug_bundle/metrics/push_metrics.jsonl"
+  require_file "${GATE_DIR}/phase5_debug_bundle/alerts/alerts.jsonl"
+  require_file "${GATE_DIR}/phase5_debug_bundle/timeline/events.jsonl"
+  (
+    cd "${GATE_DIR}/phase5_debug_bundle"
+    sha256sum -c manifest.sha256 >/dev/null
+  )
+  BUNDLE_DIR="${GATE_DIR}/phase5_debug_bundle" \
+    "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" >/dev/null
 }
 
 summary_has '^phase5_production_gate=running$' ||
@@ -87,6 +110,7 @@ if [[ "${REQUIRE_PASS}" == "1" ]]; then
     fail "debug bundle verify step did not pass"
   summary_has '^step=webrtc_first_production_gate status=pass ' ||
     fail "production gate step did not pass"
+  require_success_debug_bundle
   phase2_summary="${GATE_DIR}/webrtc_first_production_gate/phase2_production_gate_summary.txt"
   require_file "${phase2_summary}"
   rg -q '^phase2_production_gate_status=pass$' "${phase2_summary}" ||
@@ -98,6 +122,8 @@ else
     summary_has '^step=[^ ]+ status=fail ' ||
       fail "failed gate summary missing failed step"
     require_failed_gate_debug_bundle
+  elif summary_has '^phase5_production_gate_status=pass$'; then
+    require_success_debug_bundle
   fi
 fi
 
