@@ -48,24 +48,33 @@ import sys
 readiness_dir, expected_status = sys.argv[1:3]
 report_path = f"{readiness_dir}/readiness_report.json"
 actions_path = f"{readiness_dir}/next_required_actions.json"
+risk_path = f"{readiness_dir}/risk_milestone_report.json"
 
 with open(report_path, "r", encoding="utf-8") as fh:
     report = json.load(fh)
 with open(actions_path, "r", encoding="utf-8") as fh:
     actions_doc = json.load(fh)
+with open(risk_path, "r", encoding="utf-8") as fh:
+    risk_doc = json.load(fh)
 
 if report.get("schema_version") != 1:
     raise SystemExit("readiness_report schema_version must be 1")
 if actions_doc.get("schema_version") != 1:
     raise SystemExit("next_required_actions schema_version must be 1")
+if risk_doc.get("schema_version") != 1:
+    raise SystemExit("risk_milestone_report schema_version must be 1")
 if report.get("source") != "phase5_production_readiness":
     raise SystemExit("readiness_report source mismatch")
 if actions_doc.get("source") != "phase5_production_readiness":
     raise SystemExit("next_required_actions source mismatch")
+if risk_doc.get("source") != "phase5_production_readiness":
+    raise SystemExit("risk_milestone_report source mismatch")
 if report.get("readiness_status") != expected_status:
     raise SystemExit("readiness_report status mismatch")
 if actions_doc.get("readiness_status") != expected_status:
     raise SystemExit("next_required_actions status mismatch")
+if risk_doc.get("readiness_status") != expected_status:
+    raise SystemExit("risk_milestone_report status mismatch")
 
 checks = report.get("checks")
 actions = report.get("next_required_actions")
@@ -80,6 +89,29 @@ if report.get("action_count") != len(actions):
     raise SystemExit("readiness_report action_count mismatch")
 if actions_doc.get("action_count") != len(actions):
     raise SystemExit("next_required_actions action_count mismatch")
+if risk_doc.get("next_required_actions") != actions:
+    raise SystemExit("risk_milestone_report actions differ from readiness report")
+if risk_doc.get("formal_completion_status") != "requires_passed_phase5_production_gate":
+    raise SystemExit("risk_milestone_report completion status mismatch")
+
+milestones = risk_doc.get("milestones")
+risks = risk_doc.get("risks")
+if not isinstance(milestones, list) or len(milestones) < 6:
+    raise SystemExit("risk_milestone_report milestones must include M1-M6")
+if not isinstance(risks, list) or len(risks) < 5:
+    raise SystemExit("risk_milestone_report risks must include R1-R5")
+milestone_by_id = {item.get("id"): item for item in milestones}
+risk_by_id = {item.get("id"): item for item in risks}
+for required in ("M1", "M2", "M3", "M4", "M5", "M6"):
+    if required not in milestone_by_id:
+        raise SystemExit(f"risk_milestone_report missing milestone {required}")
+for required in ("R1", "R2", "R3", "R4", "R5"):
+    if required not in risk_by_id:
+        raise SystemExit(f"risk_milestone_report missing risk {required}")
+if milestone_by_id["M6"].get("status") != "deferred":
+    raise SystemExit("fanout milestone must remain deferred in P5 baseline")
+if risk_by_id["R5"].get("status") != "deferred":
+    raise SystemExit("fanout risk must remain deferred in P5 baseline")
 
 statuses = {item.get("status") for item in checks}
 if expected_status == "ready":
@@ -92,6 +124,12 @@ if expected_status == "ready":
     missing = sorted(required_passes - passed)
     if missing:
         raise SystemExit(f"ready report missing passed checks: {missing}")
+    if risk_doc.get("phase5_basis_status") != "ready_for_formal_production_gate":
+        raise SystemExit("ready risk report basis status mismatch")
+    if milestone_by_id["M1"].get("status") != "ready":
+        raise SystemExit("ready risk report M1 status mismatch")
+    if risk_by_id["R4"].get("status") != "controlled":
+        raise SystemExit("ready risk report production environment risk mismatch")
 else:
     if not actions:
         raise SystemExit("not_ready report contains no remediation actions")
@@ -107,6 +145,14 @@ else:
     has_actionable = any(name in actionable or str(name).startswith("script_") for name in action_names)
     if not has_actionable:
         raise SystemExit("not_ready report has no actionable remediation")
+    if risk_doc.get("phase5_basis_status") != "not_ready_for_formal_production_gate":
+        raise SystemExit("not_ready risk report basis status mismatch")
+    if milestone_by_id["M1"].get("status") != "blocked":
+        raise SystemExit("not_ready risk report M1 status mismatch")
+    if "M1" not in risk_doc.get("blocked_milestones", []):
+        raise SystemExit("not_ready risk report missing blocked M1")
+    if risk_by_id["R4"].get("status") != "blocked":
+        raise SystemExit("not_ready risk report production environment risk mismatch")
 PY
 }
 
@@ -139,6 +185,8 @@ require_failed_readiness_evidence() {
   require_file "${readiness_dir}/next_required_actions.txt"
   require_file "${readiness_dir}/next_required_actions.json"
   require_file "${readiness_dir}/readiness_report.json"
+  require_file "${readiness_dir}/risk_milestone_report.json"
+  require_file "${readiness_dir}/risk_milestone_summary.txt"
   require_file "${readiness_dir}/check_records.jsonl"
   require_file "${readiness_dir}/action_records.jsonl"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
@@ -162,6 +210,8 @@ require_failed_readiness_evidence() {
     fail "failed readiness evidence missing structured next required actions pointer"
   rg -q '^readiness_report_json=' "${readiness_summary}" ||
     fail "failed readiness evidence missing readiness report pointer"
+  rg -q '^risk_milestone_report_json=' "${readiness_summary}" ||
+    fail "failed readiness evidence missing risk milestone report pointer"
   rg -q '^action=(capture_manifest|real_renderer|webrtc_modules|soak_config|script_[^ ]+) status=(fail|skipped) ' \
     "${readiness_dir}/next_required_actions.txt" ||
     fail "failed readiness evidence missing actionable remediation file"
@@ -229,6 +279,8 @@ require_success_readiness() {
   require_file "${readiness_dir}/manifest.sha256"
   require_file "${readiness_dir}/next_required_actions.json"
   require_file "${readiness_dir}/readiness_report.json"
+  require_file "${readiness_dir}/risk_milestone_report.json"
+  require_file "${readiness_dir}/risk_milestone_summary.txt"
   require_file "${readiness_dir}/check_records.jsonl"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
   require_file "${readiness_dir}/logs/capture_manifest.log"

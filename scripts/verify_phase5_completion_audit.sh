@@ -216,11 +216,19 @@ require_doc_pattern scripts/verify_phase5_production_readiness.sh \
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'next_required_actions.json' production_readiness_structured_actions
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'risk_milestone_report.json' production_readiness_risk_milestone_report
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'formal_completion_status' production_readiness_completion_status_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'fanout_evaluation' production_readiness_fanout_deferred
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'action_for_check' production_readiness_action_mapping
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'next_required_actions.txt' production_gate_failed_readiness_actions
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_readiness_json' production_gate_readiness_json_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'risk_milestone_report.json' production_gate_risk_milestone_json_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   "! -path './manifest.sha256'" production_gate_top_manifest_scope
 

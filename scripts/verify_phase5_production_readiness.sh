@@ -9,6 +9,8 @@ LOG_DIR="${LOG_DIR:-${OUTPUT_DIR}/logs}"
 NEXT_REQUIRED_ACTIONS_FILE="${OUTPUT_DIR}/next_required_actions.txt"
 NEXT_REQUIRED_ACTIONS_JSON="${OUTPUT_DIR}/next_required_actions.json"
 READINESS_REPORT_JSON="${OUTPUT_DIR}/readiness_report.json"
+RISK_MILESTONE_REPORT_JSON="${OUTPUT_DIR}/risk_milestone_report.json"
+RISK_MILESTONE_SUMMARY_FILE="${OUTPUT_DIR}/risk_milestone_summary.txt"
 CHECK_RECORDS_JSONL="${OUTPUT_DIR}/check_records.jsonl"
 ACTION_RECORDS_JSONL="${OUTPUT_DIR}/action_records.jsonl"
 FILES_FILE="${FILES_FILE:-${OUTPUT_DIR}/files.txt}"
@@ -165,6 +167,8 @@ write_readiness_reports() {
   python3 - \
     "${READINESS_REPORT_JSON}" \
     "${NEXT_REQUIRED_ACTIONS_JSON}" \
+    "${RISK_MILESTONE_REPORT_JSON}" \
+    "${RISK_MILESTONE_SUMMARY_FILE}" \
     "${CHECK_RECORDS_JSONL}" \
     "${ACTION_RECORDS_JSONL}" \
     "${readiness_status}" \
@@ -187,6 +191,8 @@ import sys
 (
     report_path,
     actions_path,
+    risk_report_path,
+    risk_summary_path,
     checks_jsonl,
     actions_jsonl,
     readiness_status,
@@ -202,7 +208,7 @@ import sys
     capture_library_dir,
     capture_library_manifest,
     require_ready,
-) = sys.argv[1:18]
+) = sys.argv[1:20]
 
 
 def read_jsonl(path):
@@ -229,6 +235,240 @@ def parse_number(value):
 
 checks = read_jsonl(checks_jsonl)
 actions = read_jsonl(actions_jsonl)
+checks_by_name = {item.get("check"): item for item in checks}
+actions_by_name = {item.get("action"): item for item in actions}
+
+
+def check_status(name):
+    return checks_by_name.get(name, {}).get("status", "missing")
+
+
+def check_evidence(names):
+    evidence = []
+    for name in names:
+        item = checks_by_name.get(name)
+        if item is None:
+            evidence.append({"check": name, "status": "missing", "detail": "not_recorded"})
+        else:
+            evidence.append(item)
+    return evidence
+
+
+def action_blockers(names):
+    blockers = []
+    for name in names:
+        item = actions_by_name.get(name)
+        if item is not None:
+            blockers.append(item)
+    return blockers
+
+
+def gate_backed_status(names):
+    return "gate_available" if all(check_status(name) == "pass" for name in names) else "blocked"
+
+
+def gate_backed_blockers(names):
+    return [
+        {
+            "action": name,
+            "status": check_status(name),
+            "required": f"restore_or_rerun {name}",
+        }
+        for name in names
+        if check_status(name) != "pass"
+    ]
+
+
+production_checks = [
+    "soak_config",
+    "webrtc_modules",
+    "capture_manifest",
+    "real_renderer",
+]
+logging_checks = [
+    "script_verify_phase5_logging.sh",
+    "script_run_phase5_implementation_gate.sh",
+    "script_verify_phase5_implementation_gate.sh",
+]
+observability_checks = [
+    "script_verify_phase5_metrics.sh",
+    "script_verify_phase5_alerts.sh",
+    "script_collect_phase5_debug_bundle.sh",
+    "script_verify_phase5_debug_bundle.sh",
+]
+minimal_udp_checks = [
+    "script_verify_phase5_minimal_udp_external_app.sh",
+    "script_run_phase5_implementation_gate.sh",
+]
+release_checks = [
+    "script_verify_phase5_release_contract.sh",
+    "script_verify_phase5_error_contract.sh",
+    "script_verify_no_selfmade_media_stack.sh",
+]
+
+production_blockers = action_blockers(production_checks)
+milestones = [
+    {
+        "id": "M1",
+        "name": "production_evidence_closure",
+        "status": "ready" if readiness_status == "ready" else "blocked",
+        "required_evidence": production_checks
+        + ["passed_phase5_production_gate", "passed_phase5_completion_audit"],
+        "current_evidence": check_evidence(production_checks),
+        "blockers": production_blockers,
+    },
+    {
+        "id": "M2",
+        "name": "logging_fileization",
+        "status": gate_backed_status(logging_checks),
+        "required_evidence": [
+            "phase5_logging implementation gate",
+            "role log files",
+            "rotation",
+            "stop flush",
+            "async queue drop accounting",
+        ],
+        "current_evidence": check_evidence(logging_checks),
+        "blockers": gate_backed_blockers(logging_checks),
+    },
+    {
+        "id": "M3",
+        "name": "metrics_alerts_debug_bundle",
+        "status": gate_backed_status(observability_checks),
+        "required_evidence": [
+            "phase5_metrics implementation gate",
+            "phase5_alerts implementation gate",
+            "debug bundle collect and verify",
+        ],
+        "current_evidence": check_evidence(observability_checks),
+        "blockers": gate_backed_blockers(observability_checks),
+    },
+    {
+        "id": "M4",
+        "name": "external_minimal_udp_app",
+        "status": gate_backed_status(minimal_udp_checks),
+        "required_evidence": [
+            "external minimal UDP app builds from install prefix",
+            "selftest emits logs metrics alerts",
+        ],
+        "current_evidence": check_evidence(minimal_udp_checks),
+        "blockers": gate_backed_blockers(minimal_udp_checks),
+    },
+    {
+        "id": "M5",
+        "name": "release_contract",
+        "status": gate_backed_status(release_checks),
+        "required_evidence": [
+            "release contract gate",
+            "error contract gate",
+            "no self-made media stack gate",
+        ],
+        "current_evidence": check_evidence(release_checks),
+        "blockers": gate_backed_blockers(release_checks),
+    },
+    {
+        "id": "M6",
+        "name": "fanout_evaluation",
+        "status": "deferred",
+        "required_evidence": [
+            "explicit scope decision after M1-M5",
+            "receiver-level observability before any fanout work",
+        ],
+        "current_evidence": [
+            {
+                "check": "phase5_scope",
+                "status": "deferred",
+                "detail": "P5 baseline excludes multi-receiver fanout",
+            }
+        ],
+        "blockers": [],
+    },
+]
+
+risk_environment_status = "controlled" if readiness_status == "ready" else "blocked"
+risks = [
+    {
+        "id": "R1",
+        "name": "logging_realtime_overhead",
+        "status": "control_available" if gate_backed_status(logging_checks) == "gate_available" else "open",
+        "mitigation": [
+            "file logging uses bounded async queue",
+            "default info logging avoids packet-level detail",
+            "dropped_log_count is recorded under pressure",
+        ],
+        "evidence": check_evidence(logging_checks),
+    },
+    {
+        "id": "R2",
+        "name": "logging_sensitive_material",
+        "status": "control_available" if gate_backed_status(logging_checks) == "gate_available" else "open",
+        "mitigation": [
+            "config dump is redacted",
+            "runtime paths are excluded from config dump",
+            "media bytes and auth material are not emitted",
+        ],
+        "evidence": check_evidence(logging_checks),
+    },
+    {
+        "id": "R3",
+        "name": "alert_noise",
+        "status": "control_available" if gate_backed_status(observability_checks) == "gate_available" else "open",
+        "mitigation": [
+            "alert policy separates availability media_quality and network_qos",
+            "weak-network degradation is not treated as fatal by itself",
+            "debug bundle records rule counts and first problem",
+        ],
+        "evidence": check_evidence(observability_checks),
+    },
+    {
+        "id": "R4",
+        "name": "production_environment_dependency",
+        "status": risk_environment_status,
+        "mitigation": [
+            "readiness gate records missing formal environment evidence",
+            "production gate requires formal capture manifest and real renderer",
+            "completion audit requires passed production evidence",
+        ],
+        "evidence": check_evidence(production_checks),
+        "required_actions": production_blockers,
+    },
+    {
+        "id": "R5",
+        "name": "fanout_scope_creep",
+        "status": "deferred",
+        "mitigation": [
+            "P5 baseline does not include multi-receiver fanout",
+            "fanout is evaluated only after production observability is closed",
+        ],
+        "evidence": [
+            {
+                "check": "phase5_scope",
+                "status": "deferred",
+                "detail": "multi-receiver fanout is not a P5 baseline gate",
+            }
+        ],
+    },
+]
+
+blocked_milestones = [
+    item["id"] for item in milestones if item["status"] == "blocked"
+]
+risk_doc = {
+    "schema_version": 1,
+    "source": "phase5_production_readiness",
+    "readiness_status": readiness_status,
+    "phase5_basis_status": (
+        "ready_for_formal_production_gate"
+        if readiness_status == "ready"
+        else "not_ready_for_formal_production_gate"
+    ),
+    "formal_completion_status": "requires_passed_phase5_production_gate",
+    "blocked_milestones": blocked_milestones,
+    "milestones": milestones,
+    "risks": risks,
+    "next_required_actions": actions,
+}
+
 actions_doc = {
     "schema_version": 1,
     "source": "phase5_production_readiness",
@@ -258,10 +498,23 @@ report = {
     "next_required_actions": actions,
 }
 
-for path, document in ((report_path, report), (actions_path, actions_doc)):
+for path, document in (
+    (report_path, report),
+    (actions_path, actions_doc),
+    (risk_report_path, risk_doc),
+):
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(document, fh, indent=2, sort_keys=True)
         fh.write("\n")
+
+with open(risk_summary_path, "w", encoding="utf-8") as fh:
+    fh.write(f"phase5_basis_status={risk_doc['phase5_basis_status']}\n")
+    fh.write(f"formal_completion_status={risk_doc['formal_completion_status']}\n")
+    fh.write(f"blocked_milestones={','.join(blocked_milestones) or 'none'}\n")
+    for item in milestones:
+        fh.write(f"milestone={item['id']} status={item['status']} name={item['name']}\n")
+    for item in risks:
+        fh.write(f"risk={item['id']} status={item['status']} name={item['name']}\n")
 PY
 }
 
@@ -298,7 +551,13 @@ fi
 for script in \
     run_phase5_implementation_gate.sh \
     verify_phase5_implementation_gate.sh \
+    verify_phase5_logging.sh \
+    verify_phase5_metrics.sh \
+    verify_phase5_alerts.sh \
+    verify_phase5_error_contract.sh \
+    verify_phase5_minimal_udp_external_app.sh \
     verify_phase5_release_contract.sh \
+    verify_no_selfmade_media_stack.sh \
     collect_phase5_debug_bundle.sh \
     verify_phase5_debug_bundle.sh \
     verify_webrtc_modules.sh \
@@ -373,6 +632,8 @@ write_summary "action_count=${action_count}"
 write_summary "next_required_actions_file=${NEXT_REQUIRED_ACTIONS_FILE}"
 write_summary "next_required_actions_json=${NEXT_REQUIRED_ACTIONS_JSON}"
 write_summary "readiness_report_json=${READINESS_REPORT_JSON}"
+write_summary "risk_milestone_report_json=${RISK_MILESTONE_REPORT_JSON}"
+write_summary "risk_milestone_summary_file=${RISK_MILESTONE_SUMMARY_FILE}"
 write_summary "check_records_jsonl=${CHECK_RECORDS_JSONL}"
 write_summary "action_records_jsonl=${ACTION_RECORDS_JSONL}"
 write_summary "phase5_production_readiness_status=${readiness_status}"
@@ -389,6 +650,8 @@ if rg -q 'payload|annexb_bytes|rtp_bytes|token|secret|password' \
   "${NEXT_REQUIRED_ACTIONS_FILE}" \
   "${NEXT_REQUIRED_ACTIONS_JSON}" \
   "${READINESS_REPORT_JSON}" \
+  "${RISK_MILESTONE_REPORT_JSON}" \
+  "${RISK_MILESTONE_SUMMARY_FILE}" \
   "${CHECK_RECORDS_JSONL}" \
   "${ACTION_RECORDS_JSONL}"; then
   echo "phase5 production readiness failed: sensitive field in summary" >&2
