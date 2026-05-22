@@ -38,6 +38,78 @@ summary_has() {
   rg -q "${pattern}" "${SUMMARY_FILE}"
 }
 
+verify_readiness_json() {
+  local readiness_dir="$1"
+  local expected_status="$2"
+  python3 - "${readiness_dir}" "${expected_status}" <<'PY'
+import json
+import sys
+
+readiness_dir, expected_status = sys.argv[1:3]
+report_path = f"{readiness_dir}/readiness_report.json"
+actions_path = f"{readiness_dir}/next_required_actions.json"
+
+with open(report_path, "r", encoding="utf-8") as fh:
+    report = json.load(fh)
+with open(actions_path, "r", encoding="utf-8") as fh:
+    actions_doc = json.load(fh)
+
+if report.get("schema_version") != 1:
+    raise SystemExit("readiness_report schema_version must be 1")
+if actions_doc.get("schema_version") != 1:
+    raise SystemExit("next_required_actions schema_version must be 1")
+if report.get("source") != "phase5_production_readiness":
+    raise SystemExit("readiness_report source mismatch")
+if actions_doc.get("source") != "phase5_production_readiness":
+    raise SystemExit("next_required_actions source mismatch")
+if report.get("readiness_status") != expected_status:
+    raise SystemExit("readiness_report status mismatch")
+if actions_doc.get("readiness_status") != expected_status:
+    raise SystemExit("next_required_actions status mismatch")
+
+checks = report.get("checks")
+actions = report.get("next_required_actions")
+actions_doc_actions = actions_doc.get("actions")
+if not isinstance(checks, list) or not checks:
+    raise SystemExit("readiness_report checks must be a non-empty list")
+if not isinstance(actions, list):
+    raise SystemExit("readiness_report actions must be a list")
+if actions != actions_doc_actions:
+    raise SystemExit("readiness_report actions differ from next_required_actions")
+if report.get("action_count") != len(actions):
+    raise SystemExit("readiness_report action_count mismatch")
+if actions_doc.get("action_count") != len(actions):
+    raise SystemExit("next_required_actions action_count mismatch")
+
+statuses = {item.get("status") for item in checks}
+if expected_status == "ready":
+    if report.get("failure_count") != 0 or report.get("skipped_count") != 0:
+        raise SystemExit("ready report contains failures or skipped checks")
+    if actions:
+        raise SystemExit("ready report contains remediation actions")
+    required_passes = {"webrtc_modules", "capture_manifest", "real_renderer"}
+    passed = {item.get("check") for item in checks if item.get("status") == "pass"}
+    missing = sorted(required_passes - passed)
+    if missing:
+        raise SystemExit(f"ready report missing passed checks: {missing}")
+else:
+    if not actions:
+        raise SystemExit("not_ready report contains no remediation actions")
+    if not ({"fail", "skipped"} & statuses):
+        raise SystemExit("not_ready report has no failed/skipped checks")
+    actionable = {
+        "capture_manifest",
+        "real_renderer",
+        "webrtc_modules",
+        "soak_config",
+    }
+    action_names = {item.get("action") for item in actions}
+    has_actionable = any(name in actionable or str(name).startswith("script_") for name in action_names)
+    if not has_actionable:
+        raise SystemExit("not_ready report has no actionable remediation")
+PY
+}
+
 require_failed_gate_debug_bundle() {
   summary_has '^failure_debug_bundle_status=pass ' ||
     fail "failed gate did not collect verified failure debug bundle"
@@ -65,6 +137,10 @@ require_failed_readiness_evidence() {
   require_file "${readiness_dir}/files.txt"
   require_file "${readiness_dir}/manifest.sha256"
   require_file "${readiness_dir}/next_required_actions.txt"
+  require_file "${readiness_dir}/next_required_actions.json"
+  require_file "${readiness_dir}/readiness_report.json"
+  require_file "${readiness_dir}/check_records.jsonl"
+  require_file "${readiness_dir}/action_records.jsonl"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
   require_file "${readiness_dir}/logs/capture_manifest.log"
   require_file "${readiness_dir}/logs/real_renderer.log"
@@ -82,9 +158,14 @@ require_failed_readiness_evidence() {
   fi
   rg -q '^next_required_actions_file=' "${readiness_summary}" ||
     fail "failed readiness evidence missing next required actions pointer"
+  rg -q '^next_required_actions_json=' "${readiness_summary}" ||
+    fail "failed readiness evidence missing structured next required actions pointer"
+  rg -q '^readiness_report_json=' "${readiness_summary}" ||
+    fail "failed readiness evidence missing readiness report pointer"
   rg -q '^action=(capture_manifest|real_renderer|webrtc_modules|soak_config|script_[^ ]+) status=(fail|skipped) ' \
     "${readiness_dir}/next_required_actions.txt" ||
     fail "failed readiness evidence missing actionable remediation file"
+  verify_readiness_json "${readiness_dir}" "not_ready"
 }
 
 require_failed_implementation_evidence() {
@@ -146,6 +227,9 @@ require_success_readiness() {
   require_file "${readiness_summary}"
   require_file "${readiness_dir}/files.txt"
   require_file "${readiness_dir}/manifest.sha256"
+  require_file "${readiness_dir}/next_required_actions.json"
+  require_file "${readiness_dir}/readiness_report.json"
+  require_file "${readiness_dir}/check_records.jsonl"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
   require_file "${readiness_dir}/logs/capture_manifest.log"
   require_file "${readiness_dir}/logs/real_renderer.log"
@@ -167,6 +251,7 @@ require_success_readiness() {
     fail "phase5 production readiness missing capture manifest pass"
   rg -q '^check=real_renderer status=pass ' "${readiness_summary}" ||
     fail "phase5 production readiness missing real renderer pass"
+  verify_readiness_json "${readiness_dir}" "ready"
 }
 
 require_phase2_completion_evidence() {
