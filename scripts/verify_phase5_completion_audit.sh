@@ -412,6 +412,20 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence missing implementation gate metrics' production_gate_release_implementation_metrics_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase5_implementation_gate_metrics.prom' production_gate_verifies_implementation_metrics
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_production_readiness_report' production_gate_release_readiness_report_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_next_required_actions' production_gate_release_readiness_actions_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_risk_milestone_report' production_gate_release_risk_milestone_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_production_readiness_metrics' production_gate_release_readiness_metrics_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_readiness_check_records' production_gate_release_readiness_check_records_index
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence missing production readiness metrics' production_gate_release_readiness_metrics_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'phase5_readiness_report=' production_gate_release_readiness_summary_pointer
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'git_worktree_clean' production_readiness_git_worktree_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \

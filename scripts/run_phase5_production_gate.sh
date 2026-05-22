@@ -352,6 +352,14 @@ implementation_metrics = os.path.join(
     implementation_dir, "phase5_implementation_gate_metrics.prom"
 )
 readiness_summary = os.path.join(readiness_dir, "phase5_production_readiness_summary.txt")
+readiness_report = os.path.join(readiness_dir, "readiness_report.json")
+next_required_actions_json = os.path.join(readiness_dir, "next_required_actions.json")
+risk_milestone_report = os.path.join(readiness_dir, "risk_milestone_report.json")
+risk_milestone_summary = os.path.join(readiness_dir, "risk_milestone_summary.txt")
+readiness_metrics = os.path.join(
+    readiness_dir, "phase5_production_readiness_metrics.prom"
+)
+readiness_check_records = os.path.join(readiness_dir, "check_records.jsonl")
 debug_slo = os.path.join(debug_bundle_dir, "monitoring", "slo_report.json")
 phase2_summary = os.path.join(phase2_dir, "phase2_production_gate_summary.txt")
 phase2_audit_summary = os.path.join(
@@ -419,6 +427,12 @@ checks = {
         "phase5_production_readiness_status"
     )
     == "ready",
+    "phase5_production_readiness_report": has_file(readiness_report),
+    "phase5_next_required_actions": has_file(next_required_actions_json),
+    "phase5_risk_milestone_report": has_file(risk_milestone_report),
+    "phase5_risk_milestone_summary": has_file(risk_milestone_summary),
+    "phase5_production_readiness_metrics": has_file(readiness_metrics),
+    "phase5_readiness_check_records": has_file(readiness_check_records),
     "git_worktree_clean": metadata.get("GIT_TRACKED_WORKTREE_CLEAN") == "1"
     and has_prefix(readiness_summary, "check=git_worktree_clean status=pass "),
     "phase5_debug_bundle": has_file(
@@ -481,6 +495,36 @@ evidence = [
             "phase5_production_readiness",
             checks["phase5_production_readiness"],
             rel(readiness_summary),
+        ),
+        (
+            "phase5_production_readiness_report",
+            checks["phase5_production_readiness_report"],
+            rel(readiness_report),
+        ),
+        (
+            "phase5_next_required_actions",
+            checks["phase5_next_required_actions"],
+            rel(next_required_actions_json),
+        ),
+        (
+            "phase5_risk_milestone_report",
+            checks["phase5_risk_milestone_report"],
+            rel(risk_milestone_report),
+        ),
+        (
+            "phase5_risk_milestone_summary",
+            checks["phase5_risk_milestone_summary"],
+            rel(risk_milestone_summary),
+        ),
+        (
+            "phase5_production_readiness_metrics",
+            checks["phase5_production_readiness_metrics"],
+            rel(readiness_metrics),
+        ),
+        (
+            "phase5_readiness_check_records",
+            checks["phase5_readiness_check_records"],
+            rel(readiness_check_records),
         ),
         (
             "git_worktree_clean",
@@ -603,6 +647,7 @@ doc = {
     },
     "observability": {
         "implementation_gate_metrics": rel(implementation_metrics),
+        "production_readiness_metrics": rel(readiness_metrics),
         "phase2_completion_audit_metrics": rel(phase2_audit_metrics),
         "debug_bundle_slo_status": slo_status,
         "debug_bundle_slo_report": rel(debug_slo),
@@ -673,6 +718,12 @@ doc = {
         "phase5_implementation_gate": rel(implementation_dir),
         "phase5_implementation_gate_metrics": rel(implementation_metrics),
         "phase5_production_readiness": rel(readiness_dir),
+        "phase5_production_readiness_report": rel(readiness_report),
+        "phase5_next_required_actions": rel(next_required_actions_json),
+        "phase5_risk_milestone_report": rel(risk_milestone_report),
+        "phase5_risk_milestone_summary": rel(risk_milestone_summary),
+        "phase5_production_readiness_metrics": rel(readiness_metrics),
+        "phase5_readiness_check_records": rel(readiness_check_records),
         "phase5_debug_bundle": rel(debug_bundle_dir),
         "phase2_production_gate": rel(phase2_dir),
         "phase2_evidence_bundle": rel(phase2_evidence_bundle),
@@ -716,6 +767,9 @@ with open(release_summary, "w", encoding="utf-8") as fh:
             f"evidence={item['id']} status={item['status']} "
             f"artifact={item['artifact']}\n"
         )
+    fh.write(f"phase5_readiness_report={rel(readiness_report)}\n")
+    fh.write(f"phase5_readiness_metrics={rel(readiness_metrics)}\n")
+    fh.write(f"phase5_risk_milestone_report={rel(risk_milestone_report)}\n")
     fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
     fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
     fh.write(f"production_soak_minutes={doc['production_soak']['soak_minutes']}\n")

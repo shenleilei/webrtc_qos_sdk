@@ -212,11 +212,12 @@ release evidence 生成阶段也会拒绝 `renderer_backend=xvfb` 或没有实�
 `phase5_production_gate_metrics.prom` 是顶层 gate 的 Prometheus/textfile 指标出口：
 导出 pass/fail/dry_run、各 step 状态、failure debug bundle 状态和 release evidence
 状态，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
-implementation gate、implementation gate `.prom` 指标、clean tracked worktree、production readiness、debug bundle SLO、底层 Phase-2
+implementation gate、implementation gate `.prom` 指标、clean tracked worktree、production readiness summary、
+readiness report、next required actions、risk milestone report、readiness `.prom` 指标、readiness check records、debug bundle SLO、底层 Phase-2
 production gate、底层 Phase-2 completion audit `.prom` 指标、production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、
 正式 capture library、capture manifest summary、capture QoE CSV、capture QoE summary、
 evidence bundle 和 completion audit 的 pass 状态及相对 artifact 路径，同时记录
-production soak rows、real renderer backend、capture QoE rows/minima 和
+production soak rows、real renderer backend、readiness report/metrics/risk milestone 指针、capture QoE rows/minima 和
 `multi_receiver_fanout=deferred_before_p5_completion`。非 dry-run 失败时会自动收集并校验
 `failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和 runtime
 config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包存在且

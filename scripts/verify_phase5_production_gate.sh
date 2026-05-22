@@ -994,6 +994,11 @@ if not phase2_audit_metrics or not os.path.exists(
     os.path.join(gate_dir, phase2_audit_metrics)
 ):
     raise SystemExit("release evidence missing Phase-2 completion audit metrics")
+readiness_metrics = observability.get("production_readiness_metrics")
+if not readiness_metrics or not os.path.exists(
+    os.path.join(gate_dir, readiness_metrics)
+):
+    raise SystemExit("release evidence missing production readiness metrics")
 if observability.get("debug_bundle_slo_status") not in {"pass", "warn", "fail"}:
     raise SystemExit("release evidence missing debug bundle SLO status")
 fanout = doc.get("fanout", {})
@@ -1024,6 +1029,12 @@ required_evidence = {
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
     "phase5_production_readiness",
+    "phase5_production_readiness_report",
+    "phase5_next_required_actions",
+    "phase5_risk_milestone_report",
+    "phase5_risk_milestone_summary",
+    "phase5_production_readiness_metrics",
+    "phase5_readiness_check_records",
     "git_worktree_clean",
     "phase5_debug_bundle",
     "phase2_production_gate",
@@ -1065,6 +1076,12 @@ for key in (
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
     "phase5_production_readiness",
+    "phase5_production_readiness_report",
+    "phase5_next_required_actions",
+    "phase5_risk_milestone_report",
+    "phase5_risk_milestone_summary",
+    "phase5_production_readiness_metrics",
+    "phase5_readiness_check_records",
     "phase5_debug_bundle",
     "phase2_production_gate",
     "phase2_evidence_bundle",
@@ -1118,6 +1135,7 @@ def normalize_rel(path):
     return os.path.normpath(path).replace(os.sep, "/")
 
 phase2_evidence_bundle_rel = artifacts.get("phase2_evidence_bundle", "")
+readiness_artifact_base = normalize_rel(artifacts.get("phase5_production_readiness", ""))
 production_soak_artifact_base = normalize_rel(
     os.path.join(phase2_evidence_bundle_rel, "production_soak")
 )
@@ -1178,6 +1196,28 @@ capture_pointer_keys = {
     "capture_qoe_csv": "qoe_csv",
     "capture_qoe_summary": "qoe_summary",
 }
+expected_readiness_artifacts = {
+    "phase5_production_readiness_report": normalize_rel(
+        os.path.join(readiness_artifact_base, "readiness_report.json")
+    ),
+    "phase5_next_required_actions": normalize_rel(
+        os.path.join(readiness_artifact_base, "next_required_actions.json")
+    ),
+    "phase5_risk_milestone_report": normalize_rel(
+        os.path.join(readiness_artifact_base, "risk_milestone_report.json")
+    ),
+    "phase5_risk_milestone_summary": normalize_rel(
+        os.path.join(readiness_artifact_base, "risk_milestone_summary.txt")
+    ),
+    "phase5_production_readiness_metrics": normalize_rel(
+        os.path.join(
+            readiness_artifact_base, "phase5_production_readiness_metrics.prom"
+        )
+    ),
+    "phase5_readiness_check_records": normalize_rel(
+        os.path.join(readiness_artifact_base, "check_records.jsonl")
+    ),
+}
 
 production_soak = doc.get("production_soak", {})
 for key in ("summary", "csv", "config", "archive"):
@@ -1209,6 +1249,8 @@ def require_consistent_pointer(evidence_id, expected_rel, nested_rel=None):
             f"{nested_rel}, expected {expected_rel}"
         )
 
+for evidence_id, expected_rel in expected_readiness_artifacts.items():
+    require_consistent_pointer(evidence_id, expected_rel)
 for evidence_id, expected_rel in expected_production_soak_artifacts.items():
     nested_key = evidence_id.replace("production_soak_", "")
     require_consistent_pointer(evidence_id, expected_rel, production_soak.get(nested_key))
@@ -1279,6 +1321,8 @@ for expected in (
     "fanout_status=deferred",
     "min_production_soak_minutes=",
     "evidence=phase5_implementation_gate_metrics status=pass",
+    "evidence=phase5_production_readiness_report status=pass",
+    "evidence=phase5_production_readiness_metrics status=pass",
     "evidence=git_worktree_clean status=pass",
     "evidence=phase2_completion_audit_metrics status=pass",
     "evidence=production_soak status=pass",
@@ -1287,6 +1331,9 @@ for expected in (
     "evidence=real_renderer_summary status=pass",
     "evidence=capture_library status=pass",
     "evidence=capture_qoe_csv status=pass",
+    "phase5_readiness_report=",
+    "phase5_readiness_metrics=",
+    "phase5_risk_milestone_report=",
     "production_soak_csv=",
     "production_soak_rows=",
     "real_renderer_summary=",
