@@ -35,6 +35,8 @@ require_file "${GATE_DIR}/phase5_production_gate_metrics.prom"
   fail "missing capture evidence verifier: ${SDK_ROOT}/scripts/verify_capture_library_evidence.sh"
 [[ -x "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh" ]] ||
   fail "missing production soak archive verifier: ${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh"
+[[ -x "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_evidence.sh" ]] ||
+  fail "missing production soak evidence verifier: ${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_evidence.sh"
 
 (
   cd "${GATE_DIR}"
@@ -600,6 +602,7 @@ for key in (
     "production_soak_csv",
     "production_soak_config",
     "production_soak_archive",
+    "production_soak_evidence_log",
     "real_renderer_summary",
     "real_renderer_metrics",
     "capture_manifest_summary",
@@ -746,6 +749,7 @@ for required in (
     "phase2_completion_audit",
     "phase2_completion_audit_metrics",
     "production_soak",
+    "production_soak_evidence",
     "production_soak_raw_evidence",
     "real_renderer",
     "real_renderer_raw_evidence",
@@ -766,6 +770,7 @@ for key in (
     "production_soak_csv",
     "production_soak_config",
     "production_soak_archive",
+    "production_soak_evidence_log",
     "real_renderer_summary",
     "real_renderer_metrics",
     "capture_manifest_summary",
@@ -924,6 +929,8 @@ require_phase2_completion_evidence() {
       fail "imported Phase-2 evidence was not generated from a clean tracked worktree"
     rg -q '^check=phase2_completion_audit_metrics status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
       fail "imported Phase-2 evidence did not include completion audit metrics"
+    rg -q '^check=production_soak_evidence status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
+      fail "imported Phase-2 production soak evidence did not pass"
     rg -q '^check=real_renderer_rendered_frames status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
       fail "imported Phase-2 renderer evidence rendered no frames"
   fi
@@ -959,6 +966,14 @@ require_phase2_completion_evidence() {
   require_file "${production_soak_archive}"
   OUTPUT_DIR="${production_soak_dir}" REQUIRE_SOAK_TARBALL=1 \
     "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh" >/dev/null
+  PRODUCTION_SOAK_DIR="${production_soak_dir}" \
+    PRODUCTION_SOAK_SUMMARY="${production_soak_summary}" \
+    PRODUCTION_SOAK_CSV="${production_soak_csv}" \
+    PRODUCTION_SOAK_CONFIG="${production_soak_config}" \
+    PRODUCTION_SOAK_ARCHIVE="${production_soak_archive}" \
+    MIN_PRODUCTION_SOAK_MINUTES=120 \
+    REQUIRE_PRODUCTION_SOAK_ARCHIVE=1 \
+    "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_evidence.sh" >/dev/null
   local production_soak_minutes
   production_soak_minutes="$(
     awk -F= '$1=="SOAK_MINUTES"{print $2}' "${production_soak_config}" | tail -1

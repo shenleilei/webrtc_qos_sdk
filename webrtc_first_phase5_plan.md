@@ -240,7 +240,10 @@ readiness `.prom` 指标、clean tracked worktree 证据，并直接复验顶层
 `phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`、`phase2_completion_audit_metrics.prom`，同时强制复验 `phase5_release_evidence.json` 和
 release evidence 里索引的 production soak archive、真实 renderer summary/metrics 和 capture QoE
-CSV；真实 renderer 证据会通过 `verify_real_renderer_evidence.sh` 复验非 Xvfb backend、实际 rendered frames、late/gap/jitter 预算，避免只相信 summary。
+CSV；production soak 证据会通过 `verify_webrtc_first_qoe_production_soak_evidence.sh`
+复验 `SOAK_MINUTES>=120`、summary/CSV/config/archive 一致性、clean tracked worktree
+metadata、弱网低发送预算和恢复时间分布，真实 renderer 证据会通过
+`verify_real_renderer_evidence.sh` 复验非 Xvfb backend、实际 rendered frames、late/gap/jitter 预算，避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
 production soak archive 也必须是可追溯的正式证据：runner 在
@@ -249,6 +252,10 @@ production soak archive 也必须是可追溯的正式证据：runner 在
 clean 判定；`verify_webrtc_first_qoe_production_soak_archive.sh` 默认要求该归档来自
 clean tracked worktree，并复验 `archive/files.txt`、`archive/manifest.sha256` 与实际
 archive 文件集合一致；只有排查历史归档时才允许显式设置 `REQUIRE_CLEAN_GIT_WORKTREE=0`。
+P5 正式审计不直接信任 archive verifier 的单点结果，还会调用
+`verify_webrtc_first_qoe_production_soak_evidence.sh` 复验 summary 与 CSV 聚合一致、
+`SOAK_MINUTES` 不低于声明最低值和 P5 120 分钟下限、QoE 下限、hard failure 计数、
+弱网低发送预算和 archive 指针。
 
 如果真实 renderer、正式 capture library 和 `SOAK_MINUTES>=120` 是在专用测试机跑出的，
 P5 顶层 gate 支持导入该机器收集的 Phase-2 evidence bundle：
@@ -266,10 +273,11 @@ bundle 到 P5 gate 目录内，复验源 bundle、复制后 bundle 和导入目�
 bundle 里的 git head 与当前 P5 gate 的 git head 一致，且 bundle metadata 证明外部测试机
 tracked worktree clean。导入报告还必须索引原始证据：
 production soak summary/CSV/config/archive、真实 renderer summary/metrics、capture
-manifest summary、capture manifest sha256、capture QoE CSV/summary，并输出 `production_soak_raw_evidence`、
+manifest summary、capture manifest sha256、capture QoE CSV/summary，并输出 `production_soak_evidence`、`production_soak_raw_evidence`、
 `real_renderer_raw_evidence`、`real_renderer_rendered_frames`、`capture_qoe_raw_evidence` 检查项；导入时会调用
-`verify_real_renderer_evidence.sh` 复验真实 renderer summary/metrics，避免外部机器只给
-pass 摘要、Xvfb-only renderer 或没有实际 rendered frames 的结果而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
+`verify_webrtc_first_qoe_production_soak_evidence.sh` 复验 production soak summary/CSV/config/archive，
+调用 `verify_real_renderer_evidence.sh` 复验真实 renderer summary/metrics，避免外部机器只给
+pass 摘要、短时或不一致 soak、Xvfb-only renderer 或没有实际 rendered frames 的结果而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
 `external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
 和业务素材；但只有导入报告 `import_status=pass`，且 clean tracked worktree、git head、
 production soak、真实 renderer、capture QoE、capture manifest sha256 和原始证据指针都
@@ -1436,7 +1444,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 成功路径必须生成并离线复验 `phase5_release_evidence.json`，确认 production soak、
   production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、正式
   capture library、capture QoE CSV、evidence bundle 和 completion audit 都有 pass
-  证据指针，并通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，通过 `verify_capture_library_evidence.sh` 确认 capture manifest/QoE 绑定和质量门槛均通过，同时写出 production soak rows、real renderer backend 和 capture QoE
+  证据指针，并通过 `verify_webrtc_first_qoe_production_soak_evidence.sh` 确认长时 soak
+  summary/CSV/config/archive 一致且满足 P5 下限，通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，通过 `verify_capture_library_evidence.sh` 确认 capture manifest/QoE 绑定和质量门槛均通过，同时写出 production soak rows、real renderer backend 和 capture QoE
   rows/minima 供排障。
 - 成功路径必须离线复验底层 Phase-2 evidence bundle 和 completion audit，确认
   production soak、真实 renderer、正式 capture library 均为 pass，且 `.prom`

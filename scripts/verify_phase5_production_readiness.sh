@@ -215,6 +215,7 @@ for required in (
     "phase2_completion_audit",
     "phase2_completion_audit_metrics",
     "production_soak",
+    "production_soak_evidence",
     "production_soak_raw_evidence",
     "real_renderer",
     "real_renderer_raw_evidence",
@@ -236,6 +237,7 @@ for key in (
     "production_soak_csv",
     "production_soak_config",
     "production_soak_archive",
+    "production_soak_evidence_log",
     "real_renderer_summary",
     "real_renderer_metrics",
     "capture_manifest_summary",
@@ -849,6 +851,7 @@ for script in \
     verify_webrtc_modules.sh \
     verify_capture_library_manifest.sh \
     verify_real_renderer_smoke.sh \
+    verify_webrtc_first_qoe_production_soak_evidence.sh \
     import_phase5_phase2_evidence_bundle.sh \
     run_phase5_production_gate.sh \
     verify_phase5_production_gate.sh \

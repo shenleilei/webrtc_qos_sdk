@@ -180,6 +180,25 @@ if ! env SUMMARY_FILE="${BUNDLE_OUTPUT_DIR}/real_renderer/real_renderer_summary.
   exit 1
 fi
 
+if ! env SDK_ROOT="${SDK_ROOT}" \
+    PRODUCTION_SOAK_DIR="${BUNDLE_OUTPUT_DIR}/production_soak" \
+    PRODUCTION_SOAK_SUMMARY="${BUNDLE_OUTPUT_DIR}/production_soak/webrtc_first_qoe_production_soak_summary.txt" \
+    PRODUCTION_SOAK_CSV="${BUNDLE_OUTPUT_DIR}/production_soak/webrtc_first_qoe_production_soak.csv" \
+    PRODUCTION_SOAK_CONFIG="${BUNDLE_OUTPUT_DIR}/production_soak/webrtc_first_qoe_production_soak_config.env" \
+    PRODUCTION_SOAK_ARCHIVE="${BUNDLE_OUTPUT_DIR}/production_soak/webrtc_first_qoe_production_soak_archive.tar.gz" \
+    MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
+    MIN_PRODUCTION_ROWS=1 \
+    MIN_PRODUCTION_CYCLES=1 \
+    REQUIRE_PRODUCTION_SOAK_ARCHIVE=1 \
+    "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_evidence.sh" \
+    >"${LOG_DIR}/production_soak_evidence.log" 2>&1; then
+  write_summary "phase2_production_gate_status=fail"
+  write_summary "production_soak_evidence_log=${LOG_DIR}/production_soak_evidence.log"
+  write_manifest
+  tail -n 80 "${LOG_DIR}/production_soak_evidence.log" >&2 || true
+  exit 1
+fi
+
 if ! env CAPTURE_MANIFEST_SUMMARY="${BUNDLE_OUTPUT_DIR}/capture_library/capture_manifest_summary.txt" \
     CAPTURE_QOE_CSV="${BUNDLE_OUTPUT_DIR}/capture_library/webrtc_first_qoe_capture_library_720p.csv" \
     CAPTURE_QOE_SUMMARY="${BUNDLE_OUTPUT_DIR}/capture_library/capture_qoe_summary.txt" \
@@ -360,6 +379,13 @@ checks = {
     and has_line(audit_summary, "phase2_completion_status=complete"),
     "phase2_completion_audit_metrics": has_file(audit_metrics),
     "production_soak": has_prefix(audit_summary, "check=production_soak status=pass "),
+    "production_soak_evidence": has_file(
+        os.path.join(output_root, "logs", "production_soak_evidence.log")
+    )
+    and has_line(
+        os.path.join(output_root, "logs", "production_soak_evidence.log"),
+        "production_soak_evidence_verification=true",
+    ),
     "real_renderer": has_prefix(audit_summary, "check=real_renderer status=pass "),
     "capture_library": has_prefix(audit_summary, "check=capture_library status=pass "),
     "capture_library_evidence": has_file(
@@ -479,6 +505,9 @@ report = {
         "production_soak_csv": rel(production_soak_csv),
         "production_soak_config": rel(production_soak_config),
         "production_soak_archive": rel(production_soak_archive),
+        "production_soak_evidence_log": rel(
+            os.path.join(output_root, "logs", "production_soak_evidence.log")
+        ),
         "real_renderer_summary": rel(real_renderer_summary),
         "real_renderer_metrics": rel(real_renderer_metrics),
         "real_renderer_evidence_log": rel(
@@ -511,6 +540,10 @@ with open(report_summary, "w", encoding="utf-8") as fh:
     fh.write(f"phase2_completion_audit_metrics={rel(audit_metrics)}\n")
     fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
     fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
+    fh.write(
+        "production_soak_evidence_log="
+        f"{rel(os.path.join(output_root, 'logs', 'production_soak_evidence.log'))}\n"
+    )
     fh.write(f"real_renderer_metrics={rel(real_renderer_metrics)}\n")
     fh.write(
         "real_renderer_rendered_frames="

@@ -315,6 +315,7 @@ fi
 
 production_summary="${PRODUCTION_SOAK_DIR}/webrtc_first_qoe_production_soak_summary.txt"
 production_config="${PRODUCTION_SOAK_DIR}/webrtc_first_qoe_production_soak_config.env"
+production_csv="${PRODUCTION_SOAK_DIR}/webrtc_first_qoe_production_soak.csv"
 production_archive="${PRODUCTION_SOAK_DIR}/webrtc_first_qoe_production_soak_archive.tar.gz"
 production_soak_minutes="$(kv_value "${production_config}" SOAK_MINUTES)"
 production_rows="$(kv_value "${production_summary}" rows)"
@@ -332,15 +333,20 @@ if [[ ! -f "${production_summary}" || ! -f "${production_config}" ]]; then
     audit_fail production_soak "missing summary=${production_summary}"
   fi
 else
-  production_archive_verifier_output=""
-  production_archive_verifier_status=0
-  if ! production_archive_verifier_output="$(env SDK_ROOT="${SDK_ROOT}" \
-      OUTPUT_DIR="${PRODUCTION_SOAK_DIR}" \
-      MIN_SOAK_ROWS="${MIN_PRODUCTION_ROWS}" \
-      MIN_SOAK_CYCLES=1 \
-      REQUIRE_SOAK_TARBALL=1 \
-      "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh" 2>&1)"; then
-    production_archive_verifier_status=1
+  production_evidence_output=""
+  production_evidence_status=0
+  if ! production_evidence_output="$(env SDK_ROOT="${SDK_ROOT}" \
+      PRODUCTION_SOAK_DIR="${PRODUCTION_SOAK_DIR}" \
+      PRODUCTION_SOAK_SUMMARY="${production_summary}" \
+      PRODUCTION_SOAK_CSV="${production_csv}" \
+      PRODUCTION_SOAK_CONFIG="${production_config}" \
+      PRODUCTION_SOAK_ARCHIVE="${production_archive}" \
+      MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
+      MIN_PRODUCTION_ROWS="${MIN_PRODUCTION_ROWS}" \
+      MIN_PRODUCTION_CYCLES=1 \
+      REQUIRE_PRODUCTION_SOAK_ARCHIVE=1 \
+      "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_evidence.sh" 2>&1)"; then
+    production_evidence_status=1
   fi
   production_threshold_output=""
   production_status=0
@@ -382,15 +388,15 @@ PY
     production_status=1
   fi
   if [[ "${production_status}" -eq 0 &&
-      "${production_archive_verifier_status}" -eq 0 &&
+      "${production_evidence_status}" -eq 0 &&
       -f "${production_archive}" ]]; then
     audit_pass production_soak "summary=${production_summary} SOAK_MINUTES=${production_soak_minutes} rows=${production_rows}"
   else
     reason="failed_thresholds"
     if [[ "${production_status}" -ne 0 ]]; then
       reason="threshold_not_met:${production_threshold_output}"
-    elif [[ "${production_archive_verifier_status}" -ne 0 ]]; then
-      reason="archive_verifier_failed:${production_archive_verifier_output}"
+    elif [[ "${production_evidence_status}" -ne 0 ]]; then
+      reason="evidence_not_valid:${production_evidence_output}"
     elif [[ ! -f "${production_archive}" ]]; then
       reason="missing_archive"
     fi
