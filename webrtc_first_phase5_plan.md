@@ -212,7 +212,7 @@ release evidence 生成阶段也会拒绝 `renderer_backend=xvfb` 或没有实�
 的 renderer 结果，避免正式 gate 先声明弱 renderer 证据 pass。
 `phase5_production_gate_metrics.prom` 是顶层 gate 的 Prometheus/textfile 指标出口：
 导出 pass/fail/dry_run、各 step 状态、failure debug bundle 状态和 release evidence
-状态，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
+状态，并按 pass/fail/missing/invalid 聚合 release evidence item 计数，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
 顶层 `files.txt`、顶层 `manifest.sha256`、顶层 `phase5_production_gate_metrics.prom`、release evidence JSON/summary 自身、
 implementation gate、implementation gate `.prom` 指标、clean tracked worktree、production readiness summary、
 readiness report、next required actions、risk milestone report、readiness `.prom` 指标、readiness check records、debug bundle
@@ -1427,7 +1427,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 顶层 `phase5_implementation_gate_metrics.prom` 必须覆盖 implementation gate
   status、step status 和 debug bundle status。
 - 顶层 `phase5_production_gate_metrics.prom` 必须覆盖 gate status、step status、
-  failure debug bundle status 和 release evidence status。
+  failure debug bundle status、release evidence status 和 release evidence item status count。
 - 底层 Phase-2 completion audit 必须输出 `phase2_completion_audit_metrics.prom`，
   覆盖 audit/completion status、check status 和 production evidence status。
 - production wrapper 必须在进入 readiness/soak 前复验 implementation gate，不能只

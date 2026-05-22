@@ -115,6 +115,8 @@ write_manifest() {
 write_gate_metrics() {
   python3 - "${SUMMARY_FILE}" "${PHASE5_GATE_METRICS_PROM}" <<'PY'
 import collections
+import json
+import os
 import re
 import sys
 
@@ -123,12 +125,15 @@ status = "unknown"
 steps = []
 failure_bundle_status = "missing"
 release_evidence_status = "missing"
+release_evidence_path = ""
 step_re = re.compile(r"^step=([^ ]+) status=([^ ]+)")
 with open(summary_path, "r", encoding="utf-8") as fh:
     for line in fh:
         line = line.strip()
         if line.startswith("phase5_production_gate_status="):
             status = line.split("=", 1)[1]
+        if line.startswith("phase5_release_evidence="):
+            release_evidence_path = line.split("=", 1)[1]
         match = step_re.match(line)
         if match:
             step, step_status = match.groups()
@@ -153,6 +158,47 @@ def prom_labels(**labels):
     return "{" + ",".join(items) + "}" if items else ""
 
 
+def resolve_release_evidence_path():
+    if not release_evidence_path:
+        return os.path.join(
+            os.path.dirname(os.path.abspath(metrics_path)),
+            "phase5_release_evidence.json",
+        )
+    if os.path.isabs(release_evidence_path):
+        return release_evidence_path
+    return os.path.join(os.path.dirname(os.path.abspath(metrics_path)), release_evidence_path)
+
+
+def load_release_evidence_metrics():
+    release_status = "missing"
+    formal_completion_status = "missing"
+    item_counts = collections.Counter()
+    path = resolve_release_evidence_path()
+    if not os.path.exists(path):
+        return release_status, formal_completion_status, item_counts
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except Exception:
+        return "invalid", "invalid", item_counts
+    release_status = str(doc.get("release_status") or "unknown")
+    formal_completion_status = str(doc.get("formal_completion_status") or "unknown")
+    evidence = doc.get("evidence")
+    if not isinstance(evidence, list):
+        item_counts["missing"] += 1
+        return release_status, formal_completion_status, item_counts
+    for item in evidence:
+        if isinstance(item, dict):
+            item_status = str(item.get("status") or "missing")
+        else:
+            item_status = "invalid"
+        item_counts[item_status] += 1
+    return release_status, formal_completion_status, item_counts
+
+
+release_status, formal_completion_status, release_item_counts = (
+    load_release_evidence_metrics()
+)
 step_counts = collections.Counter(step_status for _, step_status in steps)
 with open(metrics_path, "w", encoding="utf-8") as fh:
     fh.write("# HELP webrtc_qos_phase5_production_gate_info Phase-5 production gate status marker.\n")
@@ -187,6 +233,22 @@ with open(metrics_path, "w", encoding="utf-8") as fh:
         "webrtc_qos_phase5_production_gate_release_evidence_status"
         f"{prom_labels(status=release_evidence_status)} 1\n"
     )
+    fh.write("# HELP webrtc_qos_phase5_release_evidence_info Phase-5 release evidence document status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_release_evidence_info gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_release_evidence_info"
+        f"{prom_labels(formal_completion_status=formal_completion_status, source='phase5_release_evidence', status=release_status)} 1\n"
+    )
+    fh.write("# HELP webrtc_qos_phase5_release_evidence_items_total Phase-5 release evidence item count by status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_release_evidence_items_total gauge\n")
+    release_item_statuses = sorted(
+        set(release_item_counts) | {"fail", "invalid", "missing", "pass"}
+    )
+    for item_status in release_item_statuses:
+        fh.write(
+            "webrtc_qos_phase5_release_evidence_items_total"
+            f"{prom_labels(status=item_status)} {release_item_counts.get(item_status, 0)}\n"
+        )
 PY
 }
 

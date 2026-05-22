@@ -111,6 +111,8 @@ for required_text in (
     "webrtc_qos_phase5_production_gate_step_status",
     "webrtc_qos_phase5_production_gate_failure_debug_bundle_status",
     "webrtc_qos_phase5_production_gate_release_evidence_status",
+    "webrtc_qos_phase5_release_evidence_info",
+    "webrtc_qos_phase5_release_evidence_items_total",
 ):
     if required_text not in text:
         raise SystemExit(f"production gate metrics missing {required_text}")
@@ -165,6 +167,16 @@ def has(name, value=None, **labels):
         return True
     return False
 
+def values(name, **labels):
+    matched = []
+    for record in records:
+        if record["name"] != name:
+            continue
+        if not all(record["labels"].get(key) == label for key, label in labels.items()):
+            continue
+        matched.append(record["value"])
+    return matched
+
 if not has(
     "webrtc_qos_phase5_production_gate_info",
     value=1,
@@ -190,6 +202,28 @@ elif expected_status == "pass":
         status="pass",
     ):
         raise SystemExit("passed gate metrics missing release evidence pass marker")
+    if not has(
+        "webrtc_qos_phase5_release_evidence_info",
+        value=1,
+        formal_completion_status="complete",
+        status="pass",
+    ):
+        raise SystemExit("passed gate metrics missing release evidence complete info")
+    pass_item_counts = values(
+        "webrtc_qos_phase5_release_evidence_items_total",
+        status="pass",
+    )
+    if not pass_item_counts or sum(pass_item_counts) <= 0:
+        raise SystemExit("passed gate metrics missing release evidence pass item count")
+    for bad_status in ("fail", "missing", "invalid"):
+        bad_item_counts = values(
+            "webrtc_qos_phase5_release_evidence_items_total",
+            status=bad_status,
+        )
+        if any(value != 0 for value in bad_item_counts):
+            raise SystemExit(
+                f"passed gate metrics has release evidence {bad_status} items"
+            )
 elif expected_status == "dry_run":
     if not has("webrtc_qos_phase5_production_gate_steps_total", status="planned"):
         raise SystemExit("dry-run gate metrics missing planned step count")

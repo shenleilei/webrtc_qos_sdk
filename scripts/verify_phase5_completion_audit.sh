@@ -756,6 +756,14 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'webrtc_qos_phase5_production_gate_step_status' production_gate_metrics_step_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'webrtc_qos_phase5_production_gate_failure_debug_bundle_status' production_gate_metrics_failure_bundle_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'webrtc_qos_phase5_release_evidence_info' production_gate_release_evidence_info_metric
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'webrtc_qos_phase5_release_evidence_items_total' production_gate_release_evidence_items_metric
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'passed gate metrics missing release evidence complete info' production_gate_release_evidence_info_metric_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'passed gate metrics has release evidence \{bad_status\} items' production_gate_release_evidence_items_metric_verifier
 require_doc_pattern scripts/verify_phase5_completion_audit.sh \
   'phase5_completion_audit_metrics.prom' completion_audit_metrics_collector
 require_doc_pattern scripts/verify_phase5_completion_audit.sh \
