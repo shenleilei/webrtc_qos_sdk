@@ -97,12 +97,14 @@ summary_has() {
 
 verify_gate_metrics() {
   local expected_status="$1"
-  python3 - "${GATE_DIR}/phase5_production_gate_metrics.prom" "${expected_status}" <<'PY'
+  python3 - "${GATE_DIR}/phase5_production_gate_metrics.prom" "${expected_status}" "${GATE_DIR}" <<'PY'
+import collections
+import json
 import pathlib
 import re
 import sys
 
-path, expected_status = sys.argv[1:3]
+path, expected_status, gate_dir = sys.argv[1:4]
 text = pathlib.Path(path).read_text(encoding="utf-8")
 for required_text in (
     "# TYPE webrtc_qos_phase5_production_gate_info gauge",
@@ -177,6 +179,47 @@ def values(name, **labels):
         matched.append(record["value"])
     return matched
 
+def release_evidence_item_metric_counts():
+    counts = {}
+    for record in records:
+        if record["name"] != "webrtc_qos_phase5_release_evidence_items_total":
+            continue
+        item_status = record["labels"].get("status")
+        if not item_status:
+            raise SystemExit(
+                "production gate metrics release evidence item count missing status label"
+            )
+        if item_status in counts:
+            raise SystemExit(
+                f"production gate metrics duplicate release evidence item count status {item_status}"
+            )
+        if record["value"] < 0 or int(record["value"]) != record["value"]:
+            raise SystemExit(
+                f"production gate metrics invalid release evidence item count for {item_status}"
+            )
+        counts[item_status] = int(record["value"])
+    return counts
+
+def release_evidence_json_counts():
+    json_path = pathlib.Path(gate_dir) / "phase5_release_evidence.json"
+    try:
+        with json_path.open("r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError:
+        raise SystemExit("passed gate metrics missing release evidence json")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"passed gate metrics release evidence json is invalid: {exc}")
+    evidence = doc.get("evidence")
+    if not isinstance(evidence, list):
+        raise SystemExit("passed gate metrics release evidence list missing")
+    counts = collections.Counter()
+    for item in evidence:
+        if isinstance(item, dict):
+            counts[str(item.get("status") or "missing")] += 1
+        else:
+            counts["invalid"] += 1
+    return doc, counts
+
 if not has(
     "webrtc_qos_phase5_production_gate_info",
     value=1,
@@ -209,6 +252,34 @@ elif expected_status == "pass":
         status="pass",
     ):
         raise SystemExit("passed gate metrics missing release evidence complete info")
+    release_doc, expected_item_counts = release_evidence_json_counts()
+    if not has(
+        "webrtc_qos_phase5_release_evidence_info",
+        value=1,
+        formal_completion_status=str(
+            release_doc.get("formal_completion_status") or "unknown"
+        ),
+        status=str(release_doc.get("release_status") or "unknown"),
+    ):
+        raise SystemExit("passed gate metrics release evidence info mismatch")
+    observed_item_counts = release_evidence_item_metric_counts()
+    item_statuses = (
+        set(expected_item_counts)
+        | set(observed_item_counts)
+        | {"fail", "invalid", "missing", "pass"}
+    )
+    for item_status in sorted(item_statuses):
+        expected_count = expected_item_counts.get(item_status, 0)
+        observed_count = observed_item_counts.get(item_status)
+        if observed_count is None:
+            raise SystemExit(
+                f"passed gate metrics missing release evidence item count for {item_status}"
+            )
+        if observed_count != expected_count:
+            raise SystemExit(
+                "passed gate metrics release evidence item count mismatch "
+                f"status={item_status} expected={expected_count} observed={observed_count}"
+            )
     pass_item_counts = values(
         "webrtc_qos_phase5_release_evidence_items_total",
         status="pass",
