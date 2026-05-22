@@ -1461,6 +1461,9 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   check status、M1/M6 里程碑、R4/R5 风险和 remediation action。
 - completion audit 对“implementation gate 已通过但正式生产证据缺失”和“正式完成”
   做硬区分。
+- completion audit 必须把正式 production gate `metadata.txt` 和
+  `phase5_release_evidence.json` 里的 `GIT_HEAD` 绑定到当前 checkout HEAD，不能用旧
+  commit 的长时 soak/renderer/capture 证据完成当前源码。
 - completion audit 必须输出并自校验 `phase5_completion_audit_metrics.prom`，覆盖
   audit/completion status、check status、production evidence status 和 next required
   action。

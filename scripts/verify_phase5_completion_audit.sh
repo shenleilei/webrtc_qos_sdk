@@ -191,6 +191,52 @@ has_file() {
   [[ -s "$1" ]]
 }
 
+kv_value() {
+  local file="$1"
+  local key="$2"
+  [[ -f "${file}" ]] || return 0
+  sed -n "s/^${key}=//p" "${file}" | tail -n 1
+}
+
+current_git_head() {
+  git -C "${SDK_ROOT}" rev-parse HEAD 2>/dev/null || true
+}
+
+release_evidence_git_head() {
+  local release_json="$1"
+  [[ -s "${release_json}" ]] || return 0
+  python3 - "${release_json}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    doc = json.load(fh)
+print(doc.get("requirements", {}).get("git_head", ""))
+PY
+}
+
+verify_production_gate_current_git_head() {
+  local gate_dir="$1"
+  local expected_head
+  local metadata_head
+  local release_head
+  expected_head="$(current_git_head)"
+  if [[ -z "${expected_head}" ]]; then
+    echo "current git head unavailable"
+    return 1
+  fi
+  metadata_head="$(kv_value "${gate_dir}/metadata.txt" GIT_HEAD)"
+  if [[ "${metadata_head}" != "${expected_head}" ]]; then
+    echo "production gate git head does not match current checkout: gate=${metadata_head:-missing} current=${expected_head}"
+    return 1
+  fi
+  release_head="$(release_evidence_git_head "${gate_dir}/phase5_release_evidence.json")"
+  if [[ "${release_head}" != "${expected_head}" ]]; then
+    echo "release evidence git head does not match current checkout: release=${release_head:-missing} current=${expected_head}"
+    return 1
+  fi
+}
+
 pass_count=0
 failures=0
 warnings=0
@@ -698,6 +744,12 @@ require_doc_pattern scripts/verify_phase5_completion_audit.sh \
   'webrtc_qos_phase5_completion_audit_info' completion_audit_metrics_info_gate
 require_doc_pattern scripts/verify_phase5_completion_audit.sh \
   'webrtc_qos_phase5_completion_audit_production_evidence_status' completion_audit_metrics_production_gate
+require_doc_pattern scripts/verify_phase5_completion_audit.sh \
+  'verify_production_gate_current_git_head' completion_audit_current_git_head_gate
+require_doc_pattern scripts/verify_phase5_completion_audit.sh \
+  'release evidence git head does not match current checkout' completion_audit_release_git_head_gate
+require_doc_pattern scripts/verify_phase5_completion_audit.sh \
+  'production gate git head does not match current checkout' completion_audit_gate_git_head_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'phase5_production_readiness_status=' production_readiness_status_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
@@ -798,7 +850,12 @@ if [[ -n "${PHASE5_GATE_DIR}" ]]; then
   if [[ "${REQUIRE_PRODUCTION_EVIDENCE}" == "1" ]]; then
     if GATE_DIR="${PHASE5_GATE_DIR}" REQUIRE_PASS=1 \
         "${SDK_ROOT}/scripts/verify_phase5_production_gate.sh" >/dev/null 2>&1; then
-      audit_pass production_evidence "gate=${PHASE5_GATE_DIR}"
+      production_git_head_output=""
+      if production_git_head_output="$(verify_production_gate_current_git_head "${PHASE5_GATE_DIR}" 2>&1)"; then
+        audit_pass production_evidence "gate=${PHASE5_GATE_DIR} git_head=$(current_git_head)"
+      else
+        audit_fail production_evidence "git_head_mismatch:${production_git_head_output} gate=${PHASE5_GATE_DIR}"
+      fi
     else
       audit_fail production_evidence "phase5_gate_not_pass gate=${PHASE5_GATE_DIR}"
     fi
@@ -816,7 +873,12 @@ if [[ -n "${PHASE5_GATE_DIR}" ]]; then
           "${PHASE5_GATE_DIR}/phase5_production_gate_summary.txt"; then
         audit_warn production_evidence "verified_failed_gate_not_production gate=${PHASE5_GATE_DIR}"
       else
-        audit_pass production_evidence "gate=${PHASE5_GATE_DIR}"
+        production_git_head_output=""
+        if production_git_head_output="$(verify_production_gate_current_git_head "${PHASE5_GATE_DIR}" 2>&1)"; then
+          audit_pass production_evidence "gate=${PHASE5_GATE_DIR} git_head=$(current_git_head)"
+        else
+          audit_fail production_evidence "git_head_mismatch:${production_git_head_output} gate=${PHASE5_GATE_DIR}"
+        fi
       fi
     else
       audit_fail production_evidence "phase5_gate_verify_failed gate=${PHASE5_GATE_DIR}"
