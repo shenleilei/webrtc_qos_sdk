@@ -163,6 +163,127 @@ else:
 PY
 }
 
+verify_readiness_metrics() {
+  local readiness_dir="$1"
+  local expected_status="$2"
+  python3 - "${readiness_dir}" "${expected_status}" <<'PY'
+import pathlib
+import re
+import sys
+
+readiness_dir, expected_status = sys.argv[1:3]
+path = pathlib.Path(readiness_dir) / "phase5_production_readiness_metrics.prom"
+text = path.read_text(encoding="utf-8")
+for required_text in (
+    "# TYPE webrtc_qos_phase5_production_readiness_info gauge",
+    "webrtc_qos_phase5_production_readiness_info",
+    "webrtc_qos_phase5_production_readiness_failures_total",
+    "webrtc_qos_phase5_production_readiness_actions_total",
+    "webrtc_qos_phase5_production_readiness_check_status",
+    "webrtc_qos_phase5_production_readiness_milestone_status",
+    "webrtc_qos_phase5_production_readiness_risk_status",
+    "webrtc_qos_phase5_production_readiness_action_required",
+):
+    if required_text not in text:
+        raise SystemExit(f"readiness metrics missing {required_text}")
+
+prom_line_re = re.compile(
+    r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{([^{}]*)\})?\s+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[+-]?Inf|NaN)$"
+)
+prom_label_re = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"')
+records = []
+for line_no, line in enumerate(text.splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    match = prom_line_re.match(line)
+    if not match:
+        raise SystemExit(
+            "readiness metrics line is not valid Prometheus text format: "
+            f"line={line_no} text={line}"
+        )
+    labels = {}
+    raw_labels = match.group(3) or ""
+    position = 0
+    while position < len(raw_labels):
+        label_match = prom_label_re.match(raw_labels, position)
+        if not label_match:
+            raise SystemExit(f"readiness metrics line {line_no} has invalid labels")
+        labels[label_match.group(1)] = label_match.group(2)
+        position = label_match.end()
+        if position < len(raw_labels):
+            if raw_labels[position] != ",":
+                raise SystemExit(
+                    f"readiness metrics line {line_no} has malformed labels"
+                )
+            position += 1
+    try:
+        value = float(match.group(4))
+    except ValueError as exc:
+        raise SystemExit(
+            f"readiness metrics line {line_no} has invalid value"
+        ) from exc
+    records.append({"name": match.group(1), "labels": labels, "value": value})
+if not records:
+    raise SystemExit("readiness metrics file has no samples")
+
+def has(name, value=None, **labels):
+    for record in records:
+        if record["name"] != name:
+            continue
+        if not all(record["labels"].get(key) == label for key, label in labels.items()):
+            continue
+        if value is not None and record["value"] != value:
+            continue
+        return True
+    return False
+
+if not has(
+    "webrtc_qos_phase5_production_readiness_info",
+    readiness_status=expected_status,
+):
+    raise SystemExit("readiness metrics missing readiness info status")
+for check in ("soak_config", "webrtc_modules"):
+    if not has("webrtc_qos_phase5_production_readiness_check_status", check=check):
+        raise SystemExit(f"readiness metrics missing check status {check}")
+for milestone in ("M1", "M6"):
+    if not has(
+        "webrtc_qos_phase5_production_readiness_milestone_status",
+        milestone=milestone,
+    ):
+        raise SystemExit(f"readiness metrics missing milestone {milestone}")
+for risk in ("R4", "R5"):
+    if not has("webrtc_qos_phase5_production_readiness_risk_status", risk=risk):
+        raise SystemExit(f"readiness metrics missing risk {risk}")
+if expected_status == "ready":
+    if not has(
+        "webrtc_qos_phase5_production_readiness_milestone_status",
+        value=1,
+        milestone="M1",
+        status="ready",
+    ):
+        raise SystemExit("ready metrics missing ready M1 marker")
+    if not has("webrtc_qos_phase5_production_readiness_actions_total", value=0):
+        raise SystemExit("ready metrics action count is not zero")
+    if not has(
+        "webrtc_qos_phase5_production_readiness_action_required",
+        value=0,
+        action="none",
+    ):
+        raise SystemExit("ready metrics missing no-action marker")
+else:
+    if not has(
+        "webrtc_qos_phase5_production_readiness_milestone_status",
+        value=1,
+        milestone="M1",
+        status="blocked",
+    ):
+        raise SystemExit("not_ready metrics missing blocked M1 marker")
+    if not has("webrtc_qos_phase5_production_readiness_action_required"):
+        raise SystemExit("not_ready metrics missing required action marker")
+PY
+}
+
 require_failed_gate_debug_bundle() {
   summary_has '^failure_debug_bundle_status=pass ' ||
     fail "failed gate did not collect verified failure debug bundle"
@@ -194,6 +315,7 @@ require_failed_readiness_evidence() {
   require_file "${readiness_dir}/readiness_report.json"
   require_file "${readiness_dir}/risk_milestone_report.json"
   require_file "${readiness_dir}/risk_milestone_summary.txt"
+  require_file "${readiness_dir}/phase5_production_readiness_metrics.prom"
   require_file "${readiness_dir}/check_records.jsonl"
   require_file "${readiness_dir}/action_records.jsonl"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
@@ -256,10 +378,13 @@ PY
     fail "failed readiness evidence missing readiness report pointer"
   rg -q '^risk_milestone_report_json=' "${readiness_summary}" ||
     fail "failed readiness evidence missing risk milestone report pointer"
+  rg -q '^readiness_metrics_prom=' "${readiness_summary}" ||
+    fail "failed readiness evidence missing readiness metrics pointer"
   rg -q '^action=(capture_manifest|real_renderer|webrtc_modules|soak_config|external_phase2_evidence_bundle|script_[^ ]+) status=(fail|skipped) ' \
     "${readiness_dir}/next_required_actions.txt" ||
     fail "failed readiness evidence missing actionable remediation file"
   verify_readiness_json "${readiness_dir}" "not_ready"
+  verify_readiness_metrics "${readiness_dir}" "not_ready"
 }
 
 require_failed_implementation_evidence() {
@@ -325,6 +450,7 @@ require_success_readiness() {
   require_file "${readiness_dir}/readiness_report.json"
   require_file "${readiness_dir}/risk_milestone_report.json"
   require_file "${readiness_dir}/risk_milestone_summary.txt"
+  require_file "${readiness_dir}/phase5_production_readiness_metrics.prom"
   require_file "${readiness_dir}/check_records.jsonl"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
   if [[ -f "${readiness_dir}/logs/external_phase2_evidence_bundle.log" ]]; then
@@ -405,6 +531,8 @@ PY
     fail "phase5 production readiness recorded skipped checks"
   rg -q '^action_count=0$' "${readiness_summary}" ||
     fail "phase5 production readiness recorded remediation actions"
+  rg -q '^readiness_metrics_prom=' "${readiness_summary}" ||
+    fail "phase5 production readiness missing readiness metrics pointer"
   rg -q '^check=webrtc_modules status=pass ' "${readiness_summary}" ||
     fail "phase5 production readiness missing WebRTC modules pass"
   rg -q '^check=capture_manifest status=pass ' "${readiness_summary}" ||
@@ -418,6 +546,7 @@ PY
       fail "external readiness missing real renderer external source"
   fi
   verify_readiness_json "${readiness_dir}" "ready"
+  verify_readiness_metrics "${readiness_dir}" "ready"
 }
 
 require_phase2_completion_evidence() {

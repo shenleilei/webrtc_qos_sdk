@@ -306,6 +306,14 @@ require_doc_pattern scripts/verify_phase5_production_readiness.sh \
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'risk_milestone_report.json' production_readiness_risk_milestone_report
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'phase5_production_readiness_metrics.prom' production_readiness_metrics_collector
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'webrtc_qos_phase5_production_readiness_milestone_status' production_readiness_metrics_milestone_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_readiness_metrics' production_gate_readiness_metrics_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'webrtc_qos_phase5_production_readiness_risk_status' production_gate_readiness_metrics_risk_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'formal_completion_status' production_readiness_completion_status_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'fanout_evaluation' production_readiness_fanout_deferred

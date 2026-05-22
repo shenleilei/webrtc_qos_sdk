@@ -174,11 +174,14 @@ alerts 产物、debug bundle manifest 和运行 JSON 统一身份字段，避免
 soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture manifest、
 真实 renderer 可用性和 Phase-5 gate/audit 脚本是否齐全，并输出带 manifest 的
 readiness 报告、`readiness_report.json`、`next_required_actions.json` 和
-`risk_milestone_report.json`、`risk_milestone_summary.txt`、`next_required_actions.txt`。
+`risk_milestone_report.json`、`risk_milestone_summary.txt`、
+`phase5_production_readiness_metrics.prom`、`next_required_actions.txt`。
 JSON 报告记录每个 check、失败/跳过原因、机器可消费的 remediation action、M1-M6
-里程碑状态和 R1-R5 风险状态，供 CI、监控告警和发布系统直接解析；文本文件用于
-人工排查。M6 fanout 在 P5 基础范围内固定为 deferred，正式完成状态仍要求 passed
-Phase-5 production gate。
+里程碑状态和 R1-R5 风险状态；`.prom` 文件用 Prometheus/textfile 形式导出
+readiness 状态、失败/跳过/action 数、SOAK_MINUTES、check status、M1-M6、R1-R5 和
+remediation action，供 CI、监控告警和发布系统直接解析；文本文件用于人工排查。
+M6 fanout 在 P5 基础范围内固定为 deferred，正式完成状态仍要求 passed Phase-5
+production gate。
 默认本地缺正式素材或真实 renderer 时只生成 not-ready 报告；正式 CI 可设置
 `REQUIRE_READY=1` 作为硬门禁。
 
@@ -201,12 +204,13 @@ config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败
 manifest 可离线校验；如果 implementation gate 已经 pass，即使后续 readiness 或 soak
 失败，也会离线复验这份实现证据；如果失败发生在 implementation 或 readiness 阶段，
 还会离线复验对应 summary、manifest、失败 step/check、`readiness_report.json`、
-`next_required_actions.json`、`risk_milestone_report.json` 和 `next_required_actions.txt`；
+`next_required_actions.json`、`risk_milestone_report.json`、
+`phase5_production_readiness_metrics.prom` 和 `next_required_actions.txt`；
 在 gate 成功时会离线复验
 `phase5_implementation_gate/` 的实现证据、`phase5_debug_bundle/` 的日志、metrics、
 alerts、timeline 和 runtime config，离线复验
-`phase5_production_readiness/` 的 ready 状态，并直接复验底层 Phase-2
-evidence bundle manifest、`phase2_completion_audit=pass` 和
+`phase5_production_readiness/` 的 ready 状态和 readiness `.prom` 指标，并直接复验
+底层 Phase-2 evidence bundle manifest、`phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`，同时强制复验 `phase5_release_evidence.json` 和
 release evidence 里索引的 production soak archive、真实 renderer metrics 和 capture QoE
 CSV，避免只相信 summary。
@@ -1365,9 +1369,11 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   强制校验。
 - readiness 失败时必须保留并校验 readiness summary、logs、manifest 和
   `readiness_report.json`、`next_required_actions.json`、`risk_milestone_report.json`、
-  `next_required_actions.txt`。
+  `phase5_production_readiness_metrics.prom`、`next_required_actions.txt`。
 - readiness 风险/里程碑报告必须明确 M1 是否 blocked/ready、R4 生产环境风险状态、
   M6 fanout deferred，以及正式完成仍依赖 passed Phase-5 production gate。
+- readiness Prometheus/textfile 指标必须覆盖 readiness 状态、失败/跳过/action 数、
+  check status、M1/M6 里程碑、R4/R5 风险和 remediation action。
 - completion audit 对“implementation gate 已通过但正式生产证据缺失”和“正式完成”
   做硬区分。
 

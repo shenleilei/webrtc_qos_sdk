@@ -11,6 +11,7 @@ NEXT_REQUIRED_ACTIONS_JSON="${OUTPUT_DIR}/next_required_actions.json"
 READINESS_REPORT_JSON="${OUTPUT_DIR}/readiness_report.json"
 RISK_MILESTONE_REPORT_JSON="${OUTPUT_DIR}/risk_milestone_report.json"
 RISK_MILESTONE_SUMMARY_FILE="${OUTPUT_DIR}/risk_milestone_summary.txt"
+READINESS_METRICS_PROM="${OUTPUT_DIR}/phase5_production_readiness_metrics.prom"
 CHECK_RECORDS_JSONL="${OUTPUT_DIR}/check_records.jsonl"
 ACTION_RECORDS_JSONL="${OUTPUT_DIR}/action_records.jsonl"
 FILES_FILE="${FILES_FILE:-${OUTPUT_DIR}/files.txt}"
@@ -174,6 +175,7 @@ write_readiness_reports() {
     "${NEXT_REQUIRED_ACTIONS_JSON}" \
     "${RISK_MILESTONE_REPORT_JSON}" \
     "${RISK_MILESTONE_SUMMARY_FILE}" \
+    "${READINESS_METRICS_PROM}" \
     "${CHECK_RECORDS_JSONL}" \
     "${ACTION_RECORDS_JSONL}" \
     "${readiness_status}" \
@@ -199,6 +201,7 @@ import sys
     actions_path,
     risk_report_path,
     risk_summary_path,
+    readiness_metrics_path,
     checks_jsonl,
     actions_jsonl,
     readiness_status,
@@ -215,7 +218,7 @@ import sys
     capture_library_manifest,
     require_ready,
     phase2_evidence_bundle_dir,
-) = sys.argv[1:21]
+) = sys.argv[1:22]
 
 
 def read_jsonl(path):
@@ -530,6 +533,96 @@ with open(risk_summary_path, "w", encoding="utf-8") as fh:
         fh.write(f"milestone={item['id']} status={item['status']} name={item['name']}\n")
     for item in risks:
         fh.write(f"risk={item['id']} status={item['status']} name={item['name']}\n")
+
+
+def prom_escape(value):
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def prom_labels(**labels):
+    items = [
+        f'{key}="{prom_escape(value)}"'
+        for key, value in sorted(labels.items())
+        if value is not None and value != ""
+    ]
+    return "{" + ",".join(items) + "}" if items else ""
+
+
+def status_value(status, expected):
+    return 1 if status == expected else 0
+
+
+def prom_number(value, default=0):
+    number = parse_number(value)
+    return number if isinstance(number, (int, float)) else default
+
+
+check_status_values = ("pass", "fail", "skipped", "missing")
+milestone_status_values = ("ready", "blocked", "gate_available", "deferred")
+risk_status_values = ("controlled", "blocked", "control_available", "open", "deferred")
+with open(readiness_metrics_path, "w", encoding="utf-8") as fh:
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_info Phase-5 production readiness metadata marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_info gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_production_readiness_info"
+        f"{prom_labels(source='phase5_production_readiness', readiness_status=readiness_status, phase5_basis_status=risk_doc['phase5_basis_status'], formal_completion_status=risk_doc['formal_completion_status'])} 1\n"
+    )
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_failures_total Phase-5 readiness failed check count.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_failures_total gauge\n")
+    fh.write(f"webrtc_qos_phase5_production_readiness_failures_total {failure_count}\n")
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_skipped_total Phase-5 readiness skipped check count.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_skipped_total gauge\n")
+    fh.write(f"webrtc_qos_phase5_production_readiness_skipped_total {skipped_count}\n")
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_actions_total Phase-5 readiness remediation action count.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_actions_total gauge\n")
+    fh.write(f"webrtc_qos_phase5_production_readiness_actions_total {action_count}\n")
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_soak_minutes Configured production soak minutes.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_soak_minutes gauge\n")
+    fh.write(f"webrtc_qos_phase5_production_readiness_soak_minutes {prom_number(soak_minutes)}\n")
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_min_soak_minutes Required minimum production soak minutes.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_min_soak_minutes gauge\n")
+    fh.write(f"webrtc_qos_phase5_production_readiness_min_soak_minutes {prom_number(min_soak_minutes)}\n")
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_check_status Check status marker by check and status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_check_status gauge\n")
+    for item in checks:
+        check = item.get("check", "")
+        status = item.get("status", "missing")
+        for expected in check_status_values:
+            fh.write(
+                "webrtc_qos_phase5_production_readiness_check_status"
+                f"{prom_labels(check=check, status=expected)} {status_value(status, expected)}\n"
+            )
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_milestone_status Milestone status marker by milestone and status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_milestone_status gauge\n")
+    for item in milestones:
+        status = item.get("status", "")
+        for expected in milestone_status_values:
+            fh.write(
+                "webrtc_qos_phase5_production_readiness_milestone_status"
+                f"{prom_labels(milestone=item.get('id', ''), name=item.get('name', ''), status=expected)} {status_value(status, expected)}\n"
+            )
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_risk_status Risk status marker by risk and status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_risk_status gauge\n")
+    for item in risks:
+        status = item.get("status", "")
+        for expected in risk_status_values:
+            fh.write(
+                "webrtc_qos_phase5_production_readiness_risk_status"
+                f"{prom_labels(risk=item.get('id', ''), name=item.get('name', ''), status=expected)} {status_value(status, expected)}\n"
+            )
+    fh.write("# HELP webrtc_qos_phase5_production_readiness_action_required Remediation action marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_production_readiness_action_required gauge\n")
+    if actions:
+        for item in actions:
+            fh.write(
+                "webrtc_qos_phase5_production_readiness_action_required"
+                f"{prom_labels(action=item.get('action', ''), status=item.get('status', ''), reason=item.get('reason', ''))} 1\n"
+            )
+    else:
+        fh.write(
+            "webrtc_qos_phase5_production_readiness_action_required"
+            f"{prom_labels(action='none', status='none', reason='no_required_actions')} 0\n"
+        )
 PY
 }
 
@@ -669,6 +762,7 @@ write_summary "next_required_actions_json=${NEXT_REQUIRED_ACTIONS_JSON}"
 write_summary "readiness_report_json=${READINESS_REPORT_JSON}"
 write_summary "risk_milestone_report_json=${RISK_MILESTONE_REPORT_JSON}"
 write_summary "risk_milestone_summary_file=${RISK_MILESTONE_SUMMARY_FILE}"
+write_summary "readiness_metrics_prom=${READINESS_METRICS_PROM}"
 write_summary "check_records_jsonl=${CHECK_RECORDS_JSONL}"
 write_summary "action_records_jsonl=${ACTION_RECORDS_JSONL}"
 write_summary "phase5_production_readiness_status=${readiness_status}"
@@ -687,6 +781,7 @@ if rg -q 'payload|annexb_bytes|rtp_bytes|token|secret|password' \
   "${READINESS_REPORT_JSON}" \
   "${RISK_MILESTONE_REPORT_JSON}" \
   "${RISK_MILESTONE_SUMMARY_FILE}" \
+  "${READINESS_METRICS_PROM}" \
   "${CHECK_RECORDS_JSONL}" \
   "${ACTION_RECORDS_JSONL}"; then
   echo "phase5 production readiness failed: sensitive field in summary" >&2
