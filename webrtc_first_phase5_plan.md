@@ -165,7 +165,9 @@ wrapper 会先跑 Phase-5 release contract 和 debug bundle 门禁，再调用�
 `failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和
 runtime config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包
 存在且 manifest 可离线校验；在 gate 成功时也会离线复验 `phase5_debug_bundle/`
-的日志、metrics、alerts、timeline 和 runtime config，避免只相信 summary。
+的日志、metrics、alerts、timeline 和 runtime config，并直接复验底层 Phase-2
+evidence bundle manifest、`phase2_completion_audit=pass` 和
+`phase2_completion_status=complete`，避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
@@ -1192,6 +1194,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 顶层 metadata、summary、logs 和 sha256 manifest。
 - 成功路径必须离线复验 `phase5_debug_bundle/`，确认日志、metrics、alerts、
   timeline 和 runtime config 都可用。
+- 成功路径必须离线复验底层 Phase-2 evidence bundle 和 completion audit，确认
+  production soak、真实 renderer、正式 capture library 均为 pass。
 - 非 dry-run 失败时自动输出 verified `failure_debug_bundle/`，并由顶层 verifier
   强制校验。
 - completion audit 对“实现项齐全但正式生产证据缺失”和“正式完成”做硬区分。

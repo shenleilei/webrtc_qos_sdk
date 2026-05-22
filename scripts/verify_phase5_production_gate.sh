@@ -70,6 +70,42 @@ require_success_debug_bundle() {
     "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" >/dev/null
 }
 
+require_phase2_completion_evidence() {
+  local phase2_dir="${GATE_DIR}/webrtc_first_production_gate"
+  local phase2_summary="${phase2_dir}/phase2_production_gate_summary.txt"
+  local evidence_bundle="${phase2_dir}/phase2_evidence_bundle"
+  local completion_audit="${phase2_dir}/phase2_completion_audit/phase2_completion_audit_summary.txt"
+
+  require_file "${phase2_summary}"
+  rg -q '^phase2_production_gate_status=pass$' "${phase2_summary}" ||
+    fail "underlying WebRTC-first production gate did not pass"
+  rg -q '^evidence_bundle=' "${phase2_summary}" ||
+    fail "underlying production gate summary missing evidence bundle pointer"
+  rg -q '^completion_audit=' "${phase2_summary}" ||
+    fail "underlying production gate summary missing completion audit pointer"
+
+  require_file "${evidence_bundle}/manifest.sha256"
+  require_file "${evidence_bundle}/files.txt"
+  (
+    cd "${evidence_bundle}"
+    sha256sum -c manifest.sha256 >/dev/null
+  )
+
+  require_file "${completion_audit}"
+  rg -q '^phase2_completion_audit=pass$' "${completion_audit}" ||
+    fail "underlying Phase-2 completion audit did not pass"
+  rg -q '^phase2_completion_status=complete$' "${completion_audit}" ||
+    fail "underlying Phase-2 completion status is not complete"
+  rg -q '^check=production_soak status=pass ' "${completion_audit}" ||
+    fail "underlying completion audit missing passed production soak check"
+  rg -q '^check=real_renderer status=pass ' "${completion_audit}" ||
+    fail "underlying completion audit missing passed real renderer check"
+  rg -q '^check=capture_library status=pass ' "${completion_audit}" ||
+    fail "underlying completion audit missing passed capture library check"
+  rg -q '^check=evidence_bundle status=pass ' "${completion_audit}" ||
+    fail "underlying completion audit missing passed evidence bundle check"
+}
+
 summary_has '^phase5_production_gate=running$' ||
   fail "summary missing gate start marker"
 summary_has '^step=phase5_release_contract status=(planned|pass|fail|skipped)( |$)' ||
@@ -111,10 +147,7 @@ if [[ "${REQUIRE_PASS}" == "1" ]]; then
   summary_has '^step=webrtc_first_production_gate status=pass ' ||
     fail "production gate step did not pass"
   require_success_debug_bundle
-  phase2_summary="${GATE_DIR}/webrtc_first_production_gate/phase2_production_gate_summary.txt"
-  require_file "${phase2_summary}"
-  rg -q '^phase2_production_gate_status=pass$' "${phase2_summary}" ||
-    fail "underlying WebRTC-first production gate did not pass"
+  require_phase2_completion_evidence
 else
   summary_has '^phase5_production_gate_status=(dry_run|pass|fail)$' ||
     fail "summary missing dry_run/pass/fail status"
@@ -124,6 +157,7 @@ else
     require_failed_gate_debug_bundle
   elif summary_has '^phase5_production_gate_status=pass$'; then
     require_success_debug_bundle
+    require_phase2_completion_evidence
   fi
 fi
 

@@ -149,6 +149,8 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_success_debug_bundle' production_gate_success_bundle_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_failed_gate_debug_bundle' production_gate_failure_bundle_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 
 if has_file "${PHASE5_DEBUG_BUNDLE_DIR}/manifest.sha256" &&
     has_file "${PHASE5_DEBUG_BUNDLE_DIR}/runtime_config.json"; then
