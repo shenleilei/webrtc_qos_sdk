@@ -171,6 +171,114 @@ run_check() {
   fi
 }
 
+external_phase2_import_report_passed() {
+  local report_path="$1"
+  python3 - "${report_path}" "${MIN_PRODUCTION_SOAK_MINUTES}" "${ALLOW_XVFB_RENDERER}" <<'PY'
+import json
+import sys
+
+report_path, min_soak_minutes, allow_xvfb_renderer = sys.argv[1:4]
+
+with open(report_path, "r", encoding="utf-8") as fh:
+    report = json.load(fh)
+
+if report.get("schema_version") != 1:
+    raise SystemExit("external phase2 import schema_version mismatch")
+if report.get("source") != "phase5_phase2_external_evidence_import":
+    raise SystemExit("external phase2 import source mismatch")
+if report.get("import_status") != "pass":
+    raise SystemExit("external phase2 import did not pass")
+if report.get("source_git_worktree_clean") is not True:
+    raise SystemExit("external phase2 import was not generated from a clean tracked worktree")
+if report.get("require_git_head_match") is True and report.get("git_head_match") is not True:
+    raise SystemExit("external phase2 import git head mismatch")
+
+requirements = report.get("requirements", {})
+if requirements.get("formal_capture_required") is not True:
+    raise SystemExit("external phase2 import did not require formal capture")
+if requirements.get("real_renderer_required") is not True:
+    raise SystemExit("external phase2 import did not require real renderer")
+if requirements.get("clean_tracked_worktree_required") is not True:
+    raise SystemExit("external phase2 import did not require clean tracked worktree")
+if requirements.get("fixture_capture_allowed") is not False:
+    raise SystemExit("external phase2 import allowed fixture capture")
+
+checks = {item.get("check"): item.get("status") for item in report.get("checks", [])}
+for required in (
+    "bundle_manifest",
+    "bundle_git_worktree_clean",
+    "phase2_completion_audit",
+    "phase2_completion_audit_metrics",
+    "production_soak",
+    "production_soak_raw_evidence",
+    "real_renderer",
+    "real_renderer_raw_evidence",
+    "capture_library",
+    "capture_qoe_raw_evidence",
+    "evidence_bundle",
+    "git_head_match",
+):
+    if checks.get(required) != "pass":
+        raise SystemExit(f"external phase2 import missing pass check {required}")
+
+artifacts = report.get("artifacts", {})
+for key in (
+    "phase2_evidence_metadata",
+    "phase2_completion_audit_metrics",
+    "production_soak_summary",
+    "production_soak_csv",
+    "production_soak_config",
+    "production_soak_archive",
+    "real_renderer_summary",
+    "real_renderer_metrics",
+    "capture_manifest_summary",
+    "capture_qoe_csv",
+    "capture_qoe_summary",
+):
+    if not artifacts.get(key):
+        raise SystemExit(f"external phase2 import missing artifact pointer {key}")
+
+
+def valid_sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(
+        ch in "0123456789abcdefABCDEF" for ch in value
+    )
+
+
+def as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+production_soak = report.get("production_soak", {})
+if as_float(production_soak.get("soak_minutes")) < as_float(min_soak_minutes):
+    raise SystemExit("external phase2 import production soak below readiness minimum")
+for key in ("summary", "csv", "config", "archive"):
+    if not production_soak.get(key):
+        raise SystemExit(f"external phase2 import missing production_soak.{key}")
+
+real_renderer = report.get("real_renderer", {})
+if real_renderer.get("status") != "pass":
+    raise SystemExit("external phase2 import real renderer did not pass")
+if real_renderer.get("backend") == "xvfb" and allow_xvfb_renderer != "1":
+    raise SystemExit("external phase2 import real renderer used xvfb")
+for key in ("summary", "metrics"):
+    if not real_renderer.get(key):
+        raise SystemExit(f"external phase2 import missing real_renderer.{key}")
+
+capture_library = report.get("capture_library", {})
+for key in ("manifest_summary", "qoe_csv", "qoe_summary", "manifest_sha256"):
+    if not capture_library.get(key):
+        raise SystemExit(f"external phase2 import missing capture_library.{key}")
+if not valid_sha256(capture_library.get("manifest_sha256")):
+    raise SystemExit("external phase2 import bad capture manifest sha256")
+if as_float(capture_library.get("pass_rows")) <= 0:
+    raise SystemExit("external phase2 import capture library has no passing rows")
+PY
+}
+
 write_readiness_reports() {
   local readiness_status="$1"
   python3 - \
@@ -721,20 +829,35 @@ else
 fi
 
 if [[ -n "${PHASE2_EVIDENCE_BUNDLE_DIR}" ]]; then
-  run_check "external_phase2_evidence_bundle" \
-    env SDK_ROOT="${SDK_ROOT}" \
+  external_phase2_import_report="${EXTERNAL_PHASE2_IMPORT_DIR}/phase2_external_evidence_import.json"
+  external_phase2_import_log="${LOG_DIR}/external_phase2_evidence_bundle.log"
+  write_summary "check=external_phase2_evidence_bundle status=running log=${external_phase2_import_log}"
+  if env SDK_ROOT="${SDK_ROOT}" \
       OUTPUT_ROOT="${EXTERNAL_PHASE2_IMPORT_DIR}" \
       PHASE2_EVIDENCE_BUNDLE_DIR="${PHASE2_EVIDENCE_BUNDLE_DIR}" \
       MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
       ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
       ALLOW_FIXTURE_CAPTURE=0 \
       REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
-      "${SDK_ROOT}/scripts/import_phase5_phase2_evidence_bundle.sh"
-  if [[ -s "${EXTERNAL_PHASE2_IMPORT_DIR}/phase2_external_evidence_import.json" ]]; then
-    record_pass "capture_manifest" \
-      "source=external_phase2_evidence_bundle report=${EXTERNAL_PHASE2_IMPORT_DIR}/phase2_external_evidence_import.json"
-    record_pass "real_renderer" \
-      "source=external_phase2_evidence_bundle report=${EXTERNAL_PHASE2_IMPORT_DIR}/phase2_external_evidence_import.json"
+      "${SDK_ROOT}/scripts/import_phase5_phase2_evidence_bundle.sh" \
+      >"${external_phase2_import_log}" 2>&1; then
+    if [[ -s "${external_phase2_import_report}" ]] &&
+        external_phase2_import_report_passed "${external_phase2_import_report}" \
+          >>"${external_phase2_import_log}" 2>&1; then
+      record_pass "external_phase2_evidence_bundle" \
+        "log=${external_phase2_import_log} report=${external_phase2_import_report}"
+      record_pass "capture_manifest" \
+        "source=external_phase2_evidence_bundle report=${external_phase2_import_report}"
+      record_pass "real_renderer" \
+        "source=external_phase2_evidence_bundle report=${external_phase2_import_report}"
+    else
+      record_fail "external_phase2_evidence_bundle" \
+        "invalid_import_report=${external_phase2_import_report} log=${external_phase2_import_log}"
+    fi
+  else
+    external_phase2_status=$?
+    record_fail "external_phase2_evidence_bundle" \
+      "exit=${external_phase2_status} log=${external_phase2_import_log}"
   fi
 else
   if [[ "${RUN_CAPTURE_MANIFEST}" == "1" ]]; then

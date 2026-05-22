@@ -498,6 +498,16 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
   'PHASE2_EVIDENCE_BUNDLE_DIR' production_gate_external_evidence_import_runner
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'external_phase2_evidence_bundle' production_readiness_external_evidence_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'external_phase2_import_report_passed' production_readiness_external_import_report_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'import_status.*pass' production_readiness_external_import_status_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'capture_qoe_raw_evidence' production_readiness_external_import_capture_qoe_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'source_git_worktree_clean' production_readiness_external_import_git_clean_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'fixture_capture_allowed' production_readiness_external_import_fixture_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_evidence_source=external_bundle' production_gate_external_evidence_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \

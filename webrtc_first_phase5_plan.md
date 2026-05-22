@@ -252,8 +252,10 @@ manifest summary、capture manifest sha256、capture QoE CSV/summary，并输出
 `real_renderer_raw_evidence`、`capture_qoe_raw_evidence` 三个检查项，避免外部机器只给
 pass 摘要而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
 `external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
-和业务素材；但 release evidence 和 production gate verifier 仍会离线复验导入报告及这些
-原始证据指针。
+和业务素材；但只有导入报告 `import_status=pass`，且 clean tracked worktree、git head、
+production soak、真实 renderer、capture QoE、capture manifest sha256 和原始证据指针都
+复验通过时，readiness 才会派生记录 `capture_manifest` / `real_renderer` pass。release
+evidence 和 production gate verifier 仍会离线复验导入报告及这些原始证据指针。
 
 正式 capture library 不能只证明 manifest 存在。`scripts/verify_capture_library_manifest.sh`
 会在 summary 中输出 `capture_manifest_sha256`；Phase-2 completion audit、外部 bundle
