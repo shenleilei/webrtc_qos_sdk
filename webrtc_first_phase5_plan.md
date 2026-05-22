@@ -442,7 +442,9 @@ struct RuntimeMetricsConfig {
 
 role config 已追加 `RuntimeMetricsConfig metrics`。当前 JSONL 覆盖
 `session/track` 两类 scope，包含身份字段、target bitrate、FPS、downlink
-loss、NACK、PLI、retransmission、drop、probe/padding 等字段。
+loss、NACK、PLI、retransmission、drop、probe/padding，以及
+`process_tick_count / process_tick_gap_us / max_process_tick_gap_us` 等运行循环
+健康度字段。
 
 #### 指标分层
 
@@ -498,6 +500,8 @@ codec/render 级：
 - metrics 文件超过阈值会轮转；demo 和 external sample 支持
   `--metrics-max-file-bytes / --metrics-max-files`，`verify_phase5_metrics.sh` 会用
   低阈值强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
+- push/server/play metrics 都包含 process tick gap 字段，用于定位业务线程或
+  router event loop 卡顿。
 - metrics 字段文档化，避免把 QoE harness 私有字段误当 public API。
 
 ### 4.4 P0：监控告警规则
@@ -587,11 +591,12 @@ role config 已追加 `RuntimeAlertConfig alerts`。当前 JSONL 覆盖统一身
 `severity/rule/category/value/threshold/status_code/reason`，并在以下路径触发：
 
 - push：low target bitrate、low encoder FPS、malformed H264、pacer enqueue
-  failure、transport output failure、sender retransmission enqueue/drop。
+  failure、transport output failure、sender retransmission enqueue/drop、process
+  tick gap。
 - server：malformed RTP/RTCP、unsupported RTCP、receiver/sender output failure、
-  high downlink loss、video drop、本地重传 hit/miss。
+  high downlink loss、video drop、本地重传 hit/miss、router event loop tick gap。
 - play：malformed RTP、NACK/PLI、transport output failure、decode output failure、
-  jitter packet drop。
+  jitter packet drop、process tick gap。
 
 仓库内 UDP demo 已支持 `--alerts-dir`，文件名为：
 
@@ -607,13 +612,15 @@ scripts/verify_phase5_alerts.sh
 
 该脚本先用 UDP weak-network selftest 验证降码率/FPS、downlink loss、video drop、
 NACK 和重传告警，再用安装包外部 CMake fixture 验证 malformed RTP、transport
-output failure、decode output failure，同时确认对应 warn/error 日志落盘。
+output failure、decode output failure 和 push/server/play `process_tick_gap`
+availability alert，同时确认对应 warn/error 日志落盘。
 
 #### 验收标准
 
 - weak network low-RPS case 产生预期的 bitrate/FPS 下探记录，但不误报 fatal。
 - decode error fixture 能触发 decode 告警。
 - transport output failure 能触发可用性告警。
+- process tick gap fixture 能触发 push/server/play 可用性告警。
 - malformed packet 能触发 warn/error 日志和告警。
 - 告警文件进入 evidence bundle。
 - alerts 文件超过阈值会轮转；demo 和 external sample 支持

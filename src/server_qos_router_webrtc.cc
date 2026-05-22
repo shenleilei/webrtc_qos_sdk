@@ -131,6 +131,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       logger_.Warn("sender_rtp_before_start", config_.session.ids, status);
       return status;
     }
+    RecordProcessTick(receive_time_us);
     RtpPacketAdapterParsedPacket parsed;
     if (!ParseRtpPacket(rtp_bytes, rtp_size, LegacyRtpConfig(), &parsed)) {
       Status status = Status::Error(StatusCode::kMalformedPacket,
@@ -181,6 +182,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       logger_.Warn("sender_rtcp_before_start", config_.session.ids, status);
       return status;
     }
+    RecordProcessTick(receive_time_us);
     if (rtcp_bytes == nullptr || rtcp_size == 0) {
       Status status = InvalidArgument("empty sender RTCP");
       logger_.Warn("malformed_rtcp", config_.session.ids, status);
@@ -246,6 +248,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       logger_.Warn("receiver_rtcp_before_start", config_.session.ids, status);
       return status;
     }
+    RecordProcessTick(receive_time_us);
     if (rtcp_bytes == nullptr || rtcp_size == 0) {
       Status status = InvalidArgument("empty receiver RTCP");
       logger_.Warn("malformed_rtcp", config_.session.ids, status);
@@ -309,6 +312,11 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
   Status OnDownlinkQuality(const DownlinkQuality& quality) override {
     ++rate_cap_seq_;
+    const int64_t report_time_us =
+        quality.report_time_us == 0
+            ? 0
+            : static_cast<int64_t>(quality.report_time_us);
+    RecordProcessTick(report_time_us);
     const uint32_t receiver_id = ReceiverIdForQuality(quality);
     DownlinkQuality stored_quality = quality;
     stored_quality.ids = config_.session.ids;
@@ -317,10 +325,6 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     receiver_states_[receiver_id] =
         ReceiverState{stored_quality, BuildReceiverRateCap(stored_quality)};
     logger_.Info("downlink_quality_update", stored_quality.ids);
-    const int64_t report_time_us =
-        stored_quality.report_time_us == 0
-            ? 0
-            : static_cast<int64_t>(stored_quality.report_time_us);
     MaybeWriteDownlinkAlerts(stored_quality, report_time_us);
     MaybeWriteMetrics(report_time_us);
     return Status::Ok();
@@ -352,10 +356,28 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
  private:
   void MaybeWriteMetrics(int64_t now_us) {
+    MaybeWriteProcessTickAlert(now_us);
     if (!metrics_writer_.ShouldWrite(now_us)) {
       return;
     }
     metrics_writer_.WriteSession(GetQosSnapshot(now_us));
+  }
+
+  void MaybeWriteProcessTickAlert(int64_t now_us) {
+    const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    if (!alert_config.alert_on_process_tick_gap) {
+      return;
+    }
+    const uint64_t threshold_us =
+        static_cast<uint64_t>(alert_config.max_process_tick_gap_ms) * 1000;
+    if (snapshot_.process_tick_gap_us > threshold_us) {
+      logger_.Warn("process_tick_gap", config_.session.ids,
+                   Status::Error(StatusCode::kInternalError,
+                                 "server router event tick gap exceeded threshold"));
+      alert_writer_.Warn("process_tick_gap", "availability",
+                         config_.session.ids, now_us,
+                         snapshot_.process_tick_gap_us, threshold_us);
+    }
   }
 
   void MaybeWriteDownlinkAlerts(const DownlinkQuality& quality,
@@ -374,6 +396,27 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                          report_time_us, quality.video_drop_frames,
                          alert_config.video_drop_frames_threshold);
     }
+  }
+
+  void RecordProcessTick(int64_t now_us) {
+    const uint64_t safe_now_us =
+        static_cast<uint64_t>(std::max<int64_t>(0, now_us));
+    snapshot_.report_time_us = safe_now_us;
+    ++snapshot_.process_tick_count;
+    if (last_process_tick_time_us_ < 0) {
+      snapshot_.process_tick_gap_us = 0;
+      last_process_tick_time_us_ = now_us;
+      return;
+    }
+    if (now_us < last_process_tick_time_us_) {
+      return;
+    }
+    snapshot_.process_tick_gap_us =
+        static_cast<uint64_t>(now_us - last_process_tick_time_us_);
+    snapshot_.max_process_tick_gap_us =
+        std::max(snapshot_.max_process_tick_gap_us,
+                 snapshot_.process_tick_gap_us);
+    last_process_tick_time_us_ = now_us;
   }
 
   struct ReceiverState {
@@ -684,6 +727,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
   int64_t twcc_base_time_us_ = 0;
   int64_t last_twcc_send_time_us_ = -1;
   int64_t last_rr_send_time_us_ = -1;
+  int64_t last_process_tick_time_us_ = -1;
   uint32_t rate_cap_seq_ = 0;
   uint8_t next_twcc_feedback_sequence_ = 1;
   bool started_ = false;

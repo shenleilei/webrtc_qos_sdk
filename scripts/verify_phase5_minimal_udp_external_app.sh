@@ -162,6 +162,14 @@ if max(r.get("nack_count", 0) for r in metrics if r["role"] == "play") <= 0:
     raise SystemExit("play metrics did not capture NACK")
 if max(r.get("retransmission_count", 0) for r in metrics if r["role"] == "server") <= 0:
     raise SystemExit("server metrics did not capture retransmission")
+for record in metrics:
+    for field in (
+        "process_tick_count",
+        "process_tick_gap_us",
+        "max_process_tick_gap_us",
+    ):
+        if field not in record:
+            raise SystemExit(f"metric missing {field}")
 rules = {r.get("rule") for r in alerts}
 for rule in [
     "low_target_bitrate",

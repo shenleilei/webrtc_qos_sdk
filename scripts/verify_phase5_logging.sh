@@ -188,6 +188,7 @@ for role in sorted(roles):
             "log_max_queue_records",
             "metrics_enabled",
             "alerts_enabled",
+            "alerts_max_process_tick_gap_ms",
             "redaction_media_bytes",
             "redaction_runtime_paths",
         }

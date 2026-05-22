@@ -194,9 +194,9 @@ REQUIRE_PRODUCTION_EVIDENCE=0 \
 
 `verify_phase5_logging.sh` 是 Phase-5 第一条日志门禁：它验证默认不把 SDK 运行日志打到 stdout/stderr，显式传 `--log-dir` 后会生成 push/server/play 三类 JSONL 日志文件，并检查 config_dump、start/stop、access unit、downlink quality、retransmission、decode output 等关键事件和统一身份字段；其中 config_dump 只包含脱敏运行配置摘要，stop 事件用于证明正常 `Stop()` 后日志已 flush 到文件。它还会用 `--log-max-queue-records 1` 压测异步日志队列，要求看到 `dropped_log_count` 且 warn/error/stop 不丢。
 
-`verify_phase5_metrics.sh` 是 Phase-5 metrics snapshot 门禁：它验证显式传 `--metrics-dir` 后会生成 push/server/play 三类 JSONL metrics 文件，并检查弱网下的 bitrate/FPS 下探、恢复回升、server retransmission、play NACK 和 dual-track 指标身份。
+`verify_phase5_metrics.sh` 是 Phase-5 metrics snapshot 门禁：它验证显式传 `--metrics-dir` 后会生成 push/server/play 三类 JSONL metrics 文件，并检查弱网下的 bitrate/FPS 下探、恢复回升、server retransmission、play NACK、dual-track 指标身份，以及 `process_tick_count / process_tick_gap_us / max_process_tick_gap_us` 这类运行循环健康度字段。
 
-`verify_phase5_alerts.sh` 是 Phase-5 监控告警门禁：它验证显式传 `--alerts-dir` 后会生成 push/server/play 三类 JSONL alerts 文件，弱网下覆盖 low target bitrate、low encoder FPS、high downlink loss、video drop、NACK 和本地重传命中；同时用安装包外部 CMake fixture 覆盖 malformed RTP、transport output failure 和 decode output failure，并检查对应 warn/error 日志落盘。
+`verify_phase5_alerts.sh` 是 Phase-5 监控告警门禁：它验证显式传 `--alerts-dir` 后会生成 push/server/play 三类 JSONL alerts 文件，弱网下覆盖 low target bitrate、low encoder FPS、high downlink loss、video drop、NACK 和本地重传命中；同时用安装包外部 CMake fixture 覆盖 malformed RTP、transport output failure、decode output failure 和三角色 `process_tick_gap` availability alert，并检查对应 warn/error 日志落盘。
 
 `verify_phase5_error_contract.sh` 是 Phase-5 错误码与运行契约门禁：它先安装当前 SDK，再用外部 CMake consumer 只链接 `WebRtcQosSdk::role_push / role_play / role_server`，验证 `Start()` config error、before-start 调用、malformed H264/RTP、transport output failure、server relay failure 和 decode output failure 的 `StatusCode`、日志事件和 alerts 规则一致。
 

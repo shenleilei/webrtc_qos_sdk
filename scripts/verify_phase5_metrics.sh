@@ -76,6 +76,9 @@ required = {
     "nack_count",
     "pli_count",
     "retransmission_count",
+    "process_tick_count",
+    "process_tick_gap_us",
+    "max_process_tick_gap_us",
 }
 records = []
 for path in metrics_dir.glob("*.jsonl"):
@@ -130,6 +133,15 @@ if max(r["retransmission_count"] for r in server) <= 0:
     raise SystemExit("server metrics did not capture retransmission")
 if max(r["nack_count"] for r in play) <= 0:
     raise SystemExit("play metrics did not capture NACK")
+
+for role in ("push", "server", "play"):
+    session_records = [
+        r for r in records if r["role"] == role and r["scope"] == "session"
+    ]
+    if max(r["process_tick_count"] for r in session_records) <= 0:
+        raise SystemExit(f"{role} metrics did not capture process tick count")
+    if max(r["max_process_tick_gap_us"] for r in session_records) <= 0:
+        raise SystemExit(f"{role} metrics did not capture process tick gap")
 
 track_ids = {r["track_id"] for r in push_tracks if r["track_id"] != 0}
 if len(track_ids) < 2:

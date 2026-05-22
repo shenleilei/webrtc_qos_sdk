@@ -125,6 +125,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       logger_.Warn("process_before_start", config_.session.ids, status);
       return status;
     }
+    RecordProcessTick(now_us);
     PruneState(now_us);
     Status drain_status = DrainPacer(now_us);
     if (!drain_status) {
@@ -968,6 +969,20 @@ class WebRtcVideoPushClient final : public VideoPushClient {
 
   void MaybeWriteQosAlerts(int64_t now_us) {
     const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    if (alert_config.alert_on_process_tick_gap &&
+        snapshot_.process_tick_gap_us >
+            static_cast<uint64_t>(alert_config.max_process_tick_gap_ms) *
+                1000) {
+      logger_.Warn("process_tick_gap", config_.session.ids,
+                   Status::Error(StatusCode::kInternalError,
+                                 "push Process tick gap exceeded threshold"));
+      alert_writer_.Warn("process_tick_gap", "availability",
+                         config_.session.ids, now_us,
+                         snapshot_.process_tick_gap_us,
+                         static_cast<uint64_t>(
+                             alert_config.max_process_tick_gap_ms) *
+                             1000);
+    }
     if (!alert_config.alert_on_qos_degradation) {
       return;
     }
@@ -986,6 +1001,27 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                          now_us, adaptation.max_fps,
                          alert_config.low_encoder_fps);
     }
+  }
+
+  void RecordProcessTick(int64_t now_us) {
+    const uint64_t safe_now_us =
+        static_cast<uint64_t>(std::max<int64_t>(0, now_us));
+    snapshot_.report_time_us = safe_now_us;
+    ++snapshot_.process_tick_count;
+    if (last_process_tick_time_us_ < 0) {
+      snapshot_.process_tick_gap_us = 0;
+      last_process_tick_time_us_ = now_us;
+      return;
+    }
+    if (now_us < last_process_tick_time_us_) {
+      return;
+    }
+    snapshot_.process_tick_gap_us =
+        static_cast<uint64_t>(now_us - last_process_tick_time_us_);
+    snapshot_.max_process_tick_gap_us =
+        std::max(snapshot_.max_process_tick_gap_us,
+                 snapshot_.process_tick_gap_us);
+    last_process_tick_time_us_ = now_us;
   }
 
   VideoPushClientConfig config_;
@@ -1007,6 +1043,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   uint16_t next_transport_sequence_number_ = 1;
   SenderRateCap sender_rate_cap_;
   uint32_t latest_rtt_ms_ = 0;
+  int64_t last_process_tick_time_us_ = -1;
 };
 
 }  // namespace

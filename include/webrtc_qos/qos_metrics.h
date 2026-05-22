@@ -30,6 +30,11 @@ struct QosSnapshot {
   uint64_t emitted_padding_packets = 0;
   uint64_t emitted_padding_bytes = 0;
   int32_t last_probe_cluster_id = -1;
+  // Role worker health. A large tick gap usually means the embedding business
+  // thread stopped calling Process() or the router event loop stalled.
+  uint32_t process_tick_count = 0;
+  uint64_t process_tick_gap_us = 0;
+  uint64_t max_process_tick_gap_us = 0;
 };
 
 }  // namespace webrtc_qos

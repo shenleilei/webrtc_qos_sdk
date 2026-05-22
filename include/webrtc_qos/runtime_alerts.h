@@ -28,11 +28,13 @@ struct RuntimeAlertConfig {
   bool alert_on_malformed_packet = true;
   bool alert_on_transport_failure = true;
   bool alert_on_media_failure = true;
+  bool alert_on_process_tick_gap = true;
 
   uint16_t high_loss_fraction_q8 = 128;
   uint16_t video_drop_frames_threshold = 1;
   uint32_t low_target_bps = 700000;
   uint32_t low_encoder_fps = 20;
+  uint32_t max_process_tick_gap_ms = 2000;
 };
 
 }  // namespace webrtc_qos

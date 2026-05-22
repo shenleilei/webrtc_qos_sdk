@@ -167,6 +167,9 @@ void RuntimeMetricsWriter::Write(const char* scope,
        << ",\"emitted_padding_packets\":" << snapshot.emitted_padding_packets
        << ",\"emitted_padding_bytes\":" << snapshot.emitted_padding_bytes
        << ",\"last_probe_cluster_id\":" << snapshot.last_probe_cluster_id
+       << ",\"process_tick_count\":" << snapshot.process_tick_count
+       << ",\"process_tick_gap_us\":" << snapshot.process_tick_gap_us
+       << ",\"max_process_tick_gap_us\":" << snapshot.max_process_tick_gap_us
        << "}\n";
 
   const std::string text = line.str();

@@ -208,6 +208,7 @@ webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir) {
   config.video_drop_frames_threshold = 1;
   config.low_target_bps = 700000;
   config.low_encoder_fps = 20;
+  config.max_process_tick_gap_ms = 2000;
   return config;
 }
 
@@ -440,6 +441,15 @@ for expected in [
 ]:
     if expected not in metric_scopes:
         raise SystemExit(f"{label}: missing metric scope {expected}")
+
+for record in metrics:
+    for field in (
+        "process_tick_count",
+        "process_tick_gap_us",
+        "max_process_tick_gap_us",
+    ):
+        if field not in record:
+            raise SystemExit(f"{label}: metric missing {field}")
 
 print(
     "validated_%s_release_records logs=%d metrics=%d alerts=%d"

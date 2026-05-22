@@ -531,8 +531,10 @@ demo 可用 `--metrics-dir` 验证 metrics 文件：
 
 metrics 文件包含 `final_target_bps`、`adaptation_target_bps`、
 `adaptation_max_fps`、`downlink_fraction_lost_q8`、`nack_count`、
-`pli_count`、`retransmission_count` 等字段，用于区分网络/QoS 恢复问题和
-上层 codec/render 问题。`verify_phase5_metrics.sh` 会用低阈值把 metrics 轮转
+`pli_count`、`retransmission_count`、`process_tick_count`、
+`process_tick_gap_us`、`max_process_tick_gap_us` 等字段，用于区分网络/QoS
+恢复问题、业务运行循环卡顿和上层 codec/render 问题。`verify_phase5_metrics.sh`
+会用低阈值把 metrics 轮转
 和保留文件数上限作为硬门禁。
 
 生产集成还应启用 alerts，并把 logs、metrics、alerts 一起纳入排障包：
@@ -547,6 +549,7 @@ alerts.file.max_files = 5;
 alerts.high_loss_fraction_q8 = 128;
 alerts.low_target_bps = 700000;
 alerts.low_encoder_fps = 20;
+alerts.max_process_tick_gap_ms = 2000;
 
 push_config.alerts = alerts;
 server_config.alerts = alerts;
@@ -564,7 +567,10 @@ demo 可用 `--alerts-dir` 验证 alerts 文件：
   --alerts-max-file-bytes 256 --alerts-max-files 3
 ```
 
-`verify_phase5_alerts.sh` 会用低阈值把 alerts 轮转和保留文件数上限作为硬门禁。
+`max_process_tick_gap_ms` 用于发现业务线程长时间没有调用 sender/receiver
+`Process()`，或 server/router 事件循环长时间没有推进；对应告警规则为
+`process_tick_gap`，类别为 `availability`。`verify_phase5_alerts.sh` 会用低阈值把
+该规则、alerts 轮转和保留文件数上限作为硬门禁。
 
 仓库内排障包 collector 会跑一次最小 UDP selftest 并同时打开日志、metrics 和
 alerts，然后生成可离线校验的 bundle：

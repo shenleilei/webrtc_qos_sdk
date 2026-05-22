@@ -120,6 +120,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       logger_.Warn("process_before_start", config_.session.ids, status);
       return status;
     }
+    RecordProcessTick(now_us);
     for (auto& item : track_states_) {
       Status status = EmitNackRequesterFeedback(item.second, now_us);
       if (!status) {
@@ -244,7 +245,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   }
 
   QosSnapshot GetQosSnapshot(int64_t now_us) const override {
-    QosSnapshot out;
+    QosSnapshot out = snapshot_;
     const TrackState* primary_track = FindTrackByTrackId(primary_track_id_);
     if (primary_track != nullptr) {
       out.downlink_quality = primary_track->snapshot.downlink_quality;
@@ -454,6 +455,20 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
 
   void MaybeWriteQosAlerts(int64_t now_us) {
     const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    if (alert_config.alert_on_process_tick_gap &&
+        snapshot_.process_tick_gap_us >
+            static_cast<uint64_t>(alert_config.max_process_tick_gap_ms) *
+                1000) {
+      logger_.Warn("process_tick_gap", config_.session.ids,
+                   Status::Error(StatusCode::kInternalError,
+                                 "play Process tick gap exceeded threshold"));
+      alert_writer_.Warn("process_tick_gap", "availability",
+                         config_.session.ids, now_us,
+                         snapshot_.process_tick_gap_us,
+                         static_cast<uint64_t>(
+                             alert_config.max_process_tick_gap_ms) *
+                             1000);
+    }
     if (!alert_config.alert_on_qos_degradation) {
       return;
     }
@@ -468,6 +483,27 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     }
   }
 
+  void RecordProcessTick(int64_t now_us) {
+    const uint64_t safe_now_us =
+        static_cast<uint64_t>(std::max<int64_t>(0, now_us));
+    snapshot_.report_time_us = safe_now_us;
+    ++snapshot_.process_tick_count;
+    if (last_process_tick_time_us_ < 0) {
+      snapshot_.process_tick_gap_us = 0;
+      last_process_tick_time_us_ = now_us;
+      return;
+    }
+    if (now_us < last_process_tick_time_us_) {
+      return;
+    }
+    snapshot_.process_tick_gap_us =
+        static_cast<uint64_t>(now_us - last_process_tick_time_us_);
+    snapshot_.max_process_tick_gap_us =
+        std::max(snapshot_.max_process_tick_gap_us,
+                 snapshot_.process_tick_gap_us);
+    last_process_tick_time_us_ = now_us;
+  }
+
   VideoPlayClientConfig config_;
   RuntimeLogger logger_;
   RuntimeMetricsWriter metrics_writer_;
@@ -477,7 +513,9 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   uint32_t primary_track_id_ = 0;
   std::unordered_map<uint32_t, TrackState> track_states_;
   std::unordered_map<uint32_t, uint32_t> sender_ssrc_to_track_id_;
+  QosSnapshot snapshot_;
   bool started_ = false;
+  int64_t last_process_tick_time_us_ = -1;
 };
 
 }  // namespace

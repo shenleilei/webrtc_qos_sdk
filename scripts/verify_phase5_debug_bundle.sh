@@ -105,6 +105,7 @@ required_config_dump = {
     "alerts_high_loss_fraction_q8",
     "alerts_low_target_bps",
     "alerts_low_encoder_fps",
+    "alerts_max_process_tick_gap_ms",
     "redaction_media_bytes",
     "redaction_runtime_paths",
 }
@@ -254,6 +255,18 @@ for section in ("logging", "metrics", "alerts"):
 logging_config = runtime_section.get("logging", {})
 if int(logging_config.get("max_queue_records", 0)) <= 0:
     raise SystemExit("runtime_config.json missing positive logging max_queue_records")
+metric_required_fields = {
+    "process_tick_count",
+    "process_tick_gap_us",
+    "max_process_tick_gap_us",
+}
+for role in roles:
+    for index, record in enumerate(read_jsonl(root / "metrics" / f"{role}_metrics.jsonl"), 1):
+        missing = metric_required_fields - record.keys()
+        if missing:
+            raise SystemExit(
+                f"metric:{role}:{index}: missing tick fields {sorted(missing)}"
+            )
 roles_config = runtime.get("roles", [])
 if {item.get("role") for item in roles_config} != roles:
     raise SystemExit("runtime_config.json does not cover push/server/play roles")

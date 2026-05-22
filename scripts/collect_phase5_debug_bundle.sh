@@ -229,6 +229,7 @@ runtime_config = {
             "video_drop_frames_threshold": 1,
             "low_target_bps": 700000,
             "low_encoder_fps": 20,
+            "max_process_tick_gap_ms": 2000,
             "max_file_bytes": 1048576,
             "max_files": 4,
         },

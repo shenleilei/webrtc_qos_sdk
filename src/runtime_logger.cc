@@ -167,6 +167,8 @@ std::string RuntimeConfigDumpFields(const SessionConfig& session,
          << alerts.high_loss_fraction_q8
          << ",\"alerts_low_target_bps\":" << alerts.low_target_bps
          << ",\"alerts_low_encoder_fps\":" << alerts.low_encoder_fps
+         << ",\"alerts_max_process_tick_gap_ms\":"
+         << alerts.max_process_tick_gap_ms
          << ",\"redaction_media_bytes\":\"omitted\""
          << ",\"redaction_runtime_paths\":\"omitted\"";
   return fields.str();

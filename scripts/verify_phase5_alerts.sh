@@ -96,6 +96,7 @@ required_rules = {
         "malformed_rtp",
         "transport_output_failed",
         "decode_output_failed",
+        "process_tick_gap",
     },
 }[mode]
 
@@ -219,6 +220,7 @@ webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir,
   config.file.max_file_bytes = max_file_bytes;
   config.file.max_files = max_files;
   config.suppress_repeated_alerts_ms = 0;
+  config.max_process_tick_gap_ms = 40;
   return config;
 }
 
@@ -269,6 +271,17 @@ int main(int argc, char** argv) {
   if (!server || !server->Start()) {
     return Fail("failed to start server fixture");
   }
+  webrtc_qos::DownlinkQuality gap_quality_a;
+  gap_quality_a.ids = session.ids;
+  gap_quality_a.report_time_us = 1000000;
+  if (!server->OnDownlinkQuality(gap_quality_a)) {
+    return Fail("failed to write first server process-tick fixture");
+  }
+  webrtc_qos::DownlinkQuality gap_quality_b = gap_quality_a;
+  gap_quality_b.report_time_us = 1100000;
+  if (!server->OnDownlinkQuality(gap_quality_b)) {
+    return Fail("failed to write second server process-tick fixture");
+  }
   const uint8_t bad_rtp[] = {0x01, 0x02, 0x03};
   if (server->OnSenderRtp(bad_rtp, sizeof(bad_rtp), 1000000)) {
     return Fail("malformed RTP was unexpectedly accepted");
@@ -289,6 +302,12 @@ int main(int argc, char** argv) {
       webrtc_qos::CreateVideoPushClient(push_fail_config);
   if (!push_fail || !push_fail->Start()) {
     return Fail("failed to start push transport-failure fixture");
+  }
+  if (!push_fail->Process(1000000)) {
+    return Fail("failed to write first push process-tick fixture");
+  }
+  if (!push_fail->Process(1100000)) {
+    return Fail("failed to write second push process-tick fixture");
   }
   webrtc_qos::AnnexBAccessUnitView push_view;
   push_view.bytes = au.data();
@@ -363,6 +382,12 @@ int main(int argc, char** argv) {
       webrtc_qos::CreateVideoPlayClient(play_config);
   if (!play || !play->Start()) {
     return Fail("failed to start play fixture");
+  }
+  if (!play->Process(1000000)) {
+    return Fail("failed to write first play process-tick fixture");
+  }
+  if (!play->Process(1100000)) {
+    return Fail("failed to write second play process-tick fixture");
   }
   bool decode_failed = false;
   for (const auto& packet : rtp_packets) {
@@ -519,6 +544,11 @@ rules = {record["rule"] for record in records}
 missing_rules = required_rules - rules
 if missing_rules:
     raise SystemExit(f"missing fault alert rules: {sorted(missing_rules)}")
+gap_roles = {
+    record["role"] for record in records if record["rule"] == "process_tick_gap"
+}
+if gap_roles != {"push", "server", "play"}:
+    raise SystemExit(f"process_tick_gap missing roles: {sorted(gap_roles)}")
 print(
     "validated_fault_alert_records=%d rules=%s"
     % (len(records), ",".join(sorted(rules)))
@@ -587,4 +617,5 @@ require_log '"event":"transport_output_failed"' \
 require_log '"event":"decode_au_output_failed"' \
   "fault fixture did not write decode output failure log"
 
+echo "validated_process_tick_gap_alert roles=play,push,server"
 echo "phase5_alerts pass alerts_dir=${ALERTS_DIR} log_dir=${LOG_DIR}"
