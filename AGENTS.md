@@ -45,13 +45,15 @@ The business side still owns:
 
 ### Track Model
 
-- Current public media model is single-track per facade instance.
-- One `VideoPushClient` instance currently maps to one H264 sender SSRC.
-- One `VideoPlayClient` instance currently maps to one primary sender SSRC.
-- Public API and runtime state are still keyed around a single
-  `session.ids.sender_ssrc`.
-- Multi-track video from one source, using multiple media SSRCs under one
-  higher-level source, is not implemented yet.
+- The current worktree includes an initial multi-track / multi-SSRC slice.
+- `SessionConfig.video_tracks` can describe multiple tracks under one source.
+- `VideoPushClient` now accepts per-access-unit media identity through
+  `AnnexBAccessUnitView.ids`.
+- `VideoPushClient` and `VideoPlayClient` expose per-track snapshot/adaptation
+  queries.
+- The current slice is verified by `scripts/verify_webrtc_first_multitrack.sh`
+  and is wired into `scripts/verify_webrtc_first_roles.sh`.
+- Multi-receiver fanout engineering is still not part of this slice.
 
 ### Retransmission
 
@@ -97,12 +99,11 @@ The remaining gaps are external formal-evidence items:
 - real renderer `pass`
 - formal `capture_library/manifest.csv` and business capture assets
 
-The next planned implementation slice is Phase-4 multi-track / multi-SSRC.
+The active Phase-4 target is explicit multi-track / multi-SSRC modeling.
 Multi-receiver fanout engineering is explicitly deferred for now.
 Single-track simulcast / multi-encoding is also deferred for now.
 Do not conflate the current goal with either multi-receiver fanout or
-single-track simulcast; the active Phase-4 target is explicit multi-track /
-multi-SSRC modeling.
+single-track simulcast.
 
 ## Build
 
@@ -167,6 +168,7 @@ Notes:
 - `src/server_qos_router_webrtc.cc`
 - `src/compound_rtcp.h`
 - `scripts/verify_cmake_package.sh`
+- `scripts/verify_webrtc_first_multitrack.sh`
 - `scripts/verify_webrtc_first_phase2.sh`
 - `scripts/run_webrtc_first_ffmpeg_qoe.sh`
 - `scripts/run_webrtc_first_qoe_production_soak.sh`
@@ -178,4 +180,4 @@ Notes:
 - Do not collapse RTCP sender SSRC back into business `receiver_id`.
 - Do not count retransmission traffic into sender media SR packet/octet totals.
 - Do not assume `ServerQosRouter` itself manages multi-receiver media fanout.
-- Do not describe the current public model as multi-track-per-source support.
+- Do not describe the current Phase-4 slice as complete multi-receiver fanout.

@@ -40,7 +40,13 @@ class VideoPushClient {
                                       int64_t at_time_us) = 0;
   virtual Status OnSenderRateCap(const SenderRateCap& cap) = 0;
   virtual EncoderAdaptation GetEncoderAdaptation(int64_t now_us) const = 0;
+  virtual bool GetTrackEncoderAdaptation(uint32_t track_id,
+                                         int64_t now_us,
+                                         EncoderAdaptation* out) const = 0;
   virtual QosSnapshot GetQosSnapshot(int64_t now_us) const = 0;
+  virtual bool GetTrackQosSnapshot(uint32_t track_id,
+                                   int64_t now_us,
+                                   QosSnapshot* out) const = 0;
 };
 
 std::unique_ptr<VideoPushClient> CreateVideoPushClient(

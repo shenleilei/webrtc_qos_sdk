@@ -224,6 +224,16 @@ WebRtcQosSdk::role_server
 
 `role_push`、`role_play`、`role_server` 只有在 facade 实现库 `libwebrtc_qos_facade_video.a` 和对应 WebRTC 模块库都存在时才会创建；缺少实现时不导出半可用 role target。
 
+如果你想要更“大”的静态库，而不是在业务侧继续链接多份底层 `.a`，当前安装包也会导出按角色聚合后的 bundle：
+
+```text
+WebRtcQosSdk::role_push_bundle
+WebRtcQosSdk::role_play_bundle
+WebRtcQosSdk::role_server_bundle
+```
+
+这几个 bundle 会把当前角色实际用到的 SDK 静态库和 WebRTC 子模块 archive 合并成单个 `.a` 文件；外部工程仍只需要再补系统库依赖（`Threads::Threads`、`dl`、`rt`、`atomic`）。
+
 底层 WebRTC module targets：
 
 ```text

@@ -26,11 +26,14 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 REQUIRE_ALL=1 NINJA_JOBS=2 \
 - `role_transport`
   只提供业务传输边界 support
 
-当前 media 模型还要额外强调一条：
+当前 media 模型已经进入 Phase-4 的第一版多 track 扩展：
 
-- 一个 `VideoPushClient` 实例当前只对应一个主视频 track 和一个 sender SSRC。
-- 一个 `VideoPlayClient` 实例当前也只对应一个主 sender SSRC 接收路径。
-- “一个 source 下多个 video track、不同 SSRC” 目前还没有进入公共 API。
+- 一个 `SessionConfig` 可以通过 `video_tracks` 描述多个 video track。
+- 一个 `VideoPushClient` 实例可以承载一个 source 下多个 sender SSRC。
+- 一个 `VideoPlayClient` 实例可以按 sender SSRC 区分多个接收 track。
+- 当前还没有进入的是：
+  - 多 receiver fanout support 层
+  - single-track simulcast / multi-encoding
 
 业务项目通常直接按角色链接，不自己手动拼 `webrtc_googcc + webrtc_pacing + webrtc_rtp_rtcp + ...`。
 
@@ -98,7 +101,7 @@ auto push = webrtc_qos::CreateVideoPushClient(config);
 push->Start();
 ```
 
-送入一个 AU：
+单 track 送入一个 AU：
 
 ```cpp
 webrtc_qos::AnnexBAccessUnitView au;
@@ -106,6 +109,21 @@ au.bytes = encoded_h264_annexb_bytes;
 au.size = encoded_h264_annexb_size;
 au.capture_time_us = now_us;
 au.keyframe = is_idr;
+
+push->PushAnnexBAccessUnit(au);
+```
+
+多 track 时，给 AU 标明 `track_id / sender_ssrc`：
+
+```cpp
+webrtc_qos::AnnexBAccessUnitView au;
+au.bytes = encoded_h264_annexb_bytes;
+au.size = encoded_h264_annexb_size;
+au.capture_time_us = now_us;
+au.keyframe = is_idr;
+au.ids.source_id = 77;
+au.ids.track_id = 101;
+au.ids.sender_ssrc = 0x11111111;
 
 push->PushAnnexBAccessUnit(au);
 ```
@@ -150,6 +168,13 @@ const auto adaptation = push->GetEncoderAdaptation(now_us);
 // adaptation.target_bitrate_bps
 // adaptation.max_fps
 // adaptation.request_keyframe
+```
+
+多 track 时优先使用 per-track 查询：
+
+```cpp
+webrtc_qos::EncoderAdaptation adaptation;
+push->GetTrackEncoderAdaptation(track_id, now_us, &adaptation);
 ```
 
 ## 5. Play 端集成
@@ -207,6 +232,13 @@ play->Process(now_us);
 - 完整 QoE 结论
 
 这些指标由上层 decode/QoE harness 计算，例如 `run_webrtc_first_ffmpeg_qoe.sh`。
+
+多 track 时优先使用 per-track 查询：
+
+```cpp
+webrtc_qos::QosSnapshot snapshot;
+play->GetTrackQosSnapshot(track_id, now_us, &snapshot);
+```
 
 ### 5.4 receiver_id 和 RTCP SSRC 不是一回事
 
@@ -270,6 +302,7 @@ const auto cap = server->CurrentSenderRateCap(now_us);
 
 - 当前 `ServerQosRouter` 支持多 receiver 的反馈语义：
   `OnReceiverRtcp(receiver_id, ...)`、`OnDownlinkQuality(quality)`、worst-receiver sender cap 选择、以及本地重传/缺包上抛时的目标 `receiver_id`。
+- 当前 `ServerQosRouter` 也能承载多个 sender SSRC，并按 SSRC 隔离 packet history / NACK / retransmission / RR block。
 - 当前 `ServerQosRouter` 不维护“接收端列表”或自动做 sender RTP 的全量 fanout。
 - `receiver_output` 只是一个单包回调；如果一个 sender 要同时发给多个 receiver，业务侧需要自己维护 receiver registry，并把 sender RTP/RTCP bytes fanout 到实际的多个下游传输连接。
 - 换句话说：多 receiver 的 QoS/反馈/修复语义在 SDK 内；多 receiver 的媒体分发拓扑仍由业务 transport/router 掌握。

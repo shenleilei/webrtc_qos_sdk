@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
-#include <optional>
 #include <memory>
+#include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "compound_rtcp.h"
+#include "video_track_config_utils.h"
 #include "webrtc_qos/rate_cap.h"
 #include "webrtc_qos/rtcp_adapter.h"
 #include "webrtc_qos/rtp_packet_adapter.h"
@@ -54,16 +56,11 @@ uint32_t ResolveServerFeedbackSsrc(const SessionConfig& session) {
       candidate == session.ids.sender_ssrc) {
     candidate = 0x7f000001u;
   }
-  if (candidate == session.ids.receiver_id || candidate == session.ids.sender_ssrc) {
+  if (candidate == session.ids.receiver_id ||
+      candidate == session.ids.sender_ssrc) {
     candidate ^= 0x01010101u;
   }
   return candidate != 0 ? candidate : 1u;
-}
-
-TransportIds IdsForReceiver(const TransportIds& base_ids, uint32_t receiver_id) {
-  TransportIds ids = base_ids;
-  ids.receiver_id = receiver_id;
-  return ids;
 }
 
 }  // namespace
@@ -72,12 +69,26 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
  public:
   explicit WebRtcServerQosRouter(ServerQosRouterConfig config)
       : config_(std::move(config)),
-        packet_history_(TransportPacketHistoryConfig{1000, 3000, 4096}) {}
+        packet_history_(TransportPacketHistoryConfig{1000, 3000, 4096}) {
+    track_config_status_ =
+        ResolveVideoTrackConfigs(config_.session, &track_configs_);
+    if (track_config_status_) {
+      for (const auto& track_config : track_configs_) {
+        sender_ssrc_to_ids_[track_config.ids.sender_ssrc] = track_config.ids;
+      }
+      primary_sender_ssrc_ =
+          track_configs_.empty() ? config_.session.ids.sender_ssrc
+                                 : track_configs_.front().ids.sender_ssrc;
+    }
+  }
 
   Status Start() override {
     if (!config_.sender_output || !config_.receiver_output) {
       return InvalidArgument(
           "ServerQosRouter requires sender_output and receiver_output");
+    }
+    if (!track_config_status_) {
+      return track_config_status_;
     }
     started_ = true;
     return Status::Ok();
@@ -96,7 +107,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                            "ServerQosRouter is not started");
     }
     RtpPacketAdapterParsedPacket parsed;
-    if (!ParseRtpPacket(rtp_bytes, rtp_size, RtpConfig(), &parsed)) {
+    if (!ParseRtpPacket(rtp_bytes, rtp_size, LegacyRtpConfig(), &parsed)) {
       return Status::Error(StatusCode::kMalformedPacket,
                            "failed to parse sender RTP");
     }
@@ -113,8 +124,9 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       RecordTwccPacket(*parsed.transport_sequence_number, receive_time_us);
     }
     Status relay_status = config_.receiver_output(
-        MakePacketView(copy, config_.session.ids, TransportPacketKind::kRtp,
-                       receive_time_us, false, padding));
+        MakePacketView(copy, TrackIdsForSsrc(parsed.ssrc),
+                       TransportPacketKind::kRtp, receive_time_us, false,
+                       padding));
     if (!relay_status) {
       return relay_status;
     }
@@ -134,11 +146,17 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     RtcpPacketIterationStats iteration_stats;
     Status parse_status = ForEachSupportedRtcpPacket(
         rtcp_bytes, rtcp_size,
-        [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed) {
+        [&](const uint8_t* packet_bytes, size_t packet_size,
+            const RtcpAdapterParsedPacket& parsed) -> Status {
           if (parsed.type == RtcpAdapterPacketType::kSenderReport) {
             RecordSenderReport(parsed.sender_report, receive_time_us);
           }
-          return Status::Ok();
+          std::vector<uint8_t> copy(packet_bytes, packet_bytes + packet_size);
+          return config_.receiver_output(
+              MakePacketView(copy,
+                             TrackIdsForSsrc(PacketMediaSsrc(parsed)),
+                             TransportPacketKind::kRtcp, receive_time_us,
+                             false));
         },
         &iteration_stats);
     if (!parse_status) {
@@ -146,13 +164,6 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     }
     snapshot_.unsupported_rtcp_packet_count +=
         static_cast<uint32_t>(iteration_stats.unsupported_packets);
-    std::vector<uint8_t> copy(rtcp_bytes, rtcp_bytes + rtcp_size);
-    Status relay_status = config_.receiver_output(
-        MakePacketView(copy, config_.session.ids, TransportPacketKind::kRtcp,
-                       receive_time_us, false));
-    if (!relay_status) {
-      return relay_status;
-    }
     return MaybeSendReceiverReport(receive_time_us);
   }
 
@@ -176,15 +187,15 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
           if (parsed.type == RtcpAdapterPacketType::kNack) {
             return HandleNack(receiver_id, parsed.nack, receive_time_us);
           }
+          TransportIds ids = TrackIdsForSsrc(PacketMediaSsrc(parsed));
+          ids.receiver_id = receiver_id;
           if (parsed.type == RtcpAdapterPacketType::kPli) {
             ++snapshot_.pli_count;
           }
           std::vector<uint8_t> copy(packet_bytes, packet_bytes + packet_size);
           return config_.sender_output(
-              MakePacketView(copy,
-                             IdsForReceiver(config_.session.ids, receiver_id),
-                             TransportPacketKind::kRtcp, receive_time_us,
-                             false));
+              MakePacketView(copy, ids, TransportPacketKind::kRtcp,
+                             receive_time_us, false));
         },
         &iteration_stats);
     if (status) {
@@ -236,12 +247,51 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     SenderRateCap cap;
   };
 
-  RtpPacketAdapterConfig RtpConfig() const {
+  struct SenderReportState {
+    uint32_t last_sr_lsr = 0;
+    int64_t receive_time_us = 0;
+  };
+
+  RtpPacketAdapterConfig LegacyRtpConfig() const {
     RtpPacketAdapterConfig config;
     config.payload_type = config_.session.h264.payload_type;
     config.transport_sequence_extension_id = config_.session.twcc.extension_id;
     config.enable_transport_sequence_extension = true;
     return config;
+  }
+
+  static uint32_t PacketMediaSsrc(const RtcpAdapterParsedPacket& parsed) {
+    switch (parsed.type) {
+      case RtcpAdapterPacketType::kSenderReport:
+        return parsed.sender_report.sender_ssrc;
+      case RtcpAdapterPacketType::kReceiverReport:
+        if (!parsed.receiver_report.report_blocks.empty()) {
+          return parsed.receiver_report.report_blocks.front().media_ssrc;
+        }
+        return 0;
+      case RtcpAdapterPacketType::kTransportFeedback:
+        return parsed.transport_feedback.media_ssrc;
+      case RtcpAdapterPacketType::kNack:
+        return parsed.nack.media_ssrc;
+      case RtcpAdapterPacketType::kPli:
+        return parsed.pli.media_ssrc;
+      default:
+        return 0;
+    }
+  }
+
+  TransportIds TrackIdsForSsrc(uint32_t sender_ssrc) const {
+    auto it = sender_ssrc_to_ids_.find(sender_ssrc);
+    if (it != sender_ssrc_to_ids_.end()) {
+      return it->second;
+    }
+    TransportIds ids = config_.session.ids;
+    ids.sender_ssrc = sender_ssrc;
+    if (ids.source_id == 0) {
+      ids.source_id = ids.stream_id;
+    }
+    ids.track_id = sender_ssrc;
+    return ids;
   }
 
   uint32_t ReceiverIdForQuality(const DownlinkQuality& quality) const {
@@ -318,9 +368,11 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
         continue;
       }
       ++snapshot_.retransmission_count;
+      TransportIds ids = TrackIdsForSsrc(nack.media_ssrc);
+      ids.receiver_id = receiver_id;
       Status status = config_.receiver_output(MakePacketView(
-          found->rtp_bytes, IdsForReceiver(config_.session.ids, receiver_id),
-          TransportPacketKind::kRtp, receive_time_us, true));
+          found->rtp_bytes, ids, TransportPacketKind::kRtp, receive_time_us,
+          true));
       if (!status) {
         return status;
       }
@@ -337,9 +389,11 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       return Status::Error(StatusCode::kInternalError,
                            "failed to rebuild forwarded RTCP NACK");
     }
+    TransportIds ids = TrackIdsForSsrc(nack.media_ssrc);
+    ids.receiver_id = receiver_id;
     return config_.sender_output(
-        MakePacketView(copy, IdsForReceiver(config_.session.ids, receiver_id),
-                       TransportPacketKind::kRtcp, receive_time_us, false));
+        MakePacketView(copy, ids, TransportPacketKind::kRtcp, receive_time_us,
+                       false));
   }
 
   void RecordTwccPacket(uint16_t transport_sequence_number,
@@ -369,7 +423,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
     RtcpAdapterTransportFeedback feedback;
     feedback.sender_ssrc = ResolveServerFeedbackSsrc(config_.session);
-    feedback.media_ssrc = config_.session.ids.sender_ssrc;
+    feedback.media_ssrc = primary_sender_ssrc_;
     feedback.base_sequence = *twcc_base_sequence_;
     feedback.base_time_us = twcc_base_time_us_;
     feedback.feedback_sequence = next_twcc_feedback_sequence_++;
@@ -391,17 +445,14 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
   void RecordSenderReport(const RtcpAdapterSenderReport& sender_report,
                           int64_t receive_time_us) {
-    if (sender_report.sender_ssrc != config_.session.ids.sender_ssrc) {
-      return;
-    }
-    last_sender_report_lsr_ =
+    sender_report_states_[sender_report.sender_ssrc] = SenderReportState{
         ((sender_report.ntp_seconds & 0x0000ffffu) << 16) |
-        (sender_report.ntp_fractions >> 16);
-    last_sender_report_receive_time_us_ = receive_time_us;
+            (sender_report.ntp_fractions >> 16),
+        receive_time_us};
   }
 
   Status MaybeSendReceiverReport(int64_t now_us) {
-    if (last_sender_report_lsr_ == 0) {
+    if (sender_report_states_.empty()) {
       return Status::Ok();
     }
     const int64_t interval_us =
@@ -411,18 +462,19 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       return Status::Ok();
     }
 
-    RtcpAdapterReportBlock block;
-    block.media_ssrc = config_.session.ids.sender_ssrc;
-    block.last_sr = last_sender_report_lsr_;
-    const int64_t delay_us =
-        std::max<int64_t>(0, now_us - last_sender_report_receive_time_us_);
-    block.delay_since_last_sr =
-        static_cast<uint32_t>((static_cast<uint64_t>(delay_us) * 65536) /
-                              1000000);
-
     RtcpAdapterReceiverReport rr;
     rr.sender_ssrc = ResolveServerFeedbackSsrc(config_.session);
-    rr.report_blocks.push_back(block);
+    for (const auto& item : sender_report_states_) {
+      RtcpAdapterReportBlock block;
+      block.media_ssrc = item.first;
+      block.last_sr = item.second.last_sr_lsr;
+      const int64_t delay_us =
+          std::max<int64_t>(0, now_us - item.second.receive_time_us);
+      block.delay_since_last_sr =
+          static_cast<uint32_t>((static_cast<uint64_t>(delay_us) * 65536) /
+                                1000000);
+      rr.report_blocks.push_back(block);
+    }
 
     std::vector<uint8_t> rtcp_bytes;
     if (!BuildRtcpReceiverReport(rr, &rtcp_bytes)) {
@@ -436,16 +488,19 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
   }
 
   ServerQosRouterConfig config_;
+  Status track_config_status_ = Status::Ok();
+  std::vector<VideoTrackConfig> track_configs_;
+  std::unordered_map<uint32_t, TransportIds> sender_ssrc_to_ids_;
+  uint32_t primary_sender_ssrc_ = 0;
   TransportPacketHistory packet_history_;
   DownlinkQuality last_downlink_quality_;
   std::map<uint32_t, ReceiverState> receiver_states_;
+  std::unordered_map<uint32_t, SenderReportState> sender_report_states_;
   QosSnapshot snapshot_;
   std::vector<RtcpAdapterTransportFeedbackPacket> pending_twcc_packets_;
   std::optional<uint16_t> twcc_base_sequence_;
   int64_t twcc_base_time_us_ = 0;
   int64_t last_twcc_send_time_us_ = -1;
-  uint32_t last_sender_report_lsr_ = 0;
-  int64_t last_sender_report_receive_time_us_ = 0;
   int64_t last_rr_send_time_us_ = -1;
   uint32_t rate_cap_seq_ = 0;
   uint8_t next_twcc_feedback_sequence_ = 1;

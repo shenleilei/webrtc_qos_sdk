@@ -106,6 +106,7 @@ SDK_ROOT="${SDK_ROOT}" PREFIX="${PREFIX}" \
 PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/verify_webrtc_modules.sh"
 PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/verify_webrtc_first_loopback.sh"
 PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/verify_webrtc_first_pacing_probe.sh"
+PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/verify_webrtc_first_multitrack.sh"
 
 rm -rf "${BUILD_DIR}"
 cmake -S "${SDK_ROOT}" -B "${BUILD_DIR}" \

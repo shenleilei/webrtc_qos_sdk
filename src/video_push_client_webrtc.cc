@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "compound_rtcp.h"
+#include "video_track_config_utils.h"
 #include "webrtc_qos/googcc_adapter.h"
 #include "webrtc_qos/h264_rtp_adapter.h"
 #include "webrtc_qos/pacing_adapter.h"
@@ -55,11 +56,28 @@ class WebRtcVideoPushClient final : public VideoPushClient {
         packet_history_(TransportPacketHistoryConfig{kSenderHistoryHoldMs,
                                                      kSenderHistoryMaxHoldMs,
                                                      4096}),
-        sender_rate_cap_(UnlimitedSenderRateCap(config_.session.ids, 0, 0)) {}
+        sender_rate_cap_(UnlimitedSenderRateCap(config_.session.ids, 0, 0)) {
+    track_config_status_ =
+        ResolveVideoTrackConfigs(config_.session, &track_configs_);
+    primary_track_id_ = PrimaryTrackId(track_configs_);
+    if (track_config_status_) {
+      for (const auto& track_config : track_configs_) {
+        TrackState track_state;
+        track_state.config = track_config;
+        track_state.snapshot.ids = track_config.ids;
+        track_states_.emplace(track_config.ids.track_id, std::move(track_state));
+        sender_ssrc_to_track_id_[track_config.ids.sender_ssrc] =
+            track_config.ids.track_id;
+      }
+    }
+  }
 
   Status Start() override {
     if (!config_.transport_output) {
       return InvalidArgument("VideoPushClient requires transport_output");
+    }
+    if (!track_config_status_) {
+      return track_config_status_;
     }
     started_ = true;
     googcc_.OnNetworkAvailable(0);
@@ -90,7 +108,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     googcc_.OnProcessInterval(now_us);
     ApplyProbeClusters();
     ApplyGoogCcRates(now_us);
-    return MaybeSendSenderReport(now_us);
+    return MaybeSendSenderReports(now_us);
   }
 
   Status PushAnnexBAccessUnit(const AnnexBAccessUnitView& access_unit) override {
@@ -102,43 +120,47 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       return InvalidArgument("empty Annex-B access unit");
     }
 
+    TrackState* track = ResolveTrackForAccessUnit(access_unit);
+    if (track == nullptr) {
+      return InvalidArgument(
+          "multi-track push requires track_id or sender_ssrc in access unit");
+    }
+
     std::vector<H264RtpPayload> payloads;
     if (!PacketizeH264AnnexB(access_unit.bytes, access_unit.size,
                              H264RtpPacketizerConfig{
-                                 config_.session.h264.max_rtp_payload_bytes},
+                                 track->config.h264.max_rtp_payload_bytes},
                              &payloads)) {
       return Status::Error(StatusCode::kMalformedPacket,
                            "failed to packetize H264 Annex-B AU");
     }
 
     struct PendingPacket {
-      uint16_t transport_sequence_number = 0;
-      int64_t capture_time_us = 0;
       PacingAdapterPacket packet;
     };
     std::vector<PendingPacket> pending_packets;
     pending_packets.reserve(payloads.size());
     size_t access_unit_bytes = 0;
 
-    uint16_t rtp_sequence_number = next_rtp_sequence_number_;
+    uint16_t rtp_sequence_number = track->next_rtp_sequence_number;
     uint16_t transport_sequence_number = next_transport_sequence_number_;
     for (const auto& payload : payloads) {
       std::vector<uint8_t> rtp_bytes;
       RtpPacketAdapterBuildInput rtp_input;
-      rtp_input.payload_type = config_.session.h264.payload_type;
+      rtp_input.payload_type = track->config.h264.payload_type;
       rtp_input.marker = payload.marker;
       rtp_input.sequence_number = rtp_sequence_number++;
-      rtp_input.timestamp = RtpTimestamp(access_unit.capture_time_us);
-      rtp_input.ssrc = config_.session.ids.sender_ssrc;
+      rtp_input.timestamp = RtpTimestamp(*track, access_unit.capture_time_us);
+      rtp_input.ssrc = track->config.ids.sender_ssrc;
       rtp_input.transport_sequence_number = transport_sequence_number++;
       rtp_input.payload = payload.payload.data();
       rtp_input.payload_size = payload.payload.size();
-      if (!BuildRtpPacket(rtp_input, RtpConfig(), &rtp_bytes)) {
+      if (!BuildRtpPacket(rtp_input, RtpConfig(track->config), &rtp_bytes)) {
         return InternalError("failed to build RTP packet");
       }
 
       PacingAdapterPacket pacing_packet;
-      pacing_packet.ssrc = config_.session.ids.sender_ssrc;
+      pacing_packet.ssrc = track->config.ids.sender_ssrc;
       pacing_packet.rtp_sequence_number = rtp_input.sequence_number;
       pacing_packet.transport_sequence_number =
           *rtp_input.transport_sequence_number;
@@ -146,30 +168,28 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       pacing_packet.keyframe = payload.keyframe || access_unit.keyframe;
       pacing_packet.bytes = std::move(rtp_bytes);
       access_unit_bytes += pacing_packet.bytes.size();
-      pending_packets.push_back(PendingPacket{
-          *rtp_input.transport_sequence_number, access_unit.capture_time_us,
-          std::move(pacing_packet)});
+      pending_packets.push_back(PendingPacket{std::move(pacing_packet)});
     }
 
     const auto pacer_stats = pacer_->stats();
     if (pacer_stats.queue_bytes + access_unit_bytes > kMaxPacingQueueBytes) {
-      ++snapshot_.dropped_frames;
+      ++track->snapshot.dropped_frames;
       return Status::Error(StatusCode::kQueueFull,
                            "WebRTC pacing adapter queue bytes would overflow");
     }
 
     for (auto& pending : pending_packets) {
       if (!pacer_->EnqueuePacket(pending.packet)) {
-        ResetPacerQueue(pending.capture_time_us);
-        ++snapshot_.dropped_frames;
+        ResetPacerQueue(access_unit.capture_time_us);
+        ++track->snapshot.dropped_frames;
         return Status::Error(StatusCode::kQueueFull,
                              "WebRTC pacing adapter rejected RTP packet");
       }
     }
-    next_rtp_sequence_number_ = rtp_sequence_number;
+    track->next_rtp_sequence_number = rtp_sequence_number;
     next_transport_sequence_number_ = transport_sequence_number;
     if (access_unit.keyframe) {
-      keyframe_request_pending_ = false;
+      track->keyframe_request_pending = false;
     }
 
     return Status::Ok();
@@ -181,8 +201,8 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     PruneState(receive_time_us);
     return ForEachSupportedRtcpPacket(
         rtcp_bytes, rtcp_size,
-        [&](const uint8_t* packet_bytes, size_t packet_size,
-            const RtcpAdapterParsedPacket& parsed) -> Status {
+        [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed)
+            -> Status {
           if (parsed.type == RtcpAdapterPacketType::kTransportFeedback) {
             std::vector<GoogCcPacketFeedback> feedback;
             feedback.reserve(parsed.transport_feedback.packets.size());
@@ -216,19 +236,28 @@ class WebRtcVideoPushClient final : public VideoPushClient {
             return Status::Ok();
           }
           if (parsed.type == RtcpAdapterPacketType::kReceiverReport) {
+            uint32_t max_rtt_ms = 0;
             for (const auto& block : parsed.receiver_report.report_blocks) {
-              if (block.media_ssrc != config_.session.ids.sender_ssrc) {
+              TrackState* track = FindTrackBySenderSsrc(block.media_ssrc);
+              if (track == nullptr) {
                 continue;
               }
+              track->snapshot.downlink_quality.fraction_lost_q8 =
+                  block.fraction_lost;
               const uint32_t rtt_ms = EstimateRttMsFromReceiverReport(
                   block.last_sr, block.delay_since_last_sr, receive_time_us);
               if (rtt_ms > 0) {
-                latest_rtt_ms_ = rtt_ms;
-                googcc_.OnRoundTripTime(rtt_ms, receive_time_us);
-                googcc_.OnProcessInterval(receive_time_us);
-                ApplyProbeClusters();
-                ApplyGoogCcRates(receive_time_us);
+                track->snapshot.downlink_quality.rtt_ms =
+                    static_cast<uint16_t>(std::min<uint32_t>(rtt_ms, 0xffffu));
+                max_rtt_ms = std::max(max_rtt_ms, rtt_ms);
               }
+            }
+            if (max_rtt_ms > 0) {
+              latest_rtt_ms_ = max_rtt_ms;
+              googcc_.OnRoundTripTime(max_rtt_ms, receive_time_us);
+              googcc_.OnProcessInterval(receive_time_us);
+              ApplyProbeClusters();
+              ApplyGoogCcRates(receive_time_us);
             }
             return Status::Ok();
           }
@@ -236,10 +265,11 @@ class WebRtcVideoPushClient final : public VideoPushClient {
             return HandleNack(parsed.nack, receive_time_us);
           }
           if (parsed.type == RtcpAdapterPacketType::kPli) {
-            (void)packet_bytes;
-            (void)packet_size;
-            ++snapshot_.pli_count;
-            keyframe_request_pending_ = true;
+            TrackState* track = FindTrackBySenderSsrc(parsed.pli.media_ssrc);
+            if (track != nullptr) {
+              ++track->snapshot.pli_count;
+              track->keyframe_request_pending = true;
+            }
             return Status::Ok();
           }
           return Status::Ok();
@@ -277,12 +307,22 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   }
 
   EncoderAdaptation GetEncoderAdaptation(int64_t now_us) const override {
-    (void)now_us;
     EncoderAdaptation out;
-    out.target_bitrate_bps = FinalTargetBps(now_us);
-    out.max_fps = SuggestedMaxFps(out.target_bitrate_bps);
-    out.request_keyframe = keyframe_request_pending_;
+    (void)GetTrackEncoderAdaptation(primary_track_id_, now_us, &out);
     return out;
+  }
+
+  bool GetTrackEncoderAdaptation(uint32_t track_id,
+                                 int64_t now_us,
+                                 EncoderAdaptation* out) const override {
+    const TrackState* track = FindTrackByTrackId(track_id);
+    if (track == nullptr || out == nullptr) {
+      return false;
+    }
+    out->target_bitrate_bps = TrackTargetBps(*track, now_us);
+    out->max_fps = SuggestedMaxFps(*track, out->target_bitrate_bps);
+    out->request_keyframe = track->keyframe_request_pending;
+    return true;
   }
 
   QosSnapshot GetQosSnapshot(int64_t now_us) const override {
@@ -295,29 +335,163 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     out.sender_rates.pacing_bps = pacer_->stats().pacing_bitrate_bps;
     out.sender_rates.rtt_ms = latest_rtt_ms_;
     out.jitter_buffer_delay_ms = pacer_->stats().expected_queue_time_ms;
-    out.dropped_frames = snapshot_.dropped_frames;
     out.emitted_padding_packets = pacer_->stats().emitted_padding_packets;
     out.emitted_padding_bytes = pacer_->stats().emitted_padding_bytes;
+    out.dropped_frames = 0;
+    out.nack_count = 0;
+    out.pli_count = 0;
+    out.retransmission_count = 0;
+    out.dropped_retransmission_packets = 0;
+    for (const auto& item : track_states_) {
+      out.dropped_frames += item.second.snapshot.dropped_frames;
+      out.nack_count += item.second.snapshot.nack_count;
+      out.pli_count += item.second.snapshot.pli_count;
+      out.retransmission_count += item.second.snapshot.retransmission_count;
+      out.dropped_retransmission_packets +=
+          item.second.snapshot.dropped_retransmission_packets;
+    }
     return out;
   }
 
+  bool GetTrackQosSnapshot(uint32_t track_id,
+                           int64_t now_us,
+                           QosSnapshot* out) const override {
+    const TrackState* track = FindTrackByTrackId(track_id);
+    if (track == nullptr || out == nullptr) {
+      return false;
+    }
+    *out = track->snapshot;
+    out->ids = track->config.ids;
+    out->report_time_us = static_cast<uint64_t>(std::max<int64_t>(0, now_us));
+    out->sender_rates.googcc_target_bps = googcc_.rates().target_bitrate_bps;
+    out->sender_rates.sender_rate_cap_bps = EffectiveSenderRateCapBps(now_us);
+    out->sender_rates.final_target_bps = TrackTargetBps(*track, now_us);
+    out->sender_rates.pacing_bps = pacer_->stats().pacing_bitrate_bps;
+    out->sender_rates.rtt_ms = latest_rtt_ms_;
+    out->jitter_buffer_delay_ms = pacer_->stats().expected_queue_time_ms;
+    out->emitted_padding_packets = pacer_->stats().emitted_padding_packets;
+    out->emitted_padding_bytes = pacer_->stats().emitted_padding_bytes;
+    return true;
+  }
+
  private:
-  RtpPacketAdapterConfig RtpConfig() const {
+  struct TrackState {
+    VideoTrackConfig config;
+    QosSnapshot snapshot;
+    uint16_t next_rtp_sequence_number = 1;
+    uint32_t first_rtp_timestamp = 90000;
+    int64_t first_capture_time_us = -1;
+    bool keyframe_request_pending = false;
+    uint32_t sent_rtp_packet_count = 0;
+    uint32_t sent_rtp_octet_count = 0;
+    int64_t last_sr_send_time_us_ = -1;
+  };
+
+  RtpPacketAdapterConfig RtpConfig(const VideoTrackConfig& track) const {
     RtpPacketAdapterConfig config;
-    config.payload_type = config_.session.h264.payload_type;
+    config.payload_type = track.h264.payload_type;
     config.transport_sequence_extension_id = config_.session.twcc.extension_id;
     config.enable_transport_sequence_extension = true;
     return config;
   }
 
-  uint32_t RtpTimestamp(int64_t capture_time_us) {
-    if (first_capture_time_us_ < 0) {
-      first_capture_time_us_ = capture_time_us;
+  uint32_t RtpTimestamp(TrackState& track, int64_t capture_time_us) const {
+    if (track.first_capture_time_us < 0) {
+      track.first_capture_time_us = capture_time_us;
     }
     const int64_t delta_us =
-        std::max<int64_t>(0, capture_time_us - first_capture_time_us_);
-    return first_rtp_timestamp_ +
+        std::max<int64_t>(0, capture_time_us - track.first_capture_time_us);
+    return track.first_rtp_timestamp +
            static_cast<uint32_t>((delta_us * kVideoClockRateHz) / 1000000);
+  }
+
+  TrackState* ResolveTrackForAccessUnit(const AnnexBAccessUnitView& access_unit) {
+    if (access_unit.ids.track_id != 0) {
+      return FindTrackByTrackId(access_unit.ids.track_id);
+    }
+    if (access_unit.ids.sender_ssrc != 0) {
+      return FindTrackBySenderSsrc(access_unit.ids.sender_ssrc);
+    }
+    if (track_states_.size() == 1) {
+      return FindTrackByTrackId(primary_track_id_);
+    }
+    return nullptr;
+  }
+
+  TrackState* FindTrackByTrackId(uint32_t track_id) {
+    auto it = track_states_.find(track_id);
+    return it == track_states_.end() ? nullptr : &it->second;
+  }
+
+  const TrackState* FindTrackByTrackId(uint32_t track_id) const {
+    auto it = track_states_.find(track_id);
+    return it == track_states_.end() ? nullptr : &it->second;
+  }
+
+  TrackState* FindTrackBySenderSsrc(uint32_t sender_ssrc) {
+    auto it = sender_ssrc_to_track_id_.find(sender_ssrc);
+    if (it == sender_ssrc_to_track_id_.end()) {
+      return nullptr;
+    }
+    return FindTrackByTrackId(it->second);
+  }
+
+  const TrackState* FindTrackBySenderSsrc(uint32_t sender_ssrc) const {
+    auto it = sender_ssrc_to_track_id_.find(sender_ssrc);
+    if (it == sender_ssrc_to_track_id_.end()) {
+      return nullptr;
+    }
+    return FindTrackByTrackId(it->second);
+  }
+
+  uint32_t TotalEnabledTrackWeight() const {
+    uint32_t total_weight = 0;
+    for (const auto& item : track_states_) {
+      if (item.second.config.enabled) {
+        total_weight += std::max<uint32_t>(1, item.second.config.weight);
+      }
+    }
+    return std::max<uint32_t>(1, total_weight);
+  }
+
+  uint32_t TrackTargetBps(const TrackState& track, int64_t now_us) const {
+    const uint32_t source_target_bps = FinalTargetBps(now_us);
+    if (track_states_.size() <= 1) {
+      return source_target_bps;
+    }
+    const uint64_t track_target_bps =
+        (static_cast<uint64_t>(source_target_bps) *
+         std::max<uint32_t>(1, track.config.weight)) /
+        TotalEnabledTrackWeight();
+    return std::max<uint32_t>(config_.session.min_bitrate_bps,
+                              static_cast<uint32_t>(track_target_bps));
+  }
+
+  uint32_t TrackStartBitrateBps(const TrackState& track) const {
+    if (track_states_.size() <= 1) {
+      return config_.session.start_bitrate_bps;
+    }
+    const uint64_t track_start_bps =
+        (static_cast<uint64_t>(config_.session.start_bitrate_bps) *
+         std::max<uint32_t>(1, track.config.weight)) /
+        TotalEnabledTrackWeight();
+    return std::max<uint32_t>(config_.session.min_bitrate_bps,
+                              static_cast<uint32_t>(track_start_bps));
+  }
+
+  uint32_t SuggestedMaxFps(const TrackState& track, uint32_t target_bps) const {
+    const uint32_t max_fps = std::max<uint16_t>(1, track.config.h264.max_fps);
+    if (target_bps <= config_.session.min_bitrate_bps) {
+      return std::min<uint32_t>(max_fps, 5);
+    }
+    const uint32_t track_start_bps = TrackStartBitrateBps(track);
+    if (target_bps <= track_start_bps / 2) {
+      return std::min<uint32_t>(max_fps, 10);
+    }
+    if (target_bps <= (track_start_bps * 3) / 4) {
+      return std::min<uint32_t>(max_fps, 15);
+    }
+    return max_fps;
   }
 
   Status DrainPacer(int64_t now_us) {
@@ -340,7 +514,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     if (!emitted.empty()) {
       googcc_.OnProcessInterval(now_us);
       ApplyGoogCcRates(now_us);
-      Status sr_status = MaybeSendSenderReport(now_us);
+      Status sr_status = MaybeSendSenderReports(now_us);
       if (!sr_status) {
         return sr_status;
       }
@@ -369,22 +543,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     if (sender_rate_cap_bps == kUnlimitedRateCapBps) {
       return googcc_target;
     }
-    return std::min<uint32_t>(
-        googcc_target, sender_rate_cap_bps);
-  }
-
-  uint32_t SuggestedMaxFps(uint32_t target_bps) const {
-    const uint32_t max_fps = std::max<uint16_t>(1, config_.session.h264.max_fps);
-    if (target_bps <= config_.session.min_bitrate_bps) {
-      return std::min<uint32_t>(max_fps, 5);
-    }
-    if (target_bps <= config_.session.start_bitrate_bps / 2) {
-      return std::min<uint32_t>(max_fps, 10);
-    }
-    if (target_bps <= (config_.session.start_bitrate_bps * 3) / 4) {
-      return std::min<uint32_t>(max_fps, 15);
-    }
-    return max_fps;
+    return std::min<uint32_t>(googcc_target, sender_rate_cap_bps);
   }
 
   void ApplyGoogCcRates(int64_t now_us) {
@@ -409,7 +568,9 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   }
 
   void ResetPacerQueue(int64_t now_us) {
-    keyframe_request_pending_ = true;
+    for (auto& item : track_states_) {
+      item.second.keyframe_request_pending = true;
+    }
     pacer_ = std::make_unique<PacingAdapter>(
         PacingAdapterConfig{EffectivePacingBps(now_us), 0,
                             kMaxPacingQueueBytes,
@@ -470,40 +631,46 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                                  65536);
   }
 
-  Status MaybeSendSenderReport(int64_t now_us) {
-    const int64_t interval_us =
-        static_cast<int64_t>(config_.session.rtcp.sr_rr_interval_ms) * 1000;
-    if (last_sr_send_time_us_ >= 0 &&
-        now_us - last_sr_send_time_us_ < interval_us) {
-      return Status::Ok();
-    }
+  Status MaybeSendSenderReports(int64_t now_us) {
+    for (auto& item : track_states_) {
+      TrackState& track = item.second;
+      if (track.sent_rtp_packet_count == 0) {
+        continue;
+      }
+      const int64_t interval_us =
+          static_cast<int64_t>(config_.session.rtcp.sr_rr_interval_ms) * 1000;
+      if (track.last_sr_send_time_us_ >= 0 &&
+          now_us - track.last_sr_send_time_us_ < interval_us) {
+        continue;
+      }
 
-    RtcpAdapterSenderReport sr;
-    sr.sender_ssrc = config_.session.ids.sender_ssrc;
-    sr.ntp_seconds =
-        kNtpUnixEpochOffsetSeconds + static_cast<uint32_t>(now_us / 1000000);
-    sr.ntp_fractions = static_cast<uint32_t>(
-        ((static_cast<uint64_t>(now_us % 1000000) << 32) / 1000000));
-    sr.rtp_timestamp = RtpTimestamp(now_us);
-    sr.packet_count = sent_rtp_packet_count_;
-    sr.octet_count = sent_rtp_octet_count_;
+      RtcpAdapterSenderReport sr;
+      sr.sender_ssrc = track.config.ids.sender_ssrc;
+      sr.ntp_seconds =
+          kNtpUnixEpochOffsetSeconds + static_cast<uint32_t>(now_us / 1000000);
+      sr.ntp_fractions = static_cast<uint32_t>(
+          ((static_cast<uint64_t>(now_us % 1000000) << 32) / 1000000));
+      sr.rtp_timestamp = RtpTimestamp(track, now_us);
+      sr.packet_count = track.sent_rtp_packet_count;
+      sr.octet_count = track.sent_rtp_octet_count;
 
-    std::vector<uint8_t> rtcp_bytes;
-    if (!BuildRtcpSenderReport(sr, &rtcp_bytes)) {
-      return Status::Error(StatusCode::kInternalError,
-                           "failed to build RTCP SR");
+      std::vector<uint8_t> rtcp_bytes;
+      if (!BuildRtcpSenderReport(sr, &rtcp_bytes)) {
+        return Status::Error(StatusCode::kInternalError,
+                             "failed to build RTCP SR");
+      }
+      TransportPacketView view;
+      view.bytes = rtcp_bytes.data();
+      view.size = rtcp_bytes.size();
+      view.metadata.ids = track.config.ids;
+      view.metadata.kind = TransportPacketKind::kRtcp;
+      view.metadata.send_time_us = now_us;
+      Status status = config_.transport_output(view);
+      if (!status) {
+        return status;
+      }
+      track.last_sr_send_time_us_ = now_us;
     }
-    TransportPacketView view;
-    view.bytes = rtcp_bytes.data();
-    view.size = rtcp_bytes.size();
-    view.metadata.ids = config_.session.ids;
-    view.metadata.kind = TransportPacketKind::kRtcp;
-    view.metadata.send_time_us = now_us;
-    Status status = config_.transport_output(view);
-    if (!status) {
-      return status;
-    }
-    last_sr_send_time_us_ = now_us;
     return Status::Ok();
   }
 
@@ -515,26 +682,35 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   Status EnqueueRetransmission(const PacingAdapterPacket& packet) {
     const auto pacer_stats = pacer_->stats();
     if (pacer_stats.queue_bytes + packet.bytes.size() > kMaxPacingQueueBytes) {
-      ++snapshot_.dropped_retransmission_packets;
+      TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
+      if (track != nullptr) {
+        ++track->snapshot.dropped_retransmission_packets;
+      }
       return Status::Ok();
     }
     if (!pacer_->EnqueuePacket(packet)) {
-      ++snapshot_.dropped_retransmission_packets;
+      TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
+      if (track != nullptr) {
+        ++track->snapshot.dropped_retransmission_packets;
+      }
     }
     return Status::Ok();
   }
 
   Status HandleNack(const RtcpAdapterNack& nack, int64_t receive_time_us) {
+    TrackState* track = FindTrackBySenderSsrc(nack.media_ssrc);
+    if (track == nullptr) {
+      return Status::Ok();
+    }
     for (uint16_t packet_id : nack.packet_ids) {
       auto found = packet_history_.Find(TransportPacketHistoryKey{
-          kSenderPacketHistoryHopId, config_.session.ids.sender_ssrc,
-          packet_id});
+          kSenderPacketHistoryHopId, nack.media_ssrc, packet_id});
       if (!found.has_value()) {
         continue;
       }
       RtpPacketAdapterParsedPacket parsed;
       if (!ParseRtpPacket(found->rtp_bytes.data(), found->rtp_bytes.size(),
-                          RtpConfig(), &parsed)) {
+                          RtpConfig(track->config), &parsed)) {
         continue;
       }
       std::vector<uint8_t> rebuilt_bytes;
@@ -547,7 +723,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       rtp_input.transport_sequence_number = next_transport_sequence_number_++;
       rtp_input.payload = parsed.payload.data();
       rtp_input.payload_size = parsed.payload.size();
-      if (!BuildRtpPacket(rtp_input, RtpConfig(), &rebuilt_bytes)) {
+      if (!BuildRtpPacket(rtp_input, RtpConfig(track->config), &rebuilt_bytes)) {
         return InternalError("failed to rebuild retransmission RTP packet");
       }
       PacingAdapterPacket packet;
@@ -566,10 +742,15 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   }
 
   Status EmitPacketNow(const PacingAdapterPacket& packet, int64_t now_us) {
+    TrackState* track = FindTrackBySenderSsrc(packet.ssrc);
+    if (track == nullptr) {
+      return InternalError("missing track state for emitted packet");
+    }
+
     TransportPacketView view;
     view.bytes = packet.bytes.data();
     view.size = packet.bytes.size();
-    view.metadata.ids = config_.session.ids;
+    view.metadata.ids = track->config.ids;
     view.metadata.kind = TransportPacketKind::kRtp;
     view.metadata.send_time_us = now_us;
     view.metadata.retransmission = packet.retransmission;
@@ -602,34 +783,24 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                              now_us);
       }
     }
-    if (packet.padding) {
-      const uint16_t next_rtp_sequence_number =
-          static_cast<uint16_t>(packet.rtp_sequence_number + 1);
-      if (SequenceNumberAtOrAfter(next_rtp_sequence_number,
-                                  next_rtp_sequence_number_)) {
-        next_rtp_sequence_number_ = next_rtp_sequence_number;
-      }
-    }
-    if (packet.transport_sequence_number >= 0) {
-      if (packet.padding) {
-        const uint16_t next_transport_sequence_number =
-            static_cast<uint16_t>(packet.transport_sequence_number + 1);
-        if (SequenceNumberAtOrAfter(next_transport_sequence_number,
-                                    next_transport_sequence_number_)) {
-          next_transport_sequence_number_ = next_transport_sequence_number;
-        }
+    if (packet.padding && packet.transport_sequence_number >= 0) {
+      const uint16_t next_transport_sequence_number =
+          static_cast<uint16_t>(packet.transport_sequence_number + 1);
+      if (SequenceNumberAtOrAfter(next_transport_sequence_number,
+                                  next_transport_sequence_number_)) {
+        next_transport_sequence_number_ = next_transport_sequence_number;
       }
     }
     if (!packet.padding && !packet.retransmission) {
-      ++sent_rtp_packet_count_;
-      sent_rtp_octet_count_ += packet.bytes.size();
+      ++track->sent_rtp_packet_count;
+      track->sent_rtp_octet_count += packet.bytes.size();
       packet_history_.Store(
           TransportPacketHistoryKey{kSenderPacketHistoryHopId,
-                                    config_.session.ids.sender_ssrc,
+                                    track->config.ids.sender_ssrc,
                                     packet.rtp_sequence_number},
           packet.bytes.data(), packet.bytes.size(), now_us, false);
     } else if (!packet.padding && packet.retransmission) {
-      ++snapshot_.retransmission_count;
+      ++track->snapshot.retransmission_count;
     }
     return Status::Ok();
   }
@@ -649,6 +820,11 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   }
 
   VideoPushClientConfig config_;
+  Status track_config_status_ = Status::Ok();
+  std::vector<VideoTrackConfig> track_configs_;
+  uint32_t primary_track_id_ = 0;
+  std::unordered_map<uint32_t, TrackState> track_states_;
+  std::unordered_map<uint32_t, uint32_t> sender_ssrc_to_track_id_;
   GoogCcAdapter googcc_;
   std::unique_ptr<PacingAdapter> pacer_;
   TransportPacketHistory packet_history_;
@@ -656,16 +832,9 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   std::unordered_map<uint16_t, SentPacketInfo> sent_packets_;
   std::unordered_map<int32_t, GoogCcProbeCluster> active_probe_clusters_;
   bool started_ = false;
-  uint16_t next_rtp_sequence_number_ = 1;
   uint16_t next_transport_sequence_number_ = 1;
-  uint32_t first_rtp_timestamp_ = 90000;
-  int64_t first_capture_time_us_ = -1;
   SenderRateCap sender_rate_cap_;
   uint32_t latest_rtt_ms_ = 0;
-  bool keyframe_request_pending_ = false;
-  uint32_t sent_rtp_packet_count_ = 0;
-  uint32_t sent_rtp_octet_count_ = 0;
-  int64_t last_sr_send_time_us_ = -1;
 };
 
 }  // namespace

@@ -49,6 +49,8 @@ struct TransportIds {
   uint32_t transport_id = 0;
   uint32_t sender_ssrc = 0;
   uint32_t receiver_id = 0;
+  uint32_t source_id = 0;
+  uint32_t track_id = 0;
 };
 
 struct RtcpReceiverReport {

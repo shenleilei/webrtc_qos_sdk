@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "webrtc_qos/types.h"
 
@@ -40,9 +41,18 @@ struct RtcpSessionConfig {
   uint32_t server_feedback_ssrc = 0;
 };
 
+struct VideoTrackConfig {
+  TransportIds ids;
+  H264SessionConfig h264;
+  uint32_t weight = 100;
+  bool enabled = true;
+  bool base_track = false;
+};
+
 struct SessionConfig {
   TransportIds ids;
   H264SessionConfig h264;
+  std::vector<VideoTrackConfig> video_tracks;
   TwccSessionConfig twcc;
   RtcpSessionConfig rtcp;
   uint32_t start_bitrate_bps = 1200000;
@@ -56,6 +66,7 @@ struct AnnexBAccessUnitView {
   size_t size = 0;
   int64_t capture_time_us = 0;
   bool keyframe = false;
+  TransportIds ids;
 };
 
 }  // namespace webrtc_qos

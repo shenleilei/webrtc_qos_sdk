@@ -30,6 +30,15 @@ _webrtc_qos_sdk_add_optional_archive(
 _webrtc_qos_sdk_add_optional_archive(
   WebRtcQosSdk::webrtc_nack_requester
   libwebrtc_qos_webrtc_nack_requester.a)
+_webrtc_qos_sdk_add_optional_archive(
+  WebRtcQosSdk::role_push_bundle
+  libwebrtc_qos_role_push_bundle.a)
+_webrtc_qos_sdk_add_optional_archive(
+  WebRtcQosSdk::role_play_bundle
+  libwebrtc_qos_role_play_bundle.a)
+_webrtc_qos_sdk_add_optional_archive(
+  WebRtcQosSdk::role_server_bundle
+  libwebrtc_qos_role_server_bundle.a)
 
 function(_webrtc_qos_sdk_add_optional_ffmpeg_archive target archive)
   if(TARGET "${target}" OR NOT EXISTS "${PACKAGE_PREFIX_DIR}/lib/${archive}")

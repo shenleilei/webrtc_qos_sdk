@@ -46,6 +46,27 @@ retransmission、RTCP identity、compound RTCP 边界和命名语义收口到了
 
 Phase-4 必须避免这两个极端。
 
+## 1.4 当前工作区状态
+
+基于当前工作区实现，Phase-4A 的第一条最小切片已经落地：
+
+- public model 已支持 `source_id / track_id / sender_ssrc`
+- `SessionConfig.video_tracks` 已可描述一个 source 下多个 track
+- `VideoPushClient` 已支持在一个实例内承载多个 sender SSRC，并保持 shared
+  GoogCC / shared pacer
+- `VideoPlayClient` 已支持按 sender SSRC 区分多个 track，并输出带
+  `track_id / sender_ssrc` 的 AU
+- `ServerQosRouter` 已支持按 sender SSRC 隔离 packet history / RR block /
+  retransmission route
+- `scripts/verify_webrtc_first_multitrack.sh` 已验证两 track 外部消费路径，
+  且已接入 `scripts/verify_webrtc_first_roles.sh`
+
+当前仍未完成的，不是“多 track 根本不能跑”，而是更完整的四期收尾项，例如：
+
+- 更系统化的多 track QoE / soak 门禁
+- 文档和集成说明的全面同步
+- 对“保留原生 media-plane”这一原则的进一步实现收口
+
 ## 1.2 目标分层
 
 Phase-4 之后，整个系统应尽量切成三层：
@@ -128,18 +149,18 @@ W3C 官方模型里有三层不同概念：
 
 ## 3. 当前模型的主要问题
 
-### 3.1 当前 facade 太薄，只有单 track 语义
+### 3.1 历史上 facade 太薄，只有单 track 语义
 
-现在 public model 仍然写死：
+在进入当前 Phase-4A 实现前，public model 写死为：
 
 - 单 `sender_ssrc`
 - 单主 H264 track
 - 单 `VideoPushClient`
 - 单 `VideoPlayClient`
 
-这不足以承接 WebRTC 原生 sender / receiver / track 语义。
+这也是为什么必须推进当前这一轮多 track public model 扩展。
 
-### 3.2 当前不是“WebRTC 不支持”，而是“我们没把那层语义接进来”
+### 3.2 核心问题不是“WebRTC 不支持”，而是“我们没有把那层语义接进来”
 
 原生 WebRTC 支持：
 

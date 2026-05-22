@@ -39,6 +39,9 @@ class VideoPlayClient {
   // QoE metrics like PSNR/SSIM/playable ratio are produced by upper decode/QoE
   // harnesses, not by the public VideoPlayClient API.
   virtual QosSnapshot GetQosSnapshot(int64_t now_us) const = 0;
+  virtual bool GetTrackQosSnapshot(uint32_t track_id,
+                                   int64_t now_us,
+                                   QosSnapshot* out) const = 0;
 };
 
 std::unique_ptr<VideoPlayClient> CreateVideoPlayClient(

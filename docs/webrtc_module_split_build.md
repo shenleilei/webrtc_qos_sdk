@@ -280,6 +280,18 @@ WebRtcQosSdk::role_server
 WebRtcQosSdk::role_transport
 ```
 
+如果业务更偏向“一次链接一个更完整的角色库”，当前安装包也提供角色聚合 bundle：
+
+```text
+WebRtcQosSdk::role_push_bundle
+WebRtcQosSdk::role_play_bundle
+WebRtcQosSdk::role_server_bundle
+```
+
+这些 bundle 使用 `scripts/merge_static_archives.sh` 把当前角色真实用到的 SDK archive
+和 WebRTC 子模块 archive 合并成单个 `.a`。这样业务在 sender/play/server 分别落地时，
+可以直接链接一个较大的静态库，而不是再手动拼多份底层 archive。
+
 角色依赖关系：
 
 | 角色 | 链接的 WebRTC 子模块 |

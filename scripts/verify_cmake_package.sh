@@ -25,10 +25,18 @@ if(TARGET WebRtcQosSdk::role_push)
   add_executable(push_role push_role.cc)
   target_link_libraries(push_role PRIVATE WebRtcQosSdk::role_push)
 endif()
+if(TARGET WebRtcQosSdk::role_push_bundle)
+  add_executable(push_role_bundle push_role.cc)
+  target_link_libraries(push_role_bundle PRIVATE WebRtcQosSdk::role_push_bundle)
+endif()
 
 if(TARGET WebRtcQosSdk::role_play)
   add_executable(play_role play_role.cc)
   target_link_libraries(play_role PRIVATE WebRtcQosSdk::role_play)
+endif()
+if(TARGET WebRtcQosSdk::role_play_bundle)
+  add_executable(play_role_bundle play_role.cc)
+  target_link_libraries(play_role_bundle PRIVATE WebRtcQosSdk::role_play_bundle)
 endif()
 
 if(TARGET WebRtcQosSdk::role_server)
@@ -36,6 +44,10 @@ if(TARGET WebRtcQosSdk::role_server)
   target_link_libraries(server_role PRIVATE WebRtcQosSdk::role_server)
   add_executable(server_role_runtime server_role_runtime.cc)
   target_link_libraries(server_role_runtime PRIVATE WebRtcQosSdk::role_server)
+endif()
+if(TARGET WebRtcQosSdk::role_server_bundle)
+  add_executable(server_role_bundle server_role.cc)
+  target_link_libraries(server_role_bundle PRIVATE WebRtcQosSdk::role_server_bundle)
 endif()
 
 if(TARGET WebRtcQosSdk::webrtc_rtp_rtcp)
@@ -908,11 +920,20 @@ cmake --build "${WORK_DIR}/build" -j2 >/dev/null
 if [[ -x "${WORK_DIR}/build/push_role" ]]; then
   "${WORK_DIR}/build/push_role"
 fi
+if [[ -x "${WORK_DIR}/build/push_role_bundle" ]]; then
+  "${WORK_DIR}/build/push_role_bundle"
+fi
 if [[ -x "${WORK_DIR}/build/play_role" ]]; then
   "${WORK_DIR}/build/play_role"
 fi
+if [[ -x "${WORK_DIR}/build/play_role_bundle" ]]; then
+  "${WORK_DIR}/build/play_role_bundle"
+fi
 if [[ -x "${WORK_DIR}/build/server_role" ]]; then
   "${WORK_DIR}/build/server_role"
+fi
+if [[ -x "${WORK_DIR}/build/server_role_bundle" ]]; then
+  "${WORK_DIR}/build/server_role_bundle"
 fi
 if [[ -x "${WORK_DIR}/build/server_role_runtime" ]]; then
   "${WORK_DIR}/build/server_role_runtime"
