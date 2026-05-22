@@ -4,7 +4,7 @@
 
 Phase-2 已经把 SDK 主路径推进到 WebRTC-first：业务侧继续掌握网络 IO、连接生命周期、会话/流/接收端映射和控制策略；SDK 只把媒体和 QoS 相关能力封装成 push/play/server 三类 facade；WebRTC 负责成熟的 RTP/RTCP、H264 RTP、GoogCC、pacing、NACK/PLI、jitter/reorder 和统计能力。
 
-Phase-3 不建议继续横向扩大量，而是先把当前实现里会影响长期正确性的逻辑问题收敛掉。核心目标是：让当前 WebRTC-first 链路在 sender 重传、server 多接收端 RTCP 语义、RTCP compound 处理和指标命名上经得住生产场景，而不是只通过 smoke/demo。
+Phase-3 不建议继续横向扩大量，而是先把当前实现里会影响长期正确性的逻辑问题收敛掉。核心目标是：让当前 WebRTC-first 链路在 sender 重传、server 侧 receiver_id / RTCP 身份边界、RTCP compound 处理和指标命名上经得住生产场景，而不是只通过 smoke/demo。
 
 当前 review 基于代码 HEAD：
 
@@ -28,6 +28,11 @@ Phase-3 不建议继续横向扩大量，而是先把当前实现里会影响长
 - 真实 renderer `pass`
 - 正式 `capture_library/manifest.csv` 和业务素材库
 
+阶段边界说明：Phase-3 里提到的多 receiver 只指业务 `receiver_id` 与 RTCP
+SSRC 不混用、反馈路由身份不串这类逻辑正确性问题；它不是多接收端产品化，不包含
+receiver registry，也不包含 sender RTP 自动 fanout。P5 以前不做多接收端
+fanout 工程化。
+
 ## 2. Phase-3 原则
 
 1. 能用 WebRTC 的能力必须继续用 WebRTC。
@@ -43,11 +48,11 @@ Phase-3 不建议继续横向扩大量，而是先把当前实现里会影响长
    当前实现是 NACK 后原 RTP 包重传，不是 RFC4588 RTX。除非正式实现 RTX payload type、apt、OSN 和 RTX SSRC，否则文档和指标不应把它叫 RTX。
 
 5. 优先修逻辑正确性，再补生产级验收。
-   三期的重点不是新增 demo，而是让已有路径在 burst loss、多 receiver、compound RTCP 和长时间运行下不出语义错误。
+   三期的重点不是新增 demo，而是让已有路径在 burst loss、receiver_id / RTCP 身份边界、compound RTCP 和长时间运行下不出语义错误。
 
 ## 3. 总体结论
 
-当前代码已经达到 Phase-3 计划的主要逻辑目标：push/play/server 继续复用 WebRTC 的核心媒体 QoS 能力；业务 IO 和路由仍在 facade 外部；sender NACK 重传入 pacer、SR 去重、多 receiver RTCP 身份拆分、compound RTCP unsupported 可观测性和当前能力命名清理，已经落到当前实现和自动化门禁。
+当前代码已经达到 Phase-3 计划的主要逻辑目标：push/play/server 继续复用 WebRTC 的核心媒体 QoS 能力；业务 IO 和路由仍在 facade 外部；sender NACK 重传入 pacer、SR 去重、receiver_id 与 RTCP SSRC 身份拆分、compound RTCP unsupported 可观测性和当前能力命名清理，已经落到当前实现和自动化门禁。
 
 当前真正仍未闭合的，主要是正式生产证据而不是新的核心逻辑实现：
 
@@ -108,13 +113,13 @@ sender 侧重传不直接发。重建出 `PacingAdapterPacket` 后，设置 `ret
 - 触发 M 次原 RTP 重传后，SR packet_count 仍等于 N。
 - 重传指标能单独体现 M。
 
-### 4.3 P1：server 多 receiver 的 RTCP 身份和状态拆分
+### 4.3 P1：server 侧 receiver_id / RTCP 身份和状态拆分
 
 #### 当前问题
 
 server 转发 NACK/PLI 时已经能把 metadata 的 receiver_id 带对，但 server 自己生成的 uplink TWCC 和 Receiver Report 仍使用全局 `config_.session.ids.receiver_id` 作为 RTCP sender SSRC。与此同时，`pending_twcc_packets_`、`last_sender_report_lsr_`、`last_rr_send_time_us_` 等状态也是全局的。
 
-单 receiver smoke 可以通过，但一旦进入多 receiver：
+单 receiver smoke 可以通过，但一旦业务侧输入多个 receiver_id 的反馈事件：
 
 - 业务 receiver_id 和 RTCP sender SSRC 容易混用。
 - 不同 receiver 的 RR/TWCC 节奏和状态可能串扰。
@@ -142,7 +147,7 @@ server 内部维护 per-receiver RTCP state。对于上行 sender -> server 的 
 - 两个 receiver 同时接入时，本地重传只回到请求的 receiver。
 - 两个 receiver 的 NACK/PLI metadata receiver_id 不串。
 - server-generated RTCP sender SSRC 不再等于业务 receiver_id。
-- 多 receiver 下 worst receiver rate cap 仍能正确选择最差接收端。
+- 多个 receiver_id 的下行质量输入下，worst-receiver sender cap 仍能正确选择最差接收端。
 
 ### 4.4 P2：compound RTCP 的 unsupported block 策略显式化
 
@@ -219,14 +224,14 @@ Phase-3 不实现 RFC4588 RTX，先统一命名为：
    - 触发 M 次重传。
    - 验证 SR packet/octet count 不重复计算重传。
 
-4. server multi-receiver NACK routing
+4. server receiver-id NACK routing identity
    - receiver A 和 receiver B 分别请求不同 packet。
    - 本地命中包只回对应 receiver。
    - miss NACK 只带 miss packet ids 上抛 sender。
 
 5. RTCP identity split
    - server-generated TWCC/RR 的 sender SSRC 不等于业务 receiver_id。
-   - 多 receiver 状态不串。
+   - 不同 receiver_id 的状态不串。
 
 6. compound RTCP unsupported visibility
    - supported block 正常处理。
@@ -254,7 +259,7 @@ Phase-3 完成不能只看 demo 输出，需要满足：
 
 - 上述必补测试全部进入自动化门禁。
 - sender 重传路径没有绕过 WebRTC pacer。
-- 多 receiver RTCP 身份和业务 receiver_id 不混用。
+- receiver_id、RTCP sender SSRC 和业务路由身份不混用。
 - 所有当前文档都准确说明“不支持 RFC4588 RTX，只支持 NACK 原包重传”。
 - production soak 中没有 pacer drain 卡死、RTCP 状态串扰、重传统计异常。
 
@@ -275,9 +280,9 @@ Phase-3 暂不做以下内容：
 
 1. 先修 sender 重传入 pacer，并移除 `queued_packets_ / emitted_packets_` 的死锁风险。
 2. 修 SR 重传统计语义。
-3. 拆 server RTCP SSRC 与业务 receiver_id，并补多 receiver state。
+3. 拆 server RTCP SSRC 与业务 receiver_id，并补 receiver_id 维度状态。
 4. 明确 compound RTCP unsupported block 策略。
 5. 全仓清理 RTX 命名。
 6. 补齐自动化测试和 production soak 证据。
 
-这个顺序的原因是：sender 重传和 pacer 是当前最可能影响单链路正确性的风险；server 多 receiver 是进入真实业务拓扑前必须解决的风险；RTCP unsupported 和 RTX 命名属于边界清晰度问题，应该在三期收尾时统一落地。
+这个顺序的原因是：sender 重传和 pacer 是当前最可能影响单链路正确性的风险；server 侧 receiver_id / RTCP 身份边界是进入真实业务拓扑前必须解决的语义风险；RTCP unsupported 和 RTX 命名属于边界清晰度问题，应该在三期收尾时统一落地。

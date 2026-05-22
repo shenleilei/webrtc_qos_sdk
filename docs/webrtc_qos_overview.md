@@ -170,7 +170,7 @@ WebRTC 在这些问题上已经积累了成熟能力：
 因为当前阶段的目标是：
 
 - 先把 H264 视频 QoS/jitter 闭环做稳
-- 先证明弱网进入、恢复、持续弱网、弱网起步、多接收端策略这些关键行为
+- 先证明弱网进入、恢复、持续弱网、弱网起步、receiver_id/反馈边界这些关键行为
 - 把复杂度压在真正影响体验的地方，而不是完整会话层
 
 ## 5. 当前整体架构
@@ -404,5 +404,6 @@ server 侧：
 4. [WebRTC 子模块拆分编译说明](webrtc_module_split_build.md)
 5. [Phase-2 主实施文档](../webrtc_first_phase2_master_plan.md)
 6. [Phase-3 逻辑正确性收敛计划](../webrtc_first_phase3_plan.md)
+7. [Phase-5 生产集成化、可观测性与日志体系计划](../webrtc_first_phase5_plan.md)
 
 如果你关心“为什么可信、怎么验证”，继续看后续的 `QoS 测试与验证方法` 文档。

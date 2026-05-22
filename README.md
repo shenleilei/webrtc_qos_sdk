@@ -13,6 +13,7 @@
 - [Phase-2 主实施文档](webrtc_first_phase2_master_plan.md)
 - [Phase-3 逻辑正确性收敛计划](webrtc_first_phase3_plan.md)
 - [Phase-4 多 Track / 多 SSRC 计划](webrtc_first_phase4_plan.md)
+- [Phase-5 生产集成化、可观测性与日志体系计划](webrtc_first_phase5_plan.md)
 
 ## 当前状态
 
@@ -23,7 +24,7 @@
 - 已保留 `transport_packet_history`：只保存 opaque RTP bytes，供 sender/server 在 WebRTC NACK 路由后按 `hop_id/ssrc/rtp_sequence_number` 找原包重传；它不解析 RTCP、不生成 NACK、不做恢复策略。
 - 已提供 WebRTC-backed `CreateVideoPushClient()` / `CreateVideoPlayClient()` / `CreateServerQosRouter()` 默认实现。push/play 使用 WebRTC H264 RTP、RTP packet、pacing、GoogCC、NackRequester 和 video jitter adapters；server 使用 WebRTC RTP/RTCP adapters 和 `transport_packet_history` 做 relay、uplink TWCC 生成、SR/RR RTT、NACK 本地重传、PLI/NACK 路由。
 - WebRTC adapter patch 已纳入 `third_party/webrtc_patches/webrtc_qos_sdk.patch`，不再依赖 `/root/src` 里的不可见本地改动。
-- 当前工作区已经包含默认 multi-track / multi-SSRC 能力基线：`SessionConfig.video_tracks`、`source_id / track_id / sender_ssrc`、per-track snapshot/adaptation 查询，以及 shared `GoogCC / pacer` 下的多 track / 多 SSRC 主路径。它已经通过 `verify_webrtc_first_multitrack.sh`、`verify_webrtc_first_roles.sh` 和 Phase-2 smoke/qoe/production 短时门禁；但多 receiver fanout support 层仍未进入当前实现。
+- 当前工作区已经包含默认 multi-track / multi-SSRC 能力基线：`SessionConfig.video_tracks`、`source_id / track_id / sender_ssrc`、per-track snapshot/adaptation 查询，以及 shared `GoogCC / pacer` 下的多 track / 多 SSRC 主路径。它已经通过 `verify_webrtc_first_multitrack.sh`、`verify_webrtc_first_roles.sh` 和 Phase-2 smoke/qoe/production 短时门禁；但多 receiver fanout support 层仍未进入当前实现，P5 以前也不做多接收端产品化。
 - 当前默认门禁里还增加了 `run_webrtc_first_multitrack_matrix.sh`，用于验证双 track 下的 shared source cap 分配、track 级 `PLI/NACK/retransmission` 隔离，以及 per-track 输出身份。
 
 当前可打包的 WebRTC 模块：
