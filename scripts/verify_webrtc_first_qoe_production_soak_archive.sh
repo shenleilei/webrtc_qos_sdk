@@ -16,6 +16,7 @@ for path in "${SUMMARY_CSV}" "${SUMMARY_TXT}" "${CONFIG_ENV}" \
     "${SOAK_ARCHIVE_DIR}/metadata.txt" \
     "${SOAK_ARCHIVE_DIR}/config.env" \
     "${SOAK_ARCHIVE_DIR}/git_status.txt" \
+    "${SOAK_ARCHIVE_DIR}/recovery_distribution_summary.txt" \
     "${SOAK_ARCHIVE_DIR}/files.txt" \
     "${SOAK_ARCHIVE_DIR}/manifest.sha256"; do
   if [[ ! -s "${path}" ]]; then
@@ -146,7 +147,6 @@ print("weak_low_encoder_fps_max=%g" % max((f(row, "max_bad_encoder_fps") for row
 PY
 
 python3 "${SDK_ROOT}/scripts/verify_recovery_time_distribution.py" \
-  --summary "${SOAK_ARCHIVE_DIR}/recovery_distribution_summary.txt" \
   --min-samples 1 \
   --max-target-p95-ms 1000 \
   --max-fps-p95-ms 1000 \

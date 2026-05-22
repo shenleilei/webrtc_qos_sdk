@@ -29,6 +29,8 @@ require_file "${GATE_DIR}/manifest.sha256"
   fail "missing implementation gate verifier: ${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh"
 [[ -x "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh" ]] ||
   fail "missing capture QoE CSV verifier: ${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh"
+[[ -x "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh" ]] ||
+  fail "missing production soak archive verifier: ${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh"
 
 (
   cd "${GATE_DIR}"
@@ -381,6 +383,13 @@ require_phase2_completion_evidence() {
   local phase2_summary="${phase2_dir}/phase2_production_gate_summary.txt"
   local evidence_bundle="${phase2_dir}/phase2_evidence_bundle"
   local completion_audit="${phase2_dir}/phase2_completion_audit/phase2_completion_audit_summary.txt"
+  local production_soak_dir="${evidence_bundle}/production_soak"
+  local production_soak_summary="${production_soak_dir}/webrtc_first_qoe_production_soak_summary.txt"
+  local production_soak_csv="${production_soak_dir}/webrtc_first_qoe_production_soak.csv"
+  local production_soak_config="${production_soak_dir}/webrtc_first_qoe_production_soak_config.env"
+  local production_soak_archive="${production_soak_dir}/webrtc_first_qoe_production_soak_archive.tar.gz"
+  local real_renderer_summary="${evidence_bundle}/real_renderer/real_renderer_summary.txt"
+  local real_renderer_metrics="${evidence_bundle}/real_renderer/real_renderer_metrics.csv"
 
   require_file "${phase2_summary}"
   rg -q '^phase2_production_gate_status=pass$' "${phase2_summary}" ||
@@ -420,6 +429,31 @@ require_phase2_completion_evidence() {
     fail "underlying completion audit missing capture QoE CSV pointer"
   rg -q '^check=evidence_bundle status=pass ' "${completion_audit}" ||
     fail "underlying completion audit missing passed evidence bundle check"
+  require_file "${production_soak_summary}"
+  require_file "${production_soak_csv}"
+  require_file "${production_soak_config}"
+  require_file "${production_soak_archive}"
+  OUTPUT_DIR="${production_soak_dir}" REQUIRE_SOAK_TARBALL=1 \
+    "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh" >/dev/null
+  local production_soak_minutes
+  production_soak_minutes="$(
+    awk -F= '$1=="SOAK_MINUTES"{print $2}' "${production_soak_config}" | tail -1
+  )"
+  python3 - "${production_soak_minutes:-0}" <<'PY'
+import sys
+
+if float(sys.argv[1] or 0) < 120:
+    raise SystemExit("production soak minutes below phase5 minimum")
+PY
+  require_file "${real_renderer_summary}"
+  require_file "${real_renderer_metrics}"
+  rg -q '^real_renderer_status=pass$' "${real_renderer_summary}" ||
+    fail "real renderer summary did not pass"
+  if rg -q '^renderer_backend=xvfb$' "${real_renderer_summary}"; then
+    fail "real renderer summary used xvfb backend"
+  fi
+  rg -q '^(frame,|metric,value)' "${real_renderer_metrics}" ||
+    fail "real renderer metrics missing expected header"
   require_file "${evidence_bundle}/capture_library/capture_manifest_summary.txt"
   require_file "${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv"
   require_file "${evidence_bundle}/capture_library/capture_qoe_summary.txt"
@@ -494,7 +528,13 @@ required_evidence = {
     "phase2_production_gate",
     "phase2_completion_audit",
     "production_soak",
+    "production_soak_summary",
+    "production_soak_csv",
+    "production_soak_config",
+    "production_soak_archive",
     "real_renderer",
+    "real_renderer_summary",
+    "real_renderer_metrics",
     "capture_library",
     "capture_manifest_summary",
     "capture_qoe_csv",
@@ -525,6 +565,12 @@ for key in (
     "phase2_production_gate",
     "phase2_evidence_bundle",
     "phase2_completion_audit",
+    "production_soak_summary",
+    "production_soak_csv",
+    "production_soak_config",
+    "production_soak_archive",
+    "real_renderer_summary",
+    "real_renderer_metrics",
     "capture_manifest_summary",
     "capture_qoe_csv",
     "capture_qoe_summary",
@@ -542,9 +588,49 @@ for key in ("manifest_summary", "qoe_csv", "qoe_summary"):
 def normalize_rel(path):
     return os.path.normpath(path).replace(os.sep, "/")
 
-capture_artifact_base = normalize_rel(
-    os.path.join(artifacts.get("phase2_evidence_bundle", ""), "capture_library")
+phase2_evidence_bundle_rel = artifacts.get("phase2_evidence_bundle", "")
+production_soak_artifact_base = normalize_rel(
+    os.path.join(phase2_evidence_bundle_rel, "production_soak")
 )
+real_renderer_artifact_base = normalize_rel(
+    os.path.join(phase2_evidence_bundle_rel, "real_renderer")
+)
+capture_artifact_base = normalize_rel(
+    os.path.join(phase2_evidence_bundle_rel, "capture_library")
+)
+expected_production_soak_artifacts = {
+    "production_soak_summary": normalize_rel(
+        os.path.join(
+            production_soak_artifact_base,
+            "webrtc_first_qoe_production_soak_summary.txt",
+        )
+    ),
+    "production_soak_csv": normalize_rel(
+        os.path.join(
+            production_soak_artifact_base, "webrtc_first_qoe_production_soak.csv"
+        )
+    ),
+    "production_soak_config": normalize_rel(
+        os.path.join(
+            production_soak_artifact_base,
+            "webrtc_first_qoe_production_soak_config.env",
+        )
+    ),
+    "production_soak_archive": normalize_rel(
+        os.path.join(
+            production_soak_artifact_base,
+            "webrtc_first_qoe_production_soak_archive.tar.gz",
+        )
+    ),
+}
+expected_real_renderer_artifacts = {
+    "real_renderer_summary": normalize_rel(
+        os.path.join(real_renderer_artifact_base, "real_renderer_summary.txt")
+    ),
+    "real_renderer_metrics": normalize_rel(
+        os.path.join(real_renderer_artifact_base, "real_renderer_metrics.csv")
+    ),
+}
 expected_capture_artifacts = {
     "capture_manifest_summary": normalize_rel(
         os.path.join(capture_artifact_base, "capture_manifest_summary.txt")
@@ -563,25 +649,72 @@ capture_pointer_keys = {
     "capture_qoe_csv": "qoe_csv",
     "capture_qoe_summary": "qoe_summary",
 }
-for evidence_id, expected_rel in expected_capture_artifacts.items():
+
+production_soak = doc.get("production_soak", {})
+for key in ("summary", "csv", "config", "archive"):
+    rel = production_soak.get(key)
+    if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
+        raise SystemExit(f"release evidence bad production soak pointer {key}")
+real_renderer = doc.get("real_renderer", {})
+for key in ("summary", "metrics"):
+    rel = real_renderer.get(key)
+    if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
+        raise SystemExit(f"release evidence bad real renderer pointer {key}")
+
+def require_consistent_pointer(evidence_id, expected_rel, nested_rel=None):
     artifact_rel = artifacts.get(evidence_id)
-    capture_rel = capture.get(capture_pointer_keys[evidence_id])
     evidence_rel = by_id[evidence_id].get("artifact")
     if normalize_rel(artifact_rel) != expected_rel:
         raise SystemExit(
             f"release evidence artifact {evidence_id} points to "
             f"{artifact_rel}, expected {expected_rel}"
         )
-    if normalize_rel(capture_rel) != expected_rel:
-        raise SystemExit(
-            f"release evidence capture pointer {evidence_id} points to "
-            f"{capture_rel}, expected {expected_rel}"
-        )
     if normalize_rel(evidence_rel) != expected_rel:
         raise SystemExit(
             f"release evidence item {evidence_id} points to "
             f"{evidence_rel}, expected {expected_rel}"
         )
+    if nested_rel is not None and normalize_rel(nested_rel) != expected_rel:
+        raise SystemExit(
+            f"release evidence nested pointer {evidence_id} points to "
+            f"{nested_rel}, expected {expected_rel}"
+        )
+
+for evidence_id, expected_rel in expected_production_soak_artifacts.items():
+    nested_key = evidence_id.replace("production_soak_", "")
+    require_consistent_pointer(evidence_id, expected_rel, production_soak.get(nested_key))
+for evidence_id, expected_rel in expected_real_renderer_artifacts.items():
+    nested_key = evidence_id.replace("real_renderer_", "")
+    require_consistent_pointer(evidence_id, expected_rel, real_renderer.get(nested_key))
+for evidence_id, expected_rel in expected_capture_artifacts.items():
+    require_consistent_pointer(
+        evidence_id, expected_rel, capture.get(capture_pointer_keys[evidence_id])
+    )
+
+def evidence_number(section, key, default=0):
+    value = section.get(key, default)
+    if value is None or value == "":
+        value = default
+    return float(value)
+
+if evidence_number(production_soak, "soak_minutes") < 120:
+    raise SystemExit("release evidence production soak minutes below minimum")
+rows = int(production_soak.get("rows", 0) or 0)
+pass_rows = int(production_soak.get("pass_rows", 0) or 0)
+if rows <= 0 or pass_rows != rows:
+    raise SystemExit("release evidence production soak rows are incomplete")
+if evidence_number(production_soak, "decode_errors", 1) != 0:
+    raise SystemExit("release evidence production soak decode errors are non-zero")
+if evidence_number(production_soak, "freeze_count", 1) != 0:
+    raise SystemExit("release evidence production soak freeze count is non-zero")
+if evidence_number(production_soak, "renderer_proxy_drop_frames", 1) != 0:
+    raise SystemExit("release evidence production soak renderer drops are non-zero")
+if real_renderer.get("status") != "pass":
+    raise SystemExit("release evidence real renderer did not pass")
+if real_renderer.get("backend") == "xvfb":
+    raise SystemExit("release evidence real renderer used xvfb backend")
+if evidence_number(real_renderer, "rendered_frames") <= 0:
+    raise SystemExit("release evidence real renderer rendered no frames")
 
 def capture_number(key, default=0):
     value = capture.get(key, default)
@@ -612,9 +745,14 @@ for expected in (
     "scope=phase5_formal_production_release_evidence",
     "fanout_status=deferred",
     "evidence=production_soak status=pass",
+    "evidence=production_soak_csv status=pass",
     "evidence=real_renderer status=pass",
+    "evidence=real_renderer_summary status=pass",
     "evidence=capture_library status=pass",
     "evidence=capture_qoe_csv status=pass",
+    "production_soak_csv=",
+    "production_soak_rows=",
+    "real_renderer_summary=",
     "capture_qoe_csv=",
     "capture_qoe_rows=",
 ):

@@ -239,7 +239,7 @@ if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
       MIN_AVG_PSNR_Y="${MIN_CAPTURE_AVG_PSNR_Y}" \
       MIN_AVG_SSIM_Y="${MIN_CAPTURE_AVG_SSIM_Y}" \
       REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
-      SUMMARY_FILE="${CAPTURE_QOE_SUMMARY}" \
+      SUMMARY_FILE="$([[ -n "${EVIDENCE_BUNDLE_DIR}" ]] && echo "" || echo "${CAPTURE_QOE_SUMMARY}")" \
       "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh" 2>&1)"; then
     capture_qoe_status=1
   fi

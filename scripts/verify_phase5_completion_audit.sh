@@ -220,6 +220,14 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'production_soak_archive' production_gate_release_soak_archive_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'real_renderer_metrics' production_gate_release_renderer_metrics_index
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_webrtc_first_qoe_production_soak_archive.sh' production_gate_release_soak_reverify
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence real renderer used xvfb backend' production_gate_release_renderer_xvfb_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_csv' production_gate_release_capture_qoe_index
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_minima' production_gate_release_capture_qoe_minima

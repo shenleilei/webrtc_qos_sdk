@@ -166,6 +166,10 @@ def parse_number(value):
     return number
 
 
+def has_file(path):
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
+
 implementation_summary = os.path.join(
     implementation_dir, "phase5_implementation_gate_summary.txt"
 )
@@ -178,6 +182,22 @@ phase2_audit_summary = os.path.join(
     "phase2_completion_audit_summary.txt",
 )
 phase2_evidence_bundle = os.path.join(phase2_dir, "phase2_evidence_bundle")
+production_soak_dir = os.path.join(phase2_evidence_bundle, "production_soak")
+production_soak_summary = os.path.join(
+    production_soak_dir, "webrtc_first_qoe_production_soak_summary.txt"
+)
+production_soak_csv = os.path.join(
+    production_soak_dir, "webrtc_first_qoe_production_soak.csv"
+)
+production_soak_config = os.path.join(
+    production_soak_dir, "webrtc_first_qoe_production_soak_config.env"
+)
+production_soak_archive = os.path.join(
+    production_soak_dir, "webrtc_first_qoe_production_soak_archive.tar.gz"
+)
+real_renderer_dir = os.path.join(phase2_evidence_bundle, "real_renderer")
+real_renderer_summary = os.path.join(real_renderer_dir, "real_renderer_summary.txt")
+real_renderer_metrics = os.path.join(real_renderer_dir, "real_renderer_metrics.csv")
 capture_evidence_dir = os.path.join(phase2_evidence_bundle, "capture_library")
 capture_manifest_summary = os.path.join(
     capture_evidence_dir, "capture_manifest_summary.txt"
@@ -189,6 +209,9 @@ capture_qoe_summary = os.path.join(capture_evidence_dir, "capture_qoe_summary.tx
 
 readiness = kv_summary(readiness_summary)
 phase2_audit = kv_summary(phase2_audit_summary)
+production_soak = kv_summary(production_soak_summary)
+production_soak_runtime = kv_summary(production_soak_config)
+real_renderer = kv_summary(real_renderer_summary)
 capture_manifest = kv_summary(capture_manifest_summary)
 capture_qoe = kv_summary(capture_qoe_summary)
 slo_status = "missing"
@@ -204,10 +227,10 @@ checks = {
         "phase5_production_readiness_status"
     )
     == "ready",
-    "phase5_debug_bundle": os.path.exists(
+    "phase5_debug_bundle": has_file(
         os.path.join(debug_bundle_dir, "manifest.sha256")
     )
-    and os.path.exists(debug_slo),
+    and has_file(debug_slo),
     "phase2_production_gate": has_line(phase2_summary, "phase2_production_gate_status=pass"),
     "phase2_completion_audit": has_line(
         phase2_audit_summary, "phase2_completion_audit=pass"
@@ -215,6 +238,14 @@ checks = {
     and phase2_audit.get("phase2_completion_status") == "complete",
     "production_soak": has_prefix(phase2_audit_summary, "check=production_soak status=pass "),
     "real_renderer": has_prefix(phase2_audit_summary, "check=real_renderer status=pass "),
+    "production_soak_summary": has_file(production_soak_summary)
+    and production_soak.get("rows", "0") != "0"
+    and production_soak.get("rows") == production_soak.get("pass_rows"),
+    "production_soak_csv": has_file(production_soak_csv),
+    "production_soak_config": has_file(production_soak_config),
+    "production_soak_archive": has_file(production_soak_archive),
+    "real_renderer_summary": real_renderer.get("real_renderer_status") == "pass",
+    "real_renderer_metrics": has_file(real_renderer_metrics),
     "capture_library": has_prefix(
         phase2_audit_summary, "check=capture_library status=pass "
     ),
@@ -222,13 +253,13 @@ checks = {
         "capture_manifest_verification"
     )
     == "true",
-    "capture_qoe_csv": os.path.exists(capture_qoe_csv)
+    "capture_qoe_csv": has_file(capture_qoe_csv)
     and capture_qoe.get("capture_qoe_verification") == "true",
     "capture_qoe_summary": capture_qoe.get("capture_qoe_verification") == "true",
     "evidence_bundle": has_prefix(
         phase2_audit_summary, "check=evidence_bundle status=pass "
     )
-    and os.path.exists(os.path.join(phase2_evidence_bundle, "manifest.sha256")),
+    and has_file(os.path.join(phase2_evidence_bundle, "manifest.sha256")),
 }
 
 evidence = [
@@ -269,9 +300,39 @@ evidence = [
             rel(phase2_audit_summary),
         ),
         (
+            "production_soak_summary",
+            checks["production_soak_summary"],
+            rel(production_soak_summary),
+        ),
+        (
+            "production_soak_csv",
+            checks["production_soak_csv"],
+            rel(production_soak_csv),
+        ),
+        (
+            "production_soak_config",
+            checks["production_soak_config"],
+            rel(production_soak_config),
+        ),
+        (
+            "production_soak_archive",
+            checks["production_soak_archive"],
+            rel(production_soak_archive),
+        ),
+        (
             "real_renderer",
             checks["real_renderer"],
             rel(phase2_audit_summary),
+        ),
+        (
+            "real_renderer_summary",
+            checks["real_renderer_summary"],
+            rel(real_renderer_summary),
+        ),
+        (
+            "real_renderer_metrics",
+            checks["real_renderer_metrics"],
+            rel(real_renderer_metrics),
         ),
         (
             "capture_library",
@@ -324,6 +385,40 @@ doc = {
         "debug_bundle_slo_status": slo_status,
         "debug_bundle_slo_report": rel(debug_slo),
     },
+    "production_soak": {
+        "summary": rel(production_soak_summary),
+        "csv": rel(production_soak_csv),
+        "config": rel(production_soak_config),
+        "archive": rel(production_soak_archive),
+        "soak_minutes": parse_number(production_soak_runtime.get("SOAK_MINUTES", "0")),
+        "cycles": parse_number(production_soak.get("cycles", "0")),
+        "rows": parse_number(production_soak.get("rows", "0")),
+        "pass_rows": parse_number(production_soak.get("pass_rows", "0")),
+        "playable_ratio_min": parse_number(
+            production_soak.get("playable_ratio_min", "0")
+        ),
+        "avg_psnr_y_min": parse_number(production_soak.get("avg_psnr_y_min", "0")),
+        "avg_ssim_y_min": parse_number(production_soak.get("avg_ssim_y_min", "0")),
+        "decode_errors": parse_number(production_soak.get("decode_errors", "0")),
+        "freeze_count": parse_number(production_soak.get("freeze_count", "0")),
+        "renderer_proxy_drop_frames": parse_number(
+            production_soak.get("renderer_proxy_drop_frames", "0")
+        ),
+    },
+    "real_renderer": {
+        "summary": rel(real_renderer_summary),
+        "metrics": rel(real_renderer_metrics),
+        "status": real_renderer.get("real_renderer_status", ""),
+        "backend": real_renderer.get("renderer_backend", ""),
+        "rendered_frames": parse_number(real_renderer.get("rendered_frames", "0")),
+        "late_frames": parse_number(real_renderer.get("late_frames", "0")),
+        "max_present_gap_ms": parse_number(
+            real_renderer.get("max_present_gap_ms", "0")
+        ),
+        "max_present_jitter_ms": parse_number(
+            real_renderer.get("max_present_jitter_ms", "0")
+        ),
+    },
     "capture_library": {
         "manifest_summary": rel(capture_manifest_summary),
         "qoe_csv": rel(capture_qoe_csv),
@@ -355,6 +450,12 @@ doc = {
         "phase2_production_gate": rel(phase2_dir),
         "phase2_evidence_bundle": rel(phase2_evidence_bundle),
         "phase2_completion_audit": rel(phase2_audit_summary),
+        "production_soak_summary": rel(production_soak_summary),
+        "production_soak_csv": rel(production_soak_csv),
+        "production_soak_config": rel(production_soak_config),
+        "production_soak_archive": rel(production_soak_archive),
+        "real_renderer_summary": rel(real_renderer_summary),
+        "real_renderer_metrics": rel(real_renderer_metrics),
         "capture_manifest_summary": rel(capture_manifest_summary),
         "capture_qoe_csv": rel(capture_qoe_csv),
         "capture_qoe_summary": rel(capture_qoe_summary),
@@ -383,6 +484,12 @@ with open(release_summary, "w", encoding="utf-8") as fh:
             f"evidence={item['id']} status={item['status']} "
             f"artifact={item['artifact']}\n"
         )
+    fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
+    fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
+    fh.write(f"production_soak_minutes={doc['production_soak']['soak_minutes']}\n")
+    fh.write(f"production_soak_rows={doc['production_soak']['rows']}\n")
+    fh.write(f"real_renderer_summary={rel(real_renderer_summary)}\n")
+    fh.write(f"real_renderer_backend={doc['real_renderer']['backend']}\n")
     fh.write(f"capture_qoe_csv={rel(capture_qoe_csv)}\n")
     fh.write(f"capture_qoe_summary={rel(capture_qoe_summary)}\n")
     fh.write(f"capture_qoe_rows={doc['capture_library']['rows']}\n")
