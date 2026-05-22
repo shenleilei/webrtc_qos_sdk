@@ -159,6 +159,8 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_minimal_udp_external_app.sh
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_release_contract.sh
+REQUIRE_PRODUCTION_EVIDENCE=0 \
+  scripts/verify_phase5_completion_audit.sh
 ```
 
 `verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口。`VERIFY_LEVEL=smoke` 会串起 no-selfmade、WebRTC module smoke、外部 CMake package、loopback、pacing probe、role facade 和 synthetic 弱网矩阵；`VERIFY_LEVEL=qoe` 在 smoke 基础上增加低 RPS/低码率真实 H264 QoE 和恢复时间分布；`VERIFY_LEVEL=production` 会继续进入 production soak，并可通过 `REQUIRE_REAL_RENDERER=1 / REQUIRE_CAPTURE_LIBRARY=1` 把真实 renderer 和正式采集素材库变成硬门禁。当前 `SOAK_MINUTES=0` 的默认本地 production smoke 只验证 runner/archive 链路，默认配置为 `FRAMES_PER_CYCLE=12 / CONTENT_MODES=block_motion / SCENARIOS=weak_network_low_rps_low_bitrate`；正式验收仍必须显式跑 `SOAK_MINUTES>=120`。
@@ -203,6 +205,8 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 `verify_phase5_minimal_udp_external_app.sh` 是 Phase-5 外部最小 UDP 业务样板门禁：它先从当前源码安装一个临时 SDK prefix，再从 `examples/minimal_udp_app` 用 `find_package(WebRtcQosSdk)` 构建 sender/server/receiver/selftest，验证样板不 include SDK `src/` 或 WebRTC PeerConnection 内部头，并检查 selftest 生成三角色日志、metrics 和 alerts。
 
 `verify_phase5_release_contract.sh` 是 Phase-5 发布契约门禁：它从当前源码安装临时 SDK prefix，检查 public headers、WebRTC adapter headers、role archives、role bundle archives 和 CMake package，再用外部 consumer 分别链接普通 `role_*` 与 `role_*_bundle` target，验证 runtime logging/metrics/alerts 字段和 PeerConnection-free 发布边界。
+
+`verify_phase5_completion_audit.sh` 是 Phase-5 完成度审计入口：默认要求传入已通过的 `PHASE5_GATE_DIR` 并验证正式 production evidence；本地可用 `REQUIRE_PRODUCTION_EVIDENCE=0` 审计“除正式生产证据外的 P5 实现项是否齐全”，但该模式不会把 P5 判定为生产完成。
 
 ## WebRTC-first Demo
 
@@ -616,6 +620,9 @@ OUTPUT_ROOT=/path/to/output/phase5_production_gate \
 GATE_DIR=/path/to/output/phase5_production_gate \
 REQUIRE_PASS=1 \
   scripts/verify_phase5_production_gate.sh
+
+PHASE5_GATE_DIR=/path/to/output/phase5_production_gate \
+  scripts/verify_phase5_completion_audit.sh
 ```
 
 已新增恢复时间分布门禁 `scripts/verify_recovery_time_distribution.sh`。它读取一个或多个 QoE CSV，默认只统计可恢复场景 `bandwidth_cliff_recover / weak_network_low_rps_low_bitrate / walking_dead_zone_recover / oscillating_edge_recover`，输出 `target/fps/full_recovery_time_ms` 的 p50/p95/max，并按 p95 和 max 门槛失败。production soak archive verifier 会自动调用它，并把 `archive/recovery_distribution_summary.txt` 纳入 sha256 manifest 和 tarball。

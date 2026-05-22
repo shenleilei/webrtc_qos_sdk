@@ -154,6 +154,7 @@ Phase-5 第一阶段先把生产证据链跑实并制度化：
 ```bash
 scripts/run_phase5_production_gate.sh
 scripts/verify_phase5_production_gate.sh
+scripts/verify_phase5_completion_audit.sh
 ```
 
 wrapper 会先跑 Phase-5 release contract 和 debug bundle 门禁，再调用底层
@@ -162,6 +163,11 @@ wrapper 会先跑 Phase-5 release contract 和 debug bundle 门禁，再调用�
 `artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
 `files.txt` 和 `manifest.sha256`。本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但
 dry-run 不代表生产证据完成。
+
+`verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
+`PHASE5_GATE_DIR` 指向已经 `REQUIRE_PASS=1` 验证通过的 Phase-5 production gate；
+如果显式设置 `REQUIRE_PRODUCTION_EVIDENCE=0`，只审计 P5 实现项和文档入口是否齐全，
+并返回 `implemented_without_required_production_evidence`，不能用来宣布生产完成。
 
 #### 验收标准
 
@@ -1119,6 +1125,7 @@ Phase-5 顶层入口：
 ```bash
 scripts/run_phase5_production_gate.sh
 scripts/verify_phase5_production_gate.sh
+scripts/verify_phase5_completion_audit.sh
 ```
 
 底层仍复用：
@@ -1134,6 +1141,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - Phase-5 debug bundle collect/verify。
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
+- completion audit 对“实现项齐全但正式生产证据缺失”和“正式完成”做硬区分。
 
 ## 7. 里程碑
 
@@ -1235,6 +1243,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 
 Phase-5 基础完成必须同时满足：
 
+- `PHASE5_GATE_DIR=<passed_gate> scripts/verify_phase5_completion_audit.sh` 通过。
 - 正式 production evidence bundle audit 通过。
 - push/server/play 正式日志文件化，支持轮转和 artifact 收集。
 - metrics snapshot、alerts、debug bundle 可用。
