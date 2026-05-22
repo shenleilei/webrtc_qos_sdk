@@ -14,6 +14,7 @@ Use these files as the primary source of truth:
 4. `docs/sdk_push_play_integration.md`
 5. `docs/webrtc_qos_overview.md`
 6. `docs/qos_test_validation_methodology.md`
+7. `webrtc_first_phase4_plan.md`
 
 ## Current Architecture
 
@@ -95,6 +96,13 @@ The remaining gaps are external formal-evidence items:
 - `SOAK_MINUTES >= 120` production soak
 - real renderer `pass`
 - formal `capture_library/manifest.csv` and business capture assets
+
+The next planned implementation slice is Phase-4 multi-track / multi-SSRC.
+Multi-receiver fanout engineering is explicitly deferred for now.
+Single-track simulcast / multi-encoding is also deferred for now.
+Do not conflate the current goal with either multi-receiver fanout or
+single-track simulcast; the active Phase-4 target is explicit multi-track /
+multi-SSRC modeling.
 
 ## Build
 

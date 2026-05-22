@@ -61,6 +61,7 @@ set(WEBRTC_QOS_FFMPEG_INSTALL_TARGETS)
 set(WEBRTC_QOS_OPTIONAL_DEMO_TARGETS)
 set(WEBRTC_QOS_WEBRTC_MODULE_ARCHIVES)
 set(WEBRTC_QOS_WEBRTC_MODULE_HEADERS)
+set(WEBRTC_QOS_ROLE_BUNDLE_ARCHIVES)
 if(WEBRTC_QOS_ENABLE_WEBRTC_FACADE)
   if(NOT WEBRTC_QOS_WEBRTC_MODULE_PREFIX)
     message(FATAL_ERROR
@@ -162,6 +163,56 @@ if(WEBRTC_QOS_ENABLE_WEBRTC_FACADE)
       atomic)
   list(APPEND WEBRTC_QOS_OPTIONAL_DEMO_TARGETS
     webrtc_qos_webrtc_first_udp_demo)
+
+  function(webrtc_qos_add_role_bundle target_name output_name)
+    set(options)
+    set(oneValueArgs)
+    set(multiValueArgs ARCHIVES)
+    cmake_parse_arguments(BUNDLE "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    if(NOT BUNDLE_ARCHIVES)
+      message(FATAL_ERROR "webrtc_qos_add_role_bundle requires ARCHIVES")
+    endif()
+    set(_output "${CMAKE_CURRENT_BINARY_DIR}/${output_name}")
+    add_custom_command(
+      OUTPUT "${_output}"
+      COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/merge_static_archives.sh"
+        "${CMAKE_AR}" "${_output}" ${BUNDLE_ARCHIVES}
+      DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/merge_static_archives.sh"
+        ${BUNDLE_ARCHIVES}
+      VERBATIM)
+    add_custom_target(${target_name} ALL DEPENDS "${_output}")
+    list(APPEND WEBRTC_QOS_ROLE_BUNDLE_ARCHIVES "${_output}")
+    set(WEBRTC_QOS_ROLE_BUNDLE_ARCHIVES "${WEBRTC_QOS_ROLE_BUNDLE_ARCHIVES}" PARENT_SCOPE)
+  endfunction()
+
+  webrtc_qos_add_role_bundle(
+    webrtc_qos_role_push_bundle
+    libwebrtc_qos_role_push_bundle.a
+    ARCHIVES
+      $<TARGET_FILE:webrtc_qos>
+      $<TARGET_FILE:webrtc_qos_facade_video>
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_googcc.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_pacing.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_rtp_rtcp.a")
+
+  webrtc_qos_add_role_bundle(
+    webrtc_qos_role_play_bundle
+    libwebrtc_qos_role_play_bundle.a
+    ARCHIVES
+      $<TARGET_FILE:webrtc_qos>
+      $<TARGET_FILE:webrtc_qos_facade_video>
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_rtp_rtcp.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_video_jitter.a"
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_nack_requester.a")
+
+  webrtc_qos_add_role_bundle(
+    webrtc_qos_role_server_bundle
+    libwebrtc_qos_role_server_bundle.a
+    ARCHIVES
+      $<TARGET_FILE:webrtc_qos>
+      $<TARGET_FILE:webrtc_qos_facade_video>
+      "${WEBRTC_QOS_WEBRTC_MODULE_LIB_DIR}/libwebrtc_qos_webrtc_rtp_rtcp.a")
 endif()
 if(WEBRTC_QOS_ENABLE_FFMPEG_ENCODER)
   find_path(FFMPEG_INCLUDE_DIR
@@ -243,6 +294,11 @@ if(WEBRTC_QOS_WEBRTC_FACADE_INSTALL_TARGETS)
   install(FILES
     ${WEBRTC_QOS_WEBRTC_MODULE_HEADERS}
     DESTINATION include/webrtc_qos)
+  if(WEBRTC_QOS_ROLE_BUNDLE_ARCHIVES)
+    install(FILES
+      ${WEBRTC_QOS_ROLE_BUNDLE_ARCHIVES}
+      DESTINATION lib)
+  endif()
 endif()
 if(WEBRTC_QOS_INSTALL_FFMPEG_ENCODER AND WEBRTC_QOS_FFMPEG_INSTALL_TARGETS)
   install(TARGETS

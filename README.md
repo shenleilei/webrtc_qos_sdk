@@ -10,6 +10,7 @@
 - [WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md)
 - [Phase-2 主实施文档](webrtc_first_phase2_master_plan.md)
 - [Phase-3 逻辑正确性收敛计划](webrtc_first_phase3_plan.md)
+- [Phase-4 多 Receiver / 多 Track 计划](webrtc_first_phase4_plan.md)
 
 ## 当前状态
 
