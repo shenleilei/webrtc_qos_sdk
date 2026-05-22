@@ -596,7 +596,8 @@ bundle 固定包含 `metadata.txt`、`build_config.txt`、`git_status.txt`、
 `session_config.json`、`runtime_config.json`、`log/{push,server,play}.log`、
 `metrics/{push,server,play}_metrics.jsonl`、`metrics/summary.csv`、
 `alerts/alerts.jsonl`、`alerts/alerts_summary.txt`、`timeline/events.jsonl`、
-`timeline/first_problem.json` 和 `manifest.sha256`。这些文件可以回答
+`timeline/first_problem.json`、`monitoring/health_report.json`、
+`monitoring/alert_policy.json` 和 `manifest.sha256`。这些文件可以回答
 “第一条 warn/error 在哪个角色、哪个 track、哪个 receiver 出现”以及“弱网前后
 bitrate/FPS/NACK/retransmission 怎么变化”。
 
@@ -605,6 +606,11 @@ bitrate/FPS/NACK/retransmission 怎么变化”。
 `first_alert` 以及按 role/category/rule 的计数；`timeline/summary.txt` 会写出
 log/metric/alert 事件计数和 `first_problem`。生产排障时先看这三个 summary，再按
 role 打开原始 JSONL。
+
+`monitoring/alert_policy.json` 会把 availability、media_quality、network_qos 三类
+默认告警规则、阈值来源、适用 role 和排查动作随 bundle 归档。生产排障时先确认
+policy 覆盖当前触发的 alert rule，再看 `health_report.json` 里的 top alert rules
+和 recommended actions。
 
 `runtime_config.json` 是脱敏后的运行配置 dump，只记录 role、factory、UDP 边界、
 log/metrics/alerts 开关和 bundle 内相对路径，不记录媒体 bytes、原始帧、鉴权材料或

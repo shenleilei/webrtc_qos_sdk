@@ -700,6 +700,8 @@ availability alert，以及 sender/server `sender_rtp_output_gap`、play
   monitoring/
     health_report.json
     health_summary.txt
+    alert_policy.json
+    alert_policy_summary.txt
   evidence/
     qoe.csv
     renderer_summary.txt
@@ -744,6 +746,8 @@ debug_bundle/
   monitoring/
     health_report.json
     health_summary.txt
+    alert_policy.json
+    alert_policy_summary.txt
   evidence/
     udp_selftest_output.txt
     cmake_configure.log
@@ -770,9 +774,15 @@ push/server/play 汇总 metric record 数、alert record 数、alert category/ru
 `recommended_actions`。`monitoring/health_summary.txt` 提供同样信息的文本摘要，
 方便人工在失败 artifact 中快速读取。
 
+`monitoring/alert_policy.json` 是本次运行使用的默认告警策略快照：包含
+availability、media_quality、network_qos 三类规则，记录每条规则的名称、类别、
+严重级别、适用 role、阈值来源、默认阈值、排查动作和本次 bundle 中的观测计数。
+`monitoring/alert_policy_summary.txt` 是同一策略的文本摘要，方便 CI artifact 页面
+直接展示策略覆盖和观测命中情况。
+
 `runtime_config.json` 是脱敏后的运行配置 dump，固定记录 schema version、UDP
 transport boundary、三角色 factory、selftest 参数、日志/metrics/alerts 运行开关和
-bundle 内相对路径、health report 路径；媒体 bytes、原始帧、鉴权材料和运行机绝对目录只记录为
+bundle 内相对路径、health report 和 alert policy 路径；媒体 bytes、原始帧、鉴权材料和运行机绝对目录只记录为
 `omitted` 标记。
 
 离线 verifier 会检查：
@@ -787,6 +797,8 @@ bundle 内相对路径、health report 路径；媒体 bytes、原始帧、鉴�
 - timeline 同时包含 log/metric/alert 三类事件，并在 summary 中写出 first problem。
 - health report 覆盖三类 role、top alert rules、recommended actions 和 bundle 内
   相对 artifact 指针。
+- alert policy 覆盖 availability、media_quality、network_qos 三类规则、默认阈值、
+  适用 role、排查动作和本次观测计数。
 - push/server/play 日志中都有 `config_dump`，且只包含脱敏配置摘要。
 - runtime config 覆盖 push/server/play、日志/metrics/alerts 开关和脱敏标记。
 - `manifest.sha256` 可校验。
@@ -808,6 +820,7 @@ bundle 必须支持：
 - 找到第一次 error/warn。
 - 看到关键 metrics 的前后变化。
 - 看到可由 CI/运维直接消费的健康状态和推荐排查动作。
+- 看到可离线审计的告警策略、阈值来源和规则覆盖。
 - 校验 manifest sha256，避免证据被改。
 
 #### 验收标准
@@ -815,6 +828,7 @@ bundle 必须支持：
 - 任意 Phase-5 runner 失败时自动输出 debug bundle。
 - bundle verifier 能检查必需文件存在、manifest、JSON 字段和 weak-network alert。
 - health report 能按 role 汇总健康状态、首个问题、top alert rules 和推荐动作。
+- alert policy 能证明本次运行的告警规则、阈值和排查动作可离线审计。
 - bundle 中无原始媒体 payload 和隐私敏感字段。
 
 ### 4.6 P1：外部最小 UDP 业务样板工程

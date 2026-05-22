@@ -250,6 +250,8 @@ runtime_config = {
         "first_problem": "timeline/first_problem.json",
         "health_report": "monitoring/health_report.json",
         "health_summary": "monitoring/health_summary.txt",
+        "alert_policy": "monitoring/alert_policy.json",
+        "alert_policy_summary": "monitoring/alert_policy_summary.txt",
     },
     "redaction": {
         "media_bytes": "omitted",
@@ -479,6 +481,8 @@ with (root / "timeline" / "summary.txt").open("w", encoding="utf-8") as handle:
 
 metric_by_role = {row["role"]: row for row in metric_rows}
 alert_records_by_role = Counter(a.get("role", "") for a in alerts)
+alert_rule_counts = Counter(a.get("rule", "") for a in alerts)
+alert_role_rule_counts = Counter((a.get("role", ""), a.get("rule", "")) for a in alerts)
 alert_categories_by_role = defaultdict(Counter)
 alert_rules_by_role = defaultdict(Counter)
 for alert in alerts:
@@ -509,6 +513,340 @@ for (role, category), count in sorted(alert_category_counts.items()):
             "inspect role logs, metrics, alerts, and timeline around the first problem",
         ),
     })
+
+runtime_config = json.loads((root / "runtime_config.json").read_text(encoding="utf-8"))
+runtime_alerts = runtime_config.get("runtime", {}).get("alerts", {})
+alert_policy_rules = [
+    {
+        "rule": "process_tick_gap",
+        "category": "availability",
+        "severity": "WARN",
+        "roles": ["push", "server", "play"],
+        "enabled_by": "alert_on_process_tick_gap",
+        "threshold_ref": "max_process_tick_gap_ms",
+        "default_threshold": runtime_alerts.get("max_process_tick_gap_ms", 2000),
+        "unit": "ms",
+        "required_action": "inspect role worker scheduling and process loop stalls",
+    },
+    {
+        "rule": "sender_rtp_output_gap",
+        "category": "availability",
+        "severity": "WARN",
+        "roles": ["push", "server"],
+        "enabled_by": "alert_on_media_flow_gap",
+        "threshold_ref": "max_rtp_output_gap_ms",
+        "default_threshold": runtime_alerts.get("max_rtp_output_gap_ms", 2000),
+        "unit": "ms",
+        "required_action": "inspect RTP output path, pacing, and transport callback health",
+    },
+    {
+        "rule": "receiver_rtp_input_gap",
+        "category": "availability",
+        "severity": "WARN",
+        "roles": ["play"],
+        "enabled_by": "alert_on_media_flow_gap",
+        "threshold_ref": "max_rtp_input_gap_ms",
+        "default_threshold": runtime_alerts.get("max_rtp_input_gap_ms", 2000),
+        "unit": "ms",
+        "required_action": "inspect receiver RTP input path and upstream transport continuity",
+    },
+    {
+        "rule": "consecutive_transport_failures",
+        "category": "availability",
+        "severity": "WARN",
+        "roles": ["push", "server", "play"],
+        "enabled_by": "alert_on_transport_failure",
+        "threshold_ref": "consecutive_transport_failures_threshold",
+        "default_threshold": runtime_alerts.get("consecutive_transport_failures_threshold", 3),
+        "unit": "failures",
+        "required_action": "inspect transport callback failures and downstream UDP send path",
+    },
+    {
+        "rule": "transport_output_failed",
+        "category": "availability",
+        "severity": "ERROR",
+        "roles": ["push", "play"],
+        "enabled_by": "alert_on_transport_failure",
+        "threshold_ref": "status_code",
+        "default_threshold": "non_ok",
+        "unit": "status",
+        "required_action": "inspect business transport callback return status and socket errors",
+    },
+    {
+        "rule": "sender_output_failed",
+        "category": "availability",
+        "severity": "ERROR",
+        "roles": ["server"],
+        "enabled_by": "alert_on_transport_failure",
+        "threshold_ref": "status_code",
+        "default_threshold": "non_ok",
+        "unit": "status",
+        "required_action": "inspect server sender-side transport callback and upstream path",
+    },
+    {
+        "rule": "receiver_output_failed",
+        "category": "availability",
+        "severity": "ERROR",
+        "roles": ["server"],
+        "enabled_by": "alert_on_transport_failure",
+        "threshold_ref": "status_code",
+        "default_threshold": "non_ok",
+        "unit": "status",
+        "required_action": "inspect server receiver-side transport callback and downstream path",
+    },
+    {
+        "rule": "low_target_bitrate",
+        "category": "media_quality",
+        "severity": "WARN",
+        "roles": ["push"],
+        "enabled_by": "alert_on_qos_degradation",
+        "threshold_ref": "low_target_bps",
+        "default_threshold": runtime_alerts.get("low_target_bps", 700000),
+        "unit": "bps",
+        "required_action": "inspect congestion feedback, sender caps, and weak-network adaptation",
+    },
+    {
+        "rule": "low_encoder_fps",
+        "category": "media_quality",
+        "severity": "WARN",
+        "roles": ["push"],
+        "enabled_by": "alert_on_qos_degradation",
+        "threshold_ref": "low_encoder_fps",
+        "default_threshold": runtime_alerts.get("low_encoder_fps", 20),
+        "unit": "fps",
+        "required_action": "inspect encoder pacing, input frame cadence, and adaptation state",
+    },
+    {
+        "rule": "video_drop_frames",
+        "category": "media_quality",
+        "severity": "WARN",
+        "roles": ["server"],
+        "enabled_by": "alert_on_media_failure",
+        "threshold_ref": "video_drop_frames_threshold",
+        "default_threshold": runtime_alerts.get("video_drop_frames_threshold", 1),
+        "unit": "frames",
+        "required_action": "inspect downstream video drop and receiver QoE evidence",
+    },
+    {
+        "rule": "decode_output_failed",
+        "category": "media_quality",
+        "severity": "ERROR",
+        "roles": ["play"],
+        "enabled_by": "alert_on_media_failure",
+        "threshold_ref": "status_code",
+        "default_threshold": "non_ok",
+        "unit": "status",
+        "required_action": "inspect decoder/render callback status and decoded AU path",
+    },
+    {
+        "rule": "pacer_enqueue_failed",
+        "category": "media_quality",
+        "severity": "ERROR",
+        "roles": ["push"],
+        "enabled_by": "alert_on_media_failure",
+        "threshold_ref": "status_code",
+        "default_threshold": "non_ok",
+        "unit": "status",
+        "required_action": "inspect pacer queue capacity and sender media flow",
+    },
+    {
+        "rule": "malformed_h264",
+        "category": "media_quality",
+        "severity": "ERROR",
+        "roles": ["push"],
+        "enabled_by": "alert_on_malformed_packet",
+        "threshold_ref": "parse_status",
+        "default_threshold": "malformed",
+        "unit": "status",
+        "required_action": "inspect encoder Annex-B framing and H264 access unit boundaries",
+    },
+    {
+        "rule": "pli_generated",
+        "category": "media_quality",
+        "severity": "WARN",
+        "roles": ["play"],
+        "enabled_by": "alert_on_recovery_events",
+        "threshold_ref": "event_count",
+        "default_threshold": 1,
+        "unit": "events",
+        "required_action": "inspect keyframe request frequency and loss recovery behavior",
+    },
+    {
+        "rule": "jitter_packet_drop",
+        "category": "media_quality",
+        "severity": "WARN",
+        "roles": ["play"],
+        "enabled_by": "alert_on_media_failure",
+        "threshold_ref": "event_count",
+        "default_threshold": 1,
+        "unit": "events",
+        "required_action": "inspect jitter buffer pressure and RTP ordering/loss",
+    },
+    {
+        "rule": "high_downlink_loss",
+        "category": "network_qos",
+        "severity": "WARN",
+        "roles": ["server"],
+        "enabled_by": "alert_on_qos_degradation",
+        "threshold_ref": "high_loss_fraction_q8",
+        "default_threshold": runtime_alerts.get("high_loss_fraction_q8", 128),
+        "unit": "q8_fraction",
+        "required_action": "inspect downstream loss, NACK rate, and UDP path quality",
+    },
+    {
+        "rule": "nack_generated",
+        "category": "network_qos",
+        "severity": "WARN",
+        "roles": ["play"],
+        "enabled_by": "alert_on_qos_degradation",
+        "threshold_ref": "event_count",
+        "default_threshold": 1,
+        "unit": "events",
+        "required_action": "inspect RTP loss/reordering and sender/server retransmission availability",
+    },
+    {
+        "rule": "local_retransmission_hit",
+        "category": "network_qos",
+        "severity": "WARN",
+        "roles": ["server"],
+        "enabled_by": "alert_on_recovery_events",
+        "threshold_ref": "event_count",
+        "default_threshold": 1,
+        "unit": "events",
+        "required_action": "inspect downlink loss and local retransmission effectiveness",
+    },
+    {
+        "rule": "local_retransmission_miss",
+        "category": "network_qos",
+        "severity": "WARN",
+        "roles": ["server"],
+        "enabled_by": "alert_on_recovery_events",
+        "threshold_ref": "event_count",
+        "default_threshold": 1,
+        "unit": "events",
+        "required_action": "inspect packet history retention and upstream retransmission path",
+    },
+    {
+        "rule": "sender_retransmission_enqueue",
+        "category": "network_qos",
+        "severity": "WARN",
+        "roles": ["push"],
+        "enabled_by": "alert_on_recovery_events",
+        "threshold_ref": "event_count",
+        "default_threshold": 1,
+        "unit": "events",
+        "required_action": "inspect sender retransmission volume and NACK pressure",
+    },
+    {
+        "rule": "sender_retransmission_drop",
+        "category": "network_qos",
+        "severity": "WARN",
+        "roles": ["push"],
+        "enabled_by": "alert_on_recovery_events",
+        "threshold_ref": "event_count",
+        "default_threshold": 1,
+        "unit": "events",
+        "required_action": "inspect sender packet history gaps and retransmission build failures",
+    },
+    {
+        "rule": "malformed_rtp",
+        "category": "network_qos",
+        "severity": "ERROR",
+        "roles": ["server", "play"],
+        "enabled_by": "alert_on_malformed_packet",
+        "threshold_ref": "parse_status",
+        "default_threshold": "malformed",
+        "unit": "status",
+        "required_action": "inspect RTP framing at UDP boundary and upstream sender behavior",
+    },
+    {
+        "rule": "malformed_rtcp",
+        "category": "network_qos",
+        "severity": "ERROR",
+        "roles": ["push", "server", "play"],
+        "enabled_by": "alert_on_malformed_packet",
+        "threshold_ref": "parse_status",
+        "default_threshold": "malformed",
+        "unit": "status",
+        "required_action": "inspect RTCP framing and feedback identity at UDP boundary",
+    },
+    {
+        "rule": "unsupported_rtcp",
+        "category": "network_qos",
+        "severity": "WARN",
+        "roles": ["server"],
+        "enabled_by": "alert_on_malformed_packet",
+        "threshold_ref": "packet_type",
+        "default_threshold": "unsupported",
+        "unit": "type",
+        "required_action": "inspect RTCP packet type compatibility and upstream control path",
+    },
+]
+
+for rule in alert_policy_rules:
+    name = rule["rule"]
+    rule["observed_count"] = alert_rule_counts.get(name, 0)
+    rule["observed_by_role"] = {
+        role: alert_role_rule_counts.get((role, name), 0) for role in rule["roles"]
+    }
+
+alert_policy = {
+    "schema_version": 1,
+    "source": "phase5_debug_bundle",
+    "policy_name": "phase5_default_runtime_alert_policy",
+    "runtime_thresholds": {
+        "suppress_repeated_alerts_ms": runtime_alerts.get("suppress_repeated_alerts_ms", 0),
+        "high_loss_fraction_q8": runtime_alerts.get("high_loss_fraction_q8", 128),
+        "video_drop_frames_threshold": runtime_alerts.get("video_drop_frames_threshold", 1),
+        "low_target_bps": runtime_alerts.get("low_target_bps", 700000),
+        "low_encoder_fps": runtime_alerts.get("low_encoder_fps", 20),
+        "max_process_tick_gap_ms": runtime_alerts.get("max_process_tick_gap_ms", 2000),
+        "max_rtp_output_gap_ms": runtime_alerts.get("max_rtp_output_gap_ms", 2000),
+        "max_rtp_input_gap_ms": runtime_alerts.get("max_rtp_input_gap_ms", 2000),
+        "consecutive_transport_failures_threshold": runtime_alerts.get(
+            "consecutive_transport_failures_threshold", 3
+        ),
+    },
+    "categories": {
+        "availability": "process loop, media flow, and transport callback health",
+        "media_quality": "codec, render, adaptation, and media continuity health",
+        "network_qos": "loss, feedback, retransmission, and malformed network input health",
+    },
+    "rules": alert_policy_rules,
+    "observed_rules": dict(sorted(alert_rule_counts.items())),
+    "artifacts": {
+        "alerts": "alerts/alerts.jsonl",
+        "alerts_summary": "alerts/alerts_summary.txt",
+        "health_report": "monitoring/health_report.json",
+        "timeline": "timeline/events.jsonl",
+    },
+}
+with (root / "monitoring" / "alert_policy.json").open(
+    "w", encoding="utf-8"
+) as handle:
+    json.dump(alert_policy, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+
+with (root / "monitoring" / "alert_policy_summary.txt").open(
+    "w", encoding="utf-8"
+) as handle:
+    handle.write("policy_name=phase5_default_runtime_alert_policy\n")
+    handle.write(f"policy_rules={len(alert_policy_rules)}\n")
+    for category in ("availability", "media_quality", "network_qos"):
+        count = sum(1 for rule in alert_policy_rules if rule["category"] == category)
+        observed = sum(
+            rule["observed_count"]
+            for rule in alert_policy_rules
+            if rule["category"] == category
+        )
+        handle.write(f"category={category} rules={count} observed={observed}\n")
+    for rule in alert_policy_rules:
+        handle.write(
+            f"rule={rule['rule']} category={rule['category']} "
+            f"severity={rule['severity']} roles={','.join(rule['roles'])} "
+            f"threshold_ref={rule['threshold_ref']} observed={rule['observed_count']} "
+            f"action={rule['required_action']}\n"
+        )
 
 role_health = {}
 for role in ("push", "server", "play"):
@@ -556,6 +894,8 @@ health_report = {
         "alerts_summary": "alerts/alerts_summary.txt",
         "timeline_summary": "timeline/summary.txt",
         "first_problem": "timeline/first_problem.json",
+        "alert_policy": "monitoring/alert_policy.json",
+        "alert_policy_summary": "monitoring/alert_policy_summary.txt",
     },
 }
 with (root / "monitoring" / "health_report.json").open(
@@ -610,6 +950,8 @@ PY
   write_summary "first_problem=${OUTPUT_DIR}/timeline/first_problem.json"
   write_summary "health_report=${OUTPUT_DIR}/monitoring/health_report.json"
   write_summary "health_summary=${OUTPUT_DIR}/monitoring/health_summary.txt"
+  write_summary "alert_policy=${OUTPUT_DIR}/monitoring/alert_policy.json"
+  write_summary "alert_policy_summary=${OUTPUT_DIR}/monitoring/alert_policy_summary.txt"
   write_summary "files=${FILES_FILE}"
   write_summary "manifest=${MANIFEST_FILE}"
   write_summary "phase5_debug_bundle_status=collected"

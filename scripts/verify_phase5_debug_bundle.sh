@@ -49,6 +49,8 @@ required_files=(
   timeline/summary.txt
   monitoring/health_report.json
   monitoring/health_summary.txt
+  monitoring/alert_policy.json
+  monitoring/alert_policy_summary.txt
   evidence/udp_selftest_output.txt
 )
 
@@ -334,6 +336,8 @@ for key in (
     "alerts_summary",
     "timeline_summary",
     "first_problem",
+    "alert_policy",
+    "alert_policy_summary",
 ):
     rel = artifacts.get(key)
     if not rel or not (root / rel).exists():
@@ -354,6 +358,100 @@ for required_text in (
 for role in roles:
     if f"role={role} status=" not in health_summary:
         raise SystemExit(f"health summary missing role {role}")
+
+alert_policy = json.loads((root / "monitoring" / "alert_policy.json").read_text())
+if alert_policy.get("schema_version") != 1:
+    raise SystemExit("alert_policy.json missing schema_version=1")
+if alert_policy.get("source") != "phase5_debug_bundle":
+    raise SystemExit("alert_policy.json has unexpected source")
+if alert_policy.get("policy_name") != "phase5_default_runtime_alert_policy":
+    raise SystemExit("alert_policy.json has unexpected policy_name")
+policy_categories = set(alert_policy.get("categories", {}).keys())
+if not {"availability", "media_quality", "network_qos"}.issubset(policy_categories):
+    raise SystemExit(f"alert policy missing categories: {sorted(policy_categories)}")
+policy_rules = alert_policy.get("rules", [])
+if len(policy_rules) < 20:
+    raise SystemExit("alert policy does not cover enough runtime rules")
+rule_by_name = {rule.get("rule"): rule for rule in policy_rules}
+required_policy_rules = {
+    "process_tick_gap",
+    "sender_rtp_output_gap",
+    "receiver_rtp_input_gap",
+    "consecutive_transport_failures",
+    "transport_output_failed",
+    "sender_output_failed",
+    "receiver_output_failed",
+    "low_target_bitrate",
+    "low_encoder_fps",
+    "high_downlink_loss",
+    "video_drop_frames",
+    "nack_generated",
+    "local_retransmission_hit",
+    "malformed_rtp",
+    "malformed_rtcp",
+    "decode_output_failed",
+}
+missing_policy_rules = required_policy_rules - rule_by_name.keys()
+if missing_policy_rules:
+    raise SystemExit(
+        f"alert policy missing rules: {sorted(missing_policy_rules)}"
+    )
+for rule_name, rule in rule_by_name.items():
+    if rule.get("category") not in {"availability", "media_quality", "network_qos"}:
+        raise SystemExit(f"alert policy rule {rule_name} has bad category")
+    if rule.get("severity") not in {"WARN", "ERROR"}:
+        raise SystemExit(f"alert policy rule {rule_name} has bad severity")
+    if not set(rule.get("roles", [])) <= roles or not rule.get("roles"):
+        raise SystemExit(f"alert policy rule {rule_name} has bad roles")
+    for key in (
+        "enabled_by",
+        "threshold_ref",
+        "default_threshold",
+        "unit",
+        "required_action",
+        "observed_count",
+        "observed_by_role",
+    ):
+        if key not in rule:
+            raise SystemExit(f"alert policy rule {rule_name} missing {key}")
+runtime_thresholds = alert_policy.get("runtime_thresholds", {})
+for key in (
+    "high_loss_fraction_q8",
+    "video_drop_frames_threshold",
+    "low_target_bps",
+    "low_encoder_fps",
+    "max_process_tick_gap_ms",
+    "max_rtp_output_gap_ms",
+    "max_rtp_input_gap_ms",
+    "consecutive_transport_failures_threshold",
+):
+    if key not in runtime_thresholds:
+        raise SystemExit(f"alert policy missing runtime threshold {key}")
+observed_policy_rules = set(alert_policy.get("observed_rules", {}).keys())
+if not rules <= observed_policy_rules:
+    raise SystemExit("alert policy observed_rules do not cover alert records")
+for rule_name in expected_rules:
+    if int(rule_by_name[rule_name].get("observed_count", 0)) <= 0:
+        raise SystemExit(f"alert policy did not count observed rule {rule_name}")
+policy_artifacts = alert_policy.get("artifacts", {})
+for key in ("alerts", "alerts_summary", "health_report", "timeline"):
+    rel = policy_artifacts.get(key)
+    if not rel or not (root / rel).exists():
+        raise SystemExit(f"alert policy bad artifact pointer {key}")
+policy_summary = (root / "monitoring" / "alert_policy_summary.txt").read_text(
+    encoding="utf-8"
+)
+for required_text in (
+    "policy_name=phase5_default_runtime_alert_policy",
+    "category=availability",
+    "category=media_quality",
+    "category=network_qos",
+    "rule=process_tick_gap",
+    "rule=high_downlink_loss",
+    "rule=low_target_bitrate",
+):
+    if required_text not in policy_summary:
+        raise SystemExit(f"alert policy summary missing {required_text}")
 
 session = json.loads((root / "session_config.json").read_text())
 profiles = session.get("profiles", [])
@@ -410,7 +508,12 @@ for item in roles_config:
                 f"runtime_config.json role {item.get('role')} bad {artifact_kind} artifact"
             )
 runtime_artifacts = runtime.get("artifacts", {})
-for artifact_kind in ("health_report", "health_summary"):
+for artifact_kind in (
+    "health_report",
+    "health_summary",
+    "alert_policy",
+    "alert_policy_summary",
+):
     rel = runtime_artifacts.get(artifact_kind)
     if not rel or not (root / rel).exists():
         raise SystemExit(f"runtime_config.json bad {artifact_kind} artifact")
