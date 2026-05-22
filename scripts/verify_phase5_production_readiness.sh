@@ -256,6 +256,23 @@ def as_float(value):
         return 0.0
 
 
+def category_tokens(value):
+    return {
+        token.strip()
+        for token in str(value or "").replace(",", " ").split()
+        if token.strip()
+    }
+
+
+def categories_cover(observed, required):
+    required_categories = category_tokens(
+        required
+        or "indoor_face,outdoor_walking,low_light_noise,screen_text,high_motion,scene_cut"
+    )
+    observed_categories = category_tokens(observed)
+    return bool(required_categories) and required_categories <= observed_categories
+
+
 production_soak = report.get("production_soak", {})
 production_soak_minutes = as_float(production_soak.get("soak_minutes"))
 if production_soak_minutes < phase5_minimum:
@@ -281,8 +298,28 @@ for key in ("manifest_summary", "qoe_csv", "qoe_summary", "manifest_sha256"):
         raise SystemExit(f"external phase2 import missing capture_library.{key}")
 if not valid_sha256(capture_library.get("manifest_sha256")):
     raise SystemExit("external phase2 import bad capture manifest sha256")
-if as_float(capture_library.get("pass_rows")) <= 0:
+if capture_library.get("fixture") is not False:
+    raise SystemExit("external phase2 import used fixture capture")
+rows = int(as_float(capture_library.get("rows")))
+pass_rows = int(as_float(capture_library.get("pass_rows")))
+if rows <= 0 or pass_rows != rows:
     raise SystemExit("external phase2 import capture library has no passing rows")
+if not categories_cover(
+    capture_library.get("categories"), capture_library.get("required_categories")
+):
+    raise SystemExit("external phase2 import capture required categories are incomplete")
+if as_float(capture_library.get("playable_ratio_min")) <= 0:
+    raise SystemExit("external phase2 import capture playable ratio missing")
+if as_float(capture_library.get("avg_psnr_y_min")) <= 0:
+    raise SystemExit("external phase2 import capture PSNR missing")
+if as_float(capture_library.get("avg_ssim_y_min")) <= 0:
+    raise SystemExit("external phase2 import capture SSIM missing")
+if as_float(capture_library.get("decode_errors")) != 0:
+    raise SystemExit("external phase2 import capture decode errors are non-zero")
+if as_float(capture_library.get("freeze_count")) != 0:
+    raise SystemExit("external phase2 import capture freeze count is non-zero")
+if as_float(capture_library.get("renderer_proxy_drop_frames")) != 0:
+    raise SystemExit("external phase2 import capture renderer drops are non-zero")
 PY
 }
 

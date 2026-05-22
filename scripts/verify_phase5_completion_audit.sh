@@ -578,6 +578,12 @@ require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'source_git_worktree_clean' production_readiness_external_import_git_clean_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'fixture_capture_allowed' production_readiness_external_import_fixture_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'external phase2 import used fixture capture' production_readiness_external_import_fixture_reverify
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'external phase2 import capture required categories are incomplete' production_readiness_external_import_capture_category_reverify
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'external phase2 import capture renderer drops are non-zero' production_readiness_external_import_capture_drop_reverify
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_evidence_source=external_bundle' production_gate_external_evidence_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \

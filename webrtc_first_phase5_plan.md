@@ -266,7 +266,10 @@ pass 摘要而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDL
 `external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
 和业务素材；但只有导入报告 `import_status=pass`，且 clean tracked worktree、git head、
 production soak、真实 renderer、capture QoE、capture manifest sha256 和原始证据指针都
-复验通过时，readiness 才会派生记录 `capture_manifest` / `real_renderer` pass。release
+复验通过时，readiness 才会派生记录 `capture_manifest` / `real_renderer` pass。readiness
+还会在导入报告上复验 capture fixture flag、QoE `rows/pass_rows` 完整性、必需类别覆盖、
+`playable_ratio / avg_psnr_y / avg_ssim_y` 下限和 `decode_errors / freeze_count /
+renderer_proxy_drop_frames` 全 0，避免外部 bundle 只给 pass 摘要却绕过正式素材质量门禁。release
 evidence 和 production gate verifier 仍会离线复验导入报告及这些原始证据指针。
 
 正式 capture library 不能只证明 manifest 存在。`scripts/verify_capture_library_manifest.sh`
