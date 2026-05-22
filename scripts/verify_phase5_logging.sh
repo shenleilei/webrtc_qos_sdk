@@ -40,18 +40,19 @@ require_log() {
 }
 
 verify_runtime_logging_contract() {
-  local paths=(
-    "${SDK_ROOT}/include/webrtc_qos/runtime_logging.h"
-    "${SDK_ROOT}/src/runtime_logger.h"
-    "${SDK_ROOT}/src/runtime_logger.cc"
+  local search_roots=(
+    "${SDK_ROOT}/include/webrtc_qos"
+    "${SDK_ROOT}/src"
   )
-  if rg -n 'std::cout|std::cerr|printf\(|fprintf\(|puts\(' "${paths[@]}"; then
-    fail "SDK runtime logger must not write runtime logs to stdout/stderr"
+  if rg -n --glob '*.{h,hpp,cc,cpp}' \
+      'std::cout|std::cerr|std::clog|printf\(|fprintf\(|puts\(|perror\(' \
+      "${search_roots[@]}"; then
+    fail "SDK runtime sources must not write runtime logs to stdout/stderr"
   fi
-  if rg -n 'also_stderr' "${paths[@]}"; then
+  if rg -n 'also_stderr' "${search_roots[@]}"; then
     fail "SDK runtime logger must not expose stderr fallback logging"
   fi
-  echo "validated_no_runtime_stdout_stderr_logging"
+  echo "validated_no_runtime_stdout_stderr_logging scope=include/webrtc_qos,src"
 }
 
 run_demo() {
