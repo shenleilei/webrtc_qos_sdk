@@ -167,7 +167,7 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 
 `scripts/collect_webrtc_first_phase2_evidence_bundle.sh` 用于把一次正式验收的 smoke/qoe/production soak/real renderer/capture 证据收集到统一目录，并生成 `manifest.sha256`。后续可以用 `EVIDENCE_BUNDLE_DIR=/path/to/bundle scripts/verify_webrtc_first_phase2_completion_audit.sh` 直接审计该目录，避免正式结果散落在多个 artifacts 路径里。
 
-`scripts/run_webrtc_first_phase2_production_gate.sh` 是正式验收 wrapper。它把 production 级验收收敛成一条命令：先做 preflight，强检查 WebRTC modules、正式 capture manifest 和真实 renderer 环境；preflight 通过后再跑 `VERIFY_LEVEL=production`、收集 evidence bundle、执行 completion audit。默认要求 `SOAK_MINUTES=120`。当前本机 preflight 结果是 `webrtc_modules=pass`，但 `capture_manifest` 失败，因为 `/root/webrtc_qos_sdk/capture_library/manifest.csv` 不存在；`real_renderer` 失败，因为没有 `DISPLAY` 且没有 `Xvfb`。因此这台机器现在还不能直接完成正式 Phase-2 验收。
+`scripts/run_phase5_production_gate.sh` 是 Phase-5 顶层正式验收 wrapper。它先跑 Phase-5 release contract 和 debug bundle 门禁，再调用 `run_webrtc_first_phase2_production_gate.sh` 做 production preflight、长时 soak、真实 renderer、正式 capture library、evidence bundle 和 completion audit，并在 `artifacts/phase5_production_gate/<utc_build_id>/` 下生成 metadata、summary、logs、`files.txt` 和 `manifest.sha256`。底层 Phase-2 production gate 默认要求 `SOAK_MINUTES=120`。当前本机 preflight 预期仍会失败：`/root/webrtc_qos_sdk/capture_library/manifest.csv` 不存在，且没有真实 renderer 环境；可以用 `PHASE5_DRY_RUN=1` 只验证 gate 结构，但这不代表生产证据完成。
 
 当前本机 `VERIFY_LEVEL=qoe` 聚合门禁已通过，summary 位于 `artifacts/webrtc_first_phase2_verify_qoe/phase2_verify_summary.txt`。本次聚合里 synthetic facade 弱网矩阵 8/8 通过；真实 H264 low-RPS/low-bitrate case 结果为 `bad_send_rps=10.9091`、`bad_rtp_pps=92.7273`、`max_bad_target_bps=400000`、`max_bad_encoder_fps=10`，恢复到 `recovery_send_rps=30`、`max_recovery_target_bps=840944`、`max_recovery_encoder_fps=30`，`playable_ratio=0.923077`、`avg_psnr_y=45.9423`、`avg_ssim_y=0.999833`。恢复时间分布门禁 `samples=1`，`target/fps/full_recovery_time_ms_p95=0`，低于 `1000ms` 门槛。
 
@@ -594,6 +594,12 @@ EVIDENCE_BUNDLE_DIR=/root/webrtc_qos_sdk/artifacts/webrtc_first_phase2_evidence_
 PREFLIGHT_ONLY=1 \
   OUTPUT_ROOT=/root/webrtc_qos_sdk/artifacts/webrtc_first_phase2_production_gate \
   scripts/run_webrtc_first_phase2_production_gate.sh
+
+PHASE5_DRY_RUN=1 \
+  OUTPUT_ROOT=/tmp/webrtc_qos_phase5_production_gate_dry_run \
+  scripts/run_phase5_production_gate.sh
+GATE_DIR=/tmp/webrtc_qos_phase5_production_gate_dry_run \
+  scripts/verify_phase5_production_gate.sh
 ```
 
 这个审计脚本会读取 smoke/qoe summary、production soak summary/config/archive、real renderer summary 和 capture manifest summary，并复用 production soak archive verifier 校验 sha256 manifest、row pass、弱网低 RPS/低码率和恢复时间分布。它的默认 production 输入路径是 `artifacts/webrtc_first_phase2_verify_production/`，也可以通过 `EVIDENCE_BUNDLE_DIR` 审计收集好的 bundle。当前只有短时 production smoke、renderer skipped 和 fixture capture 时会失败，这是预期结果；失败 summary 会写出还缺哪类证据。
@@ -604,8 +610,12 @@ PREFLIGHT_ONLY=1 \
 SOAK_MINUTES=120 \
 CAPTURE_LIBRARY_DIR=/path/to/business_capture_library \
 CAPTURE_LIBRARY_MANIFEST=/path/to/business_capture_library/manifest.csv \
-OUTPUT_ROOT=/path/to/output/webrtc_first_phase2_production_gate \
-  scripts/run_webrtc_first_phase2_production_gate.sh
+OUTPUT_ROOT=/path/to/output/phase5_production_gate \
+  scripts/run_phase5_production_gate.sh
+
+GATE_DIR=/path/to/output/phase5_production_gate \
+REQUIRE_PASS=1 \
+  scripts/verify_phase5_production_gate.sh
 ```
 
 已新增恢复时间分布门禁 `scripts/verify_recovery_time_distribution.sh`。它读取一个或多个 QoE CSV，默认只统计可恢复场景 `bandwidth_cliff_recover / weak_network_low_rps_low_bitrate / walking_dead_zone_recover / oscillating_edge_recover`，输出 `target/fps/full_recovery_time_ms` 的 p50/p95/max，并按 p95 和 max 门槛失败。production soak archive verifier 会自动调用它，并把 `archive/recovery_distribution_summary.txt` 纳入 sha256 manifest 和 tarball。

@@ -134,7 +134,7 @@ Phase-5 不做以下事情：
 Phase-5 第一阶段先把生产证据链跑实并制度化：
 
 - 固定 production gate 命令：
-  `scripts/run_webrtc_first_phase2_production_gate.sh`
+  `scripts/run_phase5_production_gate.sh`
 - 固定证据输出目录规范：
   `artifacts/phase5_production_gate/<date_or_build_id>/`
 - 每次正式验收必须包含：
@@ -148,6 +148,20 @@ Phase-5 第一阶段先把生产证据链跑实并制度化：
   - `manifest.sha256`
 - completion audit 必须能离线复验：
   `EVIDENCE_BUNDLE_DIR=<bundle> scripts/verify_webrtc_first_phase2_completion_audit.sh`
+
+当前已新增 Phase-5 production gate wrapper：
+
+```bash
+scripts/run_phase5_production_gate.sh
+scripts/verify_phase5_production_gate.sh
+```
+
+wrapper 会先跑 Phase-5 release contract 和 debug bundle 门禁，再调用底层
+`run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
+正式 capture library、evidence bundle 和 completion audit。默认输出目录为
+`artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
+`files.txt` 和 `manifest.sha256`。本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但
+dry-run 不代表生产证据完成。
 
 #### 验收标准
 
@@ -1100,14 +1114,26 @@ scripts/verify_phase5_release_contract.sh
 
 ### 6.8 生产验收门禁
 
-继续使用：
+Phase-5 顶层入口：
+
+```bash
+scripts/run_phase5_production_gate.sh
+scripts/verify_phase5_production_gate.sh
+```
+
+底层仍复用：
 
 ```bash
 scripts/run_webrtc_first_phase2_production_gate.sh
 scripts/verify_webrtc_first_phase2_completion_audit.sh
 ```
 
-Phase-5 需要把它们提升为 release gate，而不是“Phase-2 剩余事项”。
+覆盖：
+
+- Phase-5 release contract gate。
+- Phase-5 debug bundle collect/verify。
+- WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
+- 顶层 metadata、summary、logs 和 sha256 manifest。
 
 ## 7. 里程碑
 
