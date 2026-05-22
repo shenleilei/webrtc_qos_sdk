@@ -711,6 +711,11 @@ debug_bundle/
 `timeline/first_problem.json` 指向第一条 WARN/ERROR 或 alert，便于快速定位
 “第一个坏点”在哪个 role/track/receiver。
 
+`metrics/summary.csv` 会按 role 输出关键 QoS 极值、最大 process tick gap 以及对应
+session/track/receiver；`alerts/alerts_summary.txt` 会输出 `first_alert` 和
+role/category/rule 计数；`timeline/summary.txt` 会输出 log/metric/alert 事件计数
+和 `first_problem` 一行，方便不展开全部 JSONL 就能定位首个坏点和影响范围。
+
 `runtime_config.json` 是脱敏后的运行配置 dump，固定记录 schema version、UDP
 transport boundary、三角色 factory、selftest 参数、日志/metrics/alerts 运行开关和
 bundle 内相对路径；媒体 bytes、原始帧、鉴权材料和运行机绝对目录只记录为
@@ -722,8 +727,10 @@ bundle 内相对路径；媒体 bytes、原始帧、鉴权材料和运行机绝�
 - push/server/play 都有日志、metrics 和 alerts。
 - JSONL 都有统一身份字段。
 - metrics summary 覆盖三类 role。
+- metrics summary 包含最大 process tick gap 和对应身份字段。
+- alerts summary 包含首个告警和 role/category/rule 计数。
 - weak-network alert 规则齐全。
-- timeline 同时包含 log/metric/alert 三类事件。
+- timeline 同时包含 log/metric/alert 三类事件，并在 summary 中写出 first problem。
 - push/server/play 日志中都有 `config_dump`，且只包含脱敏配置摘要。
 - runtime config 覆盖 push/server/play、日志/metrics/alerts 开关和脱敏标记。
 - `manifest.sha256` 可校验。

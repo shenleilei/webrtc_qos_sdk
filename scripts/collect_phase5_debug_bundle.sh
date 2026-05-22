@@ -335,17 +335,30 @@ for role in ("push", "server", "play"):
     records = read_jsonl(root / "metrics" / f"{role}_metrics.jsonl")
     def values(key):
         return [r[key] for r in records if isinstance(r.get(key), (int, float))]
+    def max_value(key):
+        return max(values(key) or [0])
+    max_tick_gap_record = max(
+        records,
+        key=lambda r: r.get("max_process_tick_gap_us", 0)
+        if isinstance(r.get("max_process_tick_gap_us"), (int, float))
+        else 0,
+        default={},
+    )
     metric_rows.append({
         "role": role,
         "records": len(records),
         "min_final_target_bps": min(values("final_target_bps") or [0]),
-        "max_final_target_bps": max(values("final_target_bps") or [0]),
+        "max_final_target_bps": max_value("final_target_bps"),
         "min_adaptation_max_fps": min(values("adaptation_max_fps") or [0]),
-        "max_adaptation_max_fps": max(values("adaptation_max_fps") or [0]),
-        "max_downlink_loss_q8": max(values("downlink_fraction_lost_q8") or [0]),
-        "max_video_drop_frames": max(values("downlink_video_drop_frames") or [0]),
-        "max_nack_count": max(values("nack_count") or [0]),
-        "max_retransmission_count": max(values("retransmission_count") or [0]),
+        "max_adaptation_max_fps": max_value("adaptation_max_fps"),
+        "max_downlink_loss_q8": max_value("downlink_fraction_lost_q8"),
+        "max_video_drop_frames": max_value("downlink_video_drop_frames"),
+        "max_nack_count": max_value("nack_count"),
+        "max_retransmission_count": max_value("retransmission_count"),
+        "max_process_tick_gap_us": max_value("max_process_tick_gap_us"),
+        "max_tick_gap_session_id": max_tick_gap_record.get("session_id", 0),
+        "max_tick_gap_track_id": max_tick_gap_record.get("track_id", 0),
+        "max_tick_gap_receiver_id": max_tick_gap_record.get("receiver_id", 0),
     })
 
 with (root / "metrics" / "summary.csv").open("w", encoding="utf-8", newline="") as handle:
@@ -357,8 +370,25 @@ alerts = read_jsonl(root / "alerts" / "alerts.jsonl")
 alert_counts = Counter(
     (a.get("severity", ""), a.get("role", ""), a.get("rule", "")) for a in alerts
 )
+alert_category_counts = Counter(
+    (a.get("role", ""), a.get("category", "")) for a in alerts
+)
+first_alert = min(alerts, key=lambda a: a.get("ts_us", 0), default={})
 with (root / "alerts" / "alerts_summary.txt").open("w", encoding="utf-8") as handle:
     handle.write(f"alert_records={len(alerts)}\n")
+    if first_alert:
+        handle.write(
+            "first_alert="
+            f"ts_us={first_alert.get('ts_us', 0)} "
+            f"severity={first_alert.get('severity', '')} "
+            f"role={first_alert.get('role', '')} "
+            f"rule={first_alert.get('rule', '')} "
+            f"category={first_alert.get('category', '')} "
+            f"track_id={first_alert.get('track_id', 0)} "
+            f"receiver_id={first_alert.get('receiver_id', 0)}\n"
+        )
+    for (role, category), count in sorted(alert_category_counts.items()):
+        handle.write(f"role={role} category={category} count={count}\n")
     for (severity, role, rule), count in sorted(alert_counts.items()):
         handle.write(
             f"severity={severity} role={role} rule={rule} count={count}\n"
@@ -416,12 +446,25 @@ with (root / "timeline" / "first_problem.json").open("w", encoding="utf-8") as h
     handle.write("\n")
 
 role_counts = defaultdict(int)
+type_counts = Counter(event.get("type", "") for event in events)
 for event in events:
     role_counts[event.get("role", "")] += 1
 with (root / "timeline" / "summary.txt").open("w", encoding="utf-8") as handle:
     handle.write(f"timeline_events={len(events)}\n")
+    for event_type, count in sorted(type_counts.items()):
+        handle.write(f"type={event_type} events={count}\n")
     for role, count in sorted(role_counts.items()):
         handle.write(f"role={role} events={count}\n")
+    if problem.get("status") == "found":
+        handle.write(
+            "first_problem="
+            f"type={problem.get('type', '')} "
+            f"level={problem.get('level', '')} "
+            f"role={problem.get('role', '')} "
+            f"name={problem.get('name', '')} "
+            f"track_id={problem.get('track_id', 0)} "
+            f"receiver_id={problem.get('receiver_id', 0)}\n"
+        )
 PY
 
 {

@@ -205,6 +205,22 @@ if {row["role"] for row in rows} != roles:
     raise SystemExit("metrics summary does not cover push/server/play")
 if min(int(row["records"]) for row in rows) <= 0:
     raise SystemExit("metrics summary has empty role")
+summary_required_columns = {
+    "max_process_tick_gap_us",
+    "max_tick_gap_session_id",
+    "max_tick_gap_track_id",
+    "max_tick_gap_receiver_id",
+}
+for row in rows:
+    missing_columns = summary_required_columns - row.keys()
+    if missing_columns:
+        raise SystemExit(
+            f"metrics summary missing columns: {sorted(missing_columns)}"
+        )
+    if int(row.get("max_process_tick_gap_us", "0")) <= 0:
+        raise SystemExit(
+            f"metrics summary missing positive tick gap for role {row.get('role')}"
+        )
 
 alerts = read_jsonl(root / "alerts" / "alerts.jsonl")
 rules = {record.get("rule") for record in alerts}
@@ -219,6 +235,19 @@ expected_rules = {
 missing_rules = expected_rules - rules
 if missing_rules:
     raise SystemExit(f"missing expected alert rules: {sorted(missing_rules)}")
+alerts_summary = (root / "alerts" / "alerts_summary.txt").read_text(
+    encoding="utf-8"
+)
+for required_text in (
+    "first_alert=",
+    "category=network_qos",
+    "category=media_quality",
+):
+    if required_text not in alerts_summary:
+        raise SystemExit(f"alerts summary missing {required_text}")
+for role in roles:
+    if f"role={role} " not in alerts_summary:
+        raise SystemExit(f"alerts summary missing role {role}")
 
 timeline = read_jsonl(root / "timeline" / "events.jsonl")
 if not timeline:
@@ -230,6 +259,17 @@ if not {"log", "metric", "alert"}.issubset(event_types):
 first_problem = json.loads((root / "timeline" / "first_problem.json").read_text())
 if first_problem.get("status") != "found":
     raise SystemExit("first_problem.json did not identify a WARN/ERROR or alert")
+timeline_summary = (root / "timeline" / "summary.txt").read_text(
+    encoding="utf-8"
+)
+for required_text in (
+    "type=alert events=",
+    "type=log events=",
+    "type=metric events=",
+    "first_problem=",
+):
+    if required_text not in timeline_summary:
+        raise SystemExit(f"timeline summary missing {required_text}")
 
 session = json.loads((root / "session_config.json").read_text())
 profiles = session.get("profiles", [])

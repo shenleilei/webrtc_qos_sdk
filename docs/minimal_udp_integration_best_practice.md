@@ -590,6 +590,12 @@ bundle 固定包含 `metadata.txt`、`build_config.txt`、`git_status.txt`、
 “第一条 warn/error 在哪个角色、哪个 track、哪个 receiver 出现”以及“弱网前后
 bitrate/FPS/NACK/retransmission 怎么变化”。
 
+`metrics/summary.csv` 会按 role 汇总关键 QoS 极值和最大 process tick gap，并带上
+对应 `session_id / track_id / receiver_id`；`alerts/alerts_summary.txt` 会写出
+`first_alert` 以及按 role/category/rule 的计数；`timeline/summary.txt` 会写出
+log/metric/alert 事件计数和 `first_problem`。生产排障时先看这三个 summary，再按
+role 打开原始 JSONL。
+
 `runtime_config.json` 是脱敏后的运行配置 dump，只记录 role、factory、UDP 边界、
 log/metrics/alerts 开关和 bundle 内相对路径，不记录媒体 bytes、原始帧、鉴权材料或
 运行机绝对目录。`verify_phase5_debug_bundle.sh` 会把这些脱敏标记作为硬门禁检查，
