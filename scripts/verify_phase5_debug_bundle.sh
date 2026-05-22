@@ -51,6 +51,7 @@ required_files=(
   monitoring/health_summary.txt
   monitoring/slo_report.json
   monitoring/slo_summary.txt
+  monitoring/phase5_monitoring_metrics.prom
   monitoring/alert_policy.json
   monitoring/alert_policy_summary.txt
   monitoring/incident_report.json
@@ -76,6 +77,7 @@ python3 - "${BUNDLE_DIR}" <<'PY'
 import csv
 import json
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -342,6 +344,7 @@ for key in (
     "first_problem",
     "slo_report",
     "slo_summary",
+    "monitoring_metrics",
     "alert_policy",
     "alert_policy_summary",
     "incident_report",
@@ -421,7 +424,14 @@ for key in (
     if key not in runtime_slo_thresholds:
         raise SystemExit(f"slo report missing runtime threshold {key}")
 slo_artifacts = slo_report.get("artifacts", {})
-for key in ("metrics_summary", "alerts_summary", "health_report", "alert_policy", "timeline"):
+for key in (
+    "metrics_summary",
+    "alerts_summary",
+    "health_report",
+    "alert_policy",
+    "monitoring_metrics",
+    "timeline",
+):
     rel = slo_artifacts.get(key)
     if not rel or not (root / rel).exists():
         raise SystemExit(f"slo report bad artifact pointer {key}")
@@ -515,7 +525,7 @@ for rule_name in expected_rules:
     if int(rule_by_name[rule_name].get("observed_count", 0)) <= 0:
         raise SystemExit(f"alert policy did not count observed rule {rule_name}")
 policy_artifacts = alert_policy.get("artifacts", {})
-for key in ("alerts", "alerts_summary", "health_report", "timeline"):
+for key in ("alerts", "alerts_summary", "health_report", "monitoring_metrics", "timeline"):
     rel = policy_artifacts.get(key)
     if not rel or not (root / rel).exists():
         raise SystemExit(f"alert policy bad artifact pointer {key}")
@@ -586,6 +596,7 @@ for key in (
     "health_report",
     "slo_report",
     "alert_policy",
+    "monitoring_metrics",
     "timeline",
     "first_problem",
     "metrics_summary",
@@ -608,6 +619,104 @@ for required_text in (
 ):
     if required_text not in incident_runbook:
         raise SystemExit(f"incident runbook missing {required_text}")
+
+prometheus_text = (
+    root / "monitoring" / "phase5_monitoring_metrics.prom"
+).read_text(encoding="utf-8")
+for required_text in (
+    "# TYPE webrtc_qos_phase5_debug_bundle_info gauge",
+    "webrtc_qos_phase5_debug_bundle_info",
+    "webrtc_qos_phase5_debug_bundle_timeline_events_total",
+    "webrtc_qos_phase5_debug_bundle_alerts_total",
+    "webrtc_qos_phase5_debug_bundle_role_metric_records",
+    "webrtc_qos_phase5_debug_bundle_role_max_process_tick_gap_us",
+    "webrtc_qos_phase5_debug_bundle_slo_objective_status",
+    "webrtc_qos_phase5_debug_bundle_slo_objective_observed",
+    "webrtc_qos_phase5_debug_bundle_slo_objective_threshold",
+    "webrtc_qos_phase5_debug_bundle_alert_policy_rule_observed_total",
+    "webrtc_qos_phase5_debug_bundle_first_problem_info",
+):
+    if required_text not in prometheus_text:
+        raise SystemExit(f"monitoring metrics missing {required_text}")
+
+prom_line_re = re.compile(
+    r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{([^{}]*)\})?\s+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[+-]?Inf|NaN)$"
+)
+prom_label_re = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"')
+prom_records = []
+for line_no, line in enumerate(prometheus_text.splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    match = prom_line_re.match(line)
+    if not match:
+        raise SystemExit(
+            "monitoring metrics line is not valid Prometheus text format: "
+            f"line={line_no} text={line}"
+        )
+    labels = {}
+    raw_labels = match.group(3) or ""
+    if raw_labels:
+        position = 0
+        while position < len(raw_labels):
+            label_match = prom_label_re.match(raw_labels, position)
+            if not label_match:
+                raise SystemExit(
+                    f"monitoring metrics line {line_no} has invalid labels"
+                )
+            labels[label_match.group(1)] = label_match.group(2)
+            position = label_match.end()
+            if position < len(raw_labels):
+                if raw_labels[position] != ",":
+                    raise SystemExit(
+                        f"monitoring metrics line {line_no} has malformed labels"
+                    )
+                position += 1
+    try:
+        value = float(match.group(4))
+    except ValueError as exc:
+        raise SystemExit(
+            f"monitoring metrics line {line_no} has invalid value"
+        ) from exc
+    prom_records.append({
+        "name": match.group(1),
+        "labels": labels,
+        "value": value,
+    })
+if not prom_records:
+    raise SystemExit("monitoring metrics file has no samples")
+
+def prom_has(name, **labels):
+    for record in prom_records:
+        if record["name"] != name:
+            continue
+        if all(record["labels"].get(key) == value for key, value in labels.items()):
+            return True
+    return False
+
+for role in roles:
+    if not prom_has("webrtc_qos_phase5_debug_bundle_role_metric_records", role=role):
+        raise SystemExit(f"monitoring metrics missing role record gauge {role}")
+for event_type in ("log", "metric", "alert"):
+    if not prom_has(
+        "webrtc_qos_phase5_debug_bundle_timeline_events_total", type=event_type
+    ):
+        raise SystemExit(f"monitoring metrics missing timeline type {event_type}")
+for category in ("availability", "media_quality", "network_qos"):
+    if not prom_has(
+        "webrtc_qos_phase5_debug_bundle_alert_policy_rule_observed_total",
+        category=category,
+    ):
+        raise SystemExit(f"monitoring metrics missing alert policy category {category}")
+for objective in (
+    "availability.process_tick_gap",
+    "network_qos.high_loss_alerts",
+):
+    if not prom_has(
+        "webrtc_qos_phase5_debug_bundle_slo_objective_status",
+        objective=objective,
+    ):
+        raise SystemExit(f"monitoring metrics missing SLO objective {objective}")
 
 session = json.loads((root / "session_config.json").read_text())
 profiles = session.get("profiles", [])
@@ -669,6 +778,7 @@ for artifact_kind in (
     "health_summary",
     "slo_report",
     "slo_summary",
+    "monitoring_metrics",
     "alert_policy",
     "alert_policy_summary",
     "incident_report",

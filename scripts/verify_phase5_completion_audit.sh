@@ -193,6 +193,14 @@ require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'incident_report.json' debug_bundle_incident_report_verifier
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'verify_bundle_integrity' debug_bundle_incident_runbook_gate
+require_doc_pattern scripts/collect_phase5_debug_bundle.sh \
+  'phase5_monitoring_metrics.prom' debug_bundle_monitoring_metrics_collector
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'phase5_monitoring_metrics.prom' debug_bundle_monitoring_metrics_verifier
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'webrtc_qos_phase5_debug_bundle_slo_objective_status' debug_bundle_monitoring_metrics_slo_gate
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'webrtc_qos_phase5_debug_bundle_alerts_total' debug_bundle_monitoring_metrics_alert_gate
 require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
   'validated_phase5_implementation_records' implementation_gate_runtime_records
 require_doc_pattern scripts/run_phase5_implementation_gate.sh \

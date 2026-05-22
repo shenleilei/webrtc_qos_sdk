@@ -748,6 +748,7 @@ availability alert，以及 sender/server `sender_rtp_output_gap`、play
     health_summary.txt
     slo_report.json
     slo_summary.txt
+    phase5_monitoring_metrics.prom
     alert_policy.json
     alert_policy_summary.txt
     incident_report.json
@@ -798,6 +799,7 @@ debug_bundle/
     health_summary.txt
     slo_report.json
     slo_summary.txt
+    phase5_monitoring_metrics.prom
     alert_policy.json
     alert_policy_summary.txt
     incident_report.json
@@ -832,6 +834,13 @@ push/server/play 汇总 metric record 数、alert record 数、alert category/ru
 availability、media_quality、network_qos 三类记录目标、当前观测值、阈值、状态和
 排查动作。`monitoring/slo_summary.txt` 是同一信息的文本版。该报告只声明
 single debug bundle run 的观测结果，不等价于正式生产 SLO 完成结论。
+
+`monitoring/phase5_monitoring_metrics.prom` 是 Prometheus/textfile 风格的监控出口：
+从同一份 health/SLO/alert policy/timeline 数据导出 role metric records、最大
+process tick gap、RTP input/output gap、连续 transport failure、alert totals、SLO
+objective status/observed/threshold 和 policy observed counts。它用于 CI artifact
+展示、node_exporter textfile collector 或内部监控导入单次排障包证据，不声明多次
+运行或生产级 SLO 达标。
 
 `monitoring/alert_policy.json` 是本次运行使用的默认告警策略快照：包含
 availability、media_quality、network_qos 三类规则，记录每条规则的名称、类别、

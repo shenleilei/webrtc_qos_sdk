@@ -251,6 +251,7 @@ runtime_config = {
         "health_summary": "monitoring/health_summary.txt",
         "slo_report": "monitoring/slo_report.json",
         "slo_summary": "monitoring/slo_summary.txt",
+        "monitoring_metrics": "monitoring/phase5_monitoring_metrics.prom",
         "alert_policy": "monitoring/alert_policy.json",
         "alert_policy_summary": "monitoring/alert_policy_summary.txt",
         "incident_report": "monitoring/incident_report.json",
@@ -821,6 +822,7 @@ alert_policy = {
         "alerts": "alerts/alerts.jsonl",
         "alerts_summary": "alerts/alerts_summary.txt",
         "health_report": "monitoring/health_report.json",
+        "monitoring_metrics": "monitoring/phase5_monitoring_metrics.prom",
         "timeline": "timeline/events.jsonl",
     },
 }
@@ -899,6 +901,7 @@ health_report = {
         "first_problem": "timeline/first_problem.json",
         "slo_report": "monitoring/slo_report.json",
         "slo_summary": "monitoring/slo_summary.txt",
+        "monitoring_metrics": "monitoring/phase5_monitoring_metrics.prom",
         "alert_policy": "monitoring/alert_policy.json",
         "alert_policy_summary": "monitoring/alert_policy_summary.txt",
         "incident_report": "monitoring/incident_report.json",
@@ -1094,6 +1097,7 @@ slo_report = {
         "alerts_summary": "alerts/alerts_summary.txt",
         "health_report": "monitoring/health_report.json",
         "alert_policy": "monitoring/alert_policy.json",
+        "monitoring_metrics": "monitoring/phase5_monitoring_metrics.prom",
         "timeline": "timeline/events.jsonl",
     },
 }
@@ -1136,6 +1140,7 @@ incident_steps.append({
         "monitoring/health_summary.txt",
         "monitoring/slo_report.json",
         "monitoring/slo_summary.txt",
+        "monitoring/phase5_monitoring_metrics.prom",
     ],
 })
 incident_steps.append({
@@ -1199,6 +1204,7 @@ incident_report = {
         "health_report": "monitoring/health_report.json",
         "slo_report": "monitoring/slo_report.json",
         "alert_policy": "monitoring/alert_policy.json",
+        "monitoring_metrics": "monitoring/phase5_monitoring_metrics.prom",
         "timeline": "timeline/events.jsonl",
         "first_problem": "timeline/first_problem.json",
         "metrics_summary": "metrics/summary.csv",
@@ -1239,6 +1245,118 @@ with (root / "monitoring" / "incident_runbook.txt").open(
             f"category={action['category']} count={action['count']} "
             f"required={action['required']}\n"
         )
+
+
+def prom_escape(value):
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def prom_labels(**labels):
+    items = [
+        f'{key}="{prom_escape(value)}"'
+        for key, value in sorted(labels.items())
+        if value is not None and value != ""
+    ]
+    return "{" + ",".join(items) + "}" if items else ""
+
+
+with (root / "monitoring" / "phase5_monitoring_metrics.prom").open(
+    "w", encoding="utf-8"
+) as handle:
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_info Phase-5 debug bundle metadata marker.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_info gauge\n")
+    handle.write(
+        "webrtc_qos_phase5_debug_bundle_info"
+        f"{prom_labels(source='phase5_debug_bundle', health_status=health_status, slo_status=slo_status)} 1\n"
+    )
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_timeline_events_total Timeline events by type.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_timeline_events_total counter\n")
+    for event_type, count in sorted(type_counts.items()):
+        handle.write(
+            "webrtc_qos_phase5_debug_bundle_timeline_events_total"
+            f"{prom_labels(type=event_type)} {count}\n"
+        )
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_alerts_total Alert records by role/category/rule/severity.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_alerts_total counter\n")
+    for (severity, role, rule), count in sorted(alert_counts.items()):
+        category = next(
+            (
+                item.get("category", "")
+                for item in alerts
+                if item.get("severity", "") == severity
+                and item.get("role", "") == role
+                and item.get("rule", "") == rule
+            ),
+            "",
+        )
+        handle.write(
+            "webrtc_qos_phase5_debug_bundle_alerts_total"
+            f"{prom_labels(role=role, category=category, rule=rule, severity=severity)} {count}\n"
+        )
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_role_metric_records Runtime metric records by role.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_role_metric_records gauge\n")
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_role_max_process_tick_gap_us Max process tick gap by role.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_role_max_process_tick_gap_us gauge\n")
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_role_max_rtp_output_gap_us Max RTP output gap by role.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_role_max_rtp_output_gap_us gauge\n")
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_role_max_rtp_input_gap_us Max RTP input gap by role.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_role_max_rtp_input_gap_us gauge\n")
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_role_max_consecutive_transport_failures Max consecutive transport failures by role.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_role_max_consecutive_transport_failures gauge\n")
+    for role, info in sorted(role_health.items()):
+        labels = prom_labels(role=role, status=info.get("status", ""))
+        handle.write(
+            f"webrtc_qos_phase5_debug_bundle_role_metric_records{labels} {info['metric_records']}\n"
+        )
+        handle.write(
+            f"webrtc_qos_phase5_debug_bundle_role_max_process_tick_gap_us{labels} {info['max_process_tick_gap_us']}\n"
+        )
+        handle.write(
+            f"webrtc_qos_phase5_debug_bundle_role_max_rtp_output_gap_us{labels} {info['max_rtp_output_gap_us']}\n"
+        )
+        handle.write(
+            f"webrtc_qos_phase5_debug_bundle_role_max_rtp_input_gap_us{labels} {info['max_rtp_input_gap_us']}\n"
+        )
+        handle.write(
+            "webrtc_qos_phase5_debug_bundle_role_max_consecutive_transport_failures"
+            f"{labels} {info['max_consecutive_transport_failures']}\n"
+        )
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_slo_objective_status SLO objective status marker.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_slo_objective_status gauge\n")
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_slo_objective_observed SLO objective observed value.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_slo_objective_observed gauge\n")
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_slo_objective_threshold SLO objective threshold value.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_slo_objective_threshold gauge\n")
+    for item in slo_objectives:
+        labels = prom_labels(
+            objective=item["id"],
+            category=item["category"],
+            status=item["status"],
+            unit=item["unit"],
+        )
+        handle.write(
+            f"webrtc_qos_phase5_debug_bundle_slo_objective_status{labels} 1\n"
+        )
+        handle.write(
+            f"webrtc_qos_phase5_debug_bundle_slo_objective_observed{labels} {item['observed']}\n"
+        )
+        handle.write(
+            f"webrtc_qos_phase5_debug_bundle_slo_objective_threshold{labels} {item['threshold']}\n"
+        )
+    handle.write("# HELP webrtc_qos_phase5_debug_bundle_alert_policy_rule_observed_total Alert policy observed count by rule.\n")
+    handle.write("# TYPE webrtc_qos_phase5_debug_bundle_alert_policy_rule_observed_total counter\n")
+    for rule in alert_policy_rules:
+        handle.write(
+            "webrtc_qos_phase5_debug_bundle_alert_policy_rule_observed_total"
+            f"{prom_labels(rule=rule['rule'], category=rule['category'], severity=rule['severity'])} {rule['observed_count']}\n"
+        )
+    if problem.get("status") == "found":
+        handle.write("# HELP webrtc_qos_phase5_debug_bundle_first_problem_info First WARN/ERROR or alert marker.\n")
+        handle.write("# TYPE webrtc_qos_phase5_debug_bundle_first_problem_info gauge\n")
+        handle.write(
+            "webrtc_qos_phase5_debug_bundle_first_problem_info"
+            f"{prom_labels(type=problem.get('type', ''), level=problem.get('level', ''), role=problem.get('role', ''), name=problem.get('name', ''))} 1\n"
+        )
 PY
 
 {
@@ -1255,6 +1373,7 @@ PY
   write_summary "health_summary=${OUTPUT_DIR}/monitoring/health_summary.txt"
   write_summary "slo_report=${OUTPUT_DIR}/monitoring/slo_report.json"
   write_summary "slo_summary=${OUTPUT_DIR}/monitoring/slo_summary.txt"
+  write_summary "monitoring_metrics=${OUTPUT_DIR}/monitoring/phase5_monitoring_metrics.prom"
   write_summary "alert_policy=${OUTPUT_DIR}/monitoring/alert_policy.json"
   write_summary "alert_policy_summary=${OUTPUT_DIR}/monitoring/alert_policy_summary.txt"
   write_summary "incident_report=${OUTPUT_DIR}/monitoring/incident_report.json"

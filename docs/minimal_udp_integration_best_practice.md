@@ -603,7 +603,8 @@ bundle 固定包含 `metadata.txt`、`build_config.txt`、`git_status.txt`、
 `metrics/{push,server,play}_metrics.jsonl`、`metrics/summary.csv`、
 `alerts/alerts.jsonl`、`alerts/alerts_summary.txt`、`timeline/events.jsonl`、
 `timeline/first_problem.json`、`monitoring/health_report.json`、
-`monitoring/slo_report.json`、`monitoring/alert_policy.json`、
+`monitoring/slo_report.json`、`monitoring/phase5_monitoring_metrics.prom`、
+`monitoring/alert_policy.json`、
 `monitoring/incident_report.json` 和 `manifest.sha256`。
 这些文件可以回答
 “第一条 warn/error 在哪个角色、哪个 track、哪个 receiver 出现”以及“弱网前后
@@ -623,6 +624,12 @@ policy 覆盖当前触发的 alert rule，再看 `health_report.json` 里的 top
 `monitoring/slo_report.json` / `slo_summary.txt` 是给监控和值班直接消费的目标视图：
 按 availability、media_quality、network_qos 三类列出默认目标、当前观测值、阈值、
 状态和排查动作。它只代表单个 debug bundle 的观测，不是正式生产 SLO 结论。
+
+`monitoring/phase5_monitoring_metrics.prom` 是同一批排障证据的 Prometheus/textfile
+指标出口：覆盖 role metric record 数、最大 process tick/RTP gap、alert 计数、
+SLO objective 状态/观测值/阈值，以及默认 alert policy 的观测命中数。它适合被 CI
+artifact、node_exporter textfile collector 或内部监控导入，但仍只代表单次 bundle，
+不能替代正式生产 SLO。
 
 `monitoring/incident_report.json` / `incident_runbook.txt` 是一线排障入口：先看
 first problem，再确认 health report、alert policy、受影响 role 的 log/metrics/
