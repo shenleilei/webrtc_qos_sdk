@@ -194,6 +194,7 @@ if [[ "${RUN_PHASE5_IMPLEMENTATION_GATE}" == "1" ]]; then
   run_step verify_phase5_implementation_gate \
     env GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR}" REQUIRE_PASS=1 \
       "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh"
+  write_summary "phase5_implementation_gate=${PHASE5_IMPLEMENTATION_GATE_DIR}"
 else
   write_summary "step=phase5_implementation_gate status=skipped RUN_PHASE5_IMPLEMENTATION_GATE=${RUN_PHASE5_IMPLEMENTATION_GATE}"
 fi

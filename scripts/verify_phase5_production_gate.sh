@@ -118,8 +118,10 @@ require_success_debug_bundle() {
 }
 
 require_success_implementation_gate() {
-  summary_has '^phase5_implementation_gate=' ||
-    fail "passed gate summary missing phase5 implementation gate directory"
+  if ! summary_has '^phase5_implementation_gate=' &&
+      ! summary_has '^phase5_implementation_gate_dir='; then
+    fail "gate summary missing phase5 implementation gate directory"
+  fi
   require_file "${GATE_DIR}/phase5_implementation_gate/manifest.sha256"
   require_file "${GATE_DIR}/phase5_implementation_gate/phase5_implementation_gate_summary.txt"
   (
@@ -268,6 +270,9 @@ else
   if summary_has '^phase5_production_gate_status=fail$'; then
     summary_has '^step=[^ ]+ status=fail ' ||
       fail "failed gate summary missing failed step"
+    if summary_has '^step=phase5_implementation_gate status=pass '; then
+      require_success_implementation_gate
+    fi
     require_failed_implementation_evidence
     require_failed_readiness_evidence
     require_failed_gate_debug_bundle

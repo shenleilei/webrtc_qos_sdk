@@ -185,8 +185,9 @@ readiness 和 debug bundle 门禁，然后调用底层
 gate 目录内，保证正式证据自包含。非 dry-run 失败时会自动收集并校验
 `failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和 runtime
 config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包存在且
-manifest 可离线校验，如果失败发生在 implementation 或 readiness 阶段，还会离线复验
-对应 summary、manifest 和失败 step/check；在 gate 成功时会离线复验
+manifest 可离线校验；如果 implementation gate 已经 pass，即使后续 readiness 或 soak
+失败，也会离线复验这份实现证据；如果失败发生在 implementation 或 readiness 阶段，
+还会离线复验对应 summary、manifest 和失败 step/check；在 gate 成功时会离线复验
 `phase5_implementation_gate/` 的实现证据、`phase5_debug_bundle/` 的日志、metrics、
 alerts、timeline 和 runtime config，离线复验
 `phase5_production_readiness/` 的 ready 状态，并直接复验底层 Phase-2

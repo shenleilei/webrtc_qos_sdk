@@ -182,6 +182,8 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_success_implementation_gate' production_gate_success_implementation_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  "step=phase5_implementation_gate status=pass" production_gate_failed_path_implementation_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_failed_implementation_evidence' production_gate_failed_implementation_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
