@@ -618,28 +618,46 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_csv' production_gate_release_capture_qoe_index
 require_doc_pattern scripts/verify_capture_library_manifest.sh \
   'capture_manifest_sha256' production_gate_capture_manifest_sha256_collector
+require_doc_pattern scripts/verify_capture_library_manifest.sh \
+  'capture_media_sha256' production_gate_capture_media_sha256_collector
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
   'capture_manifest_sha256' production_gate_capture_manifest_sha256_audit
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'media_sha256=' production_gate_capture_media_sha256_audit
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
   'manifest_sha256=' production_gate_capture_manifest_sha256_audit_summary_gate
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'manifest_sha256' production_gate_external_import_capture_manifest_sha256
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'media_sha256' production_gate_external_import_capture_media_sha256
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_manifest_sha256' production_gate_release_capture_manifest_sha256_index
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'capture_media_sha256' production_gate_release_capture_media_sha256_index
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'capture manifest sha256 mismatch' production_gate_release_capture_manifest_sha256_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'capture media sha256 mismatch' production_gate_release_capture_media_sha256_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'capture manifest summary missing media sha256' production_gate_capture_manifest_media_sha256_verifier
 require_doc_pattern scripts/verify_capture_library_evidence.sh \
   'capture_library_evidence_verification=true' production_gate_capture_evidence_verifier
 require_doc_pattern scripts/verify_capture_library_evidence.sh \
   'capture QoE summary manifest sha256 mismatch' production_gate_capture_qoe_manifest_sha_verifier
+require_doc_pattern scripts/verify_capture_library_evidence.sh \
+  'capture QoE summary media sha256 mismatch' production_gate_capture_qoe_media_sha_verifier
 require_doc_pattern scripts/run_webrtc_first_qoe_capture_library_720p.sh \
   'capture_manifest_sha256=' production_gate_capture_qoe_summary_manifest_sha_collector
+require_doc_pattern scripts/run_webrtc_first_qoe_capture_library_720p.sh \
+  'capture_media_sha256=' production_gate_capture_qoe_summary_media_sha_collector
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
   'verify_capture_library_evidence.sh' production_gate_capture_evidence_audit
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'capture_library_evidence' production_gate_external_import_capture_evidence_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'capture QoE manifest sha256 mismatch' production_readiness_external_capture_qoe_sha_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'capture QoE media sha256 mismatch' production_readiness_external_capture_qoe_media_sha_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_capture_library_evidence.sh' production_gate_capture_evidence_reverify
 require_doc_pattern scripts/run_phase5_production_gate.sh \

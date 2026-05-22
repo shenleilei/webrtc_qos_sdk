@@ -218,7 +218,7 @@ implementation gate、implementation gate `.prom` 指标、clean tracked worktre
 readiness report、next required actions、risk milestone report、readiness `.prom` 指标、readiness check records、debug bundle
 manifest、runtime config、health/SLO report、monitoring metrics、alert policy、incident report/runbook、timeline、first problem、alerts summary、底层 Phase-2
 production gate、底层 Phase-2 completion audit `.prom` 指标、production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、
-正式 capture library、capture manifest summary、capture QoE CSV、capture QoE summary、
+正式 capture library、capture manifest summary、capture manifest/media sha256、capture QoE CSV、capture QoE summary、
 evidence bundle 和 completion audit 的 pass 状态及相对 artifact 路径，同时记录
 production soak rows、real renderer backend、readiness report/metrics/risk milestone 指针、debug health/monitoring/incident 指针、顶层 gate 文件清单/sha256 manifest/metrics 指针、capture QoE rows/minima 和
 `multi_receiver_fanout=deferred_before_p5_completion`。release evidence verifier 会按固定
@@ -239,7 +239,7 @@ readiness `.prom` 指标、clean tracked worktree 证据，并直接复验顶层
 `manifest.sha256` 文件集合一致、底层 Phase-2 evidence bundle manifest、
 `phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`、`phase2_completion_audit_metrics.prom`，同时强制复验 `phase5_release_evidence.json` 和
-release evidence 里索引的 production soak archive、真实 renderer summary/metrics 和 capture QoE
+release evidence 里索引的 production soak archive、真实 renderer summary/metrics、capture manifest/media sha256 和 capture QoE
 CSV；production soak 证据会通过 `verify_webrtc_first_qoe_production_soak_evidence.sh`
 复验 `SOAK_MINUTES>=120`、summary/CSV/config/archive 一致性、clean tracked worktree
 metadata、弱网低发送预算和恢复时间分布，真实 renderer 证据会通过
@@ -273,14 +273,14 @@ bundle 到 P5 gate 目录内，复验源 bundle、复制后 bundle 和导入目�
 bundle 里的 git head 与当前 P5 gate 的 git head 一致，且 bundle metadata 证明外部测试机
 tracked worktree clean。导入报告还必须索引原始证据：
 production soak summary/CSV/config/archive、真实 renderer summary/metrics、capture
-manifest summary、capture manifest sha256、capture QoE CSV/summary，并输出 `production_soak_evidence`、`production_soak_raw_evidence`、
+manifest summary、capture manifest/media sha256、capture QoE CSV/summary，并输出 `production_soak_evidence`、`production_soak_raw_evidence`、
 `real_renderer_raw_evidence`、`real_renderer_rendered_frames`、`capture_qoe_raw_evidence` 检查项；导入时会调用
 `verify_webrtc_first_qoe_production_soak_evidence.sh` 复验 production soak summary/CSV/config/archive，
 调用 `verify_real_renderer_evidence.sh` 复验真实 renderer summary/metrics，避免外部机器只给
 pass 摘要、短时或不一致 soak、Xvfb-only renderer 或没有实际 rendered frames 的结果而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
 `external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
 和业务素材；但只有导入报告 `import_status=pass`，且 clean tracked worktree、git head、
-production soak、真实 renderer、capture QoE、capture manifest sha256 和原始证据指针都
+production soak、真实 renderer、capture QoE、capture manifest/media sha256 和原始证据指针都
 复验通过时，readiness 才会派生记录 `capture_manifest` / `real_renderer` pass。readiness
 还会在导入报告上复验 capture fixture flag、QoE `rows/pass_rows` 完整性、必需类别覆盖、
 `playable_ratio / avg_psnr_y / avg_ssim_y` 下限和 `decode_errors / freeze_count /
@@ -288,17 +288,18 @@ renderer_proxy_drop_frames` 全 0，避免外部 bundle 只给 pass 摘要却绕
 evidence 和 production gate verifier 仍会离线复验导入报告及这些原始证据指针。
 
 正式 capture library 不能只证明 manifest 存在。`scripts/verify_capture_library_manifest.sh`
-会在 summary 中输出 `capture_manifest_sha256`；Phase-2 completion audit、外部 bundle
-导入和 Phase-5 release evidence 必须携带并复验该哈希，证明发布证据对应具体的正式
-manifest 内容。`scripts/verify_capture_library_qoe_csv.sh`
+会在 summary 中输出 `capture_manifest_sha256`，并对启用素材文件内容聚合输出
+`capture_media_sha256`；Phase-2 completion audit、外部 bundle
+导入和 Phase-5 release evidence 必须携带并复验这两个哈希，证明发布证据对应具体的正式
+manifest 内容和媒体内容。`scripts/verify_capture_library_qoe_csv.sh`
 会离线复验 `webrtc_first_qoe_capture_library_720p.csv`：所有行必须 `pass=true`，必需类别
 必须覆盖，`playable_ratio / avg_psnr_y / avg_ssim_y` 不能低于门槛，`decode_errors /
 freeze_count / renderer_proxy_drop_frames` 必须为 0。`scripts/verify_capture_library_evidence.sh`
 会进一步绑定复验 manifest summary、QoE CSV 和 QoE summary，要求 QoE summary 中的
-`capture_manifest_sha256` 等于 manifest summary，避免正式素材库或 CSV 被替换后只靠旧
+`capture_manifest_sha256` 和 `capture_media_sha256` 都等于 manifest summary，避免正式素材库或 CSV 被替换后只靠旧
 summary 通过。Phase-2 completion audit 和外部 bundle 导入都会调用该 verifier。Phase-5 release evidence 生成阶段也会独立拒绝
 fixture capture manifest，并要求 capture QoE summary 行数完整、`pass_rows == rows`、
-必需类别覆盖、QoE 下限存在、manifest sha 绑定且 `decode_errors / freeze_count / renderer_proxy_drop_frames`
+必需类别覆盖、QoE 下限存在、manifest/media sha 绑定且 `decode_errors / freeze_count / renderer_proxy_drop_frames`
 为 0，避免先把不完整素材库证据写成发布 pass 再由离线 verifier 打回。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
@@ -1417,7 +1418,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 `files.txt` /
   `manifest.sha256` / 实际文件集合一致性、completion
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
-  capture manifest sha256、capture QoE CSV/summary 绑定，同时要求 bundle metadata 记录 clean tracked worktree。
+  capture manifest/media sha256、capture QoE CSV/summary 绑定，同时要求 bundle metadata 记录 clean tracked worktree。
 - production soak archive 必须记录并验证 clean tracked worktree；只允许未跟踪
   artifacts/build 目录存在，不能用带 tracked 源码修改的 soak 结果作为正式证据。
 - 顶层 metadata、summary、logs，以及 `files.txt` / `manifest.sha256` / 实际文件集合一致性。
@@ -1443,7 +1444,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   timeline 和 runtime config 都可用。
 - 成功路径必须生成并离线复验 `phase5_release_evidence.json`，确认 production soak、
   production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、正式
-  capture library、capture QoE CSV、evidence bundle 和 completion audit 都有 pass
+  capture library、capture manifest/media sha256、capture QoE CSV、evidence bundle 和 completion audit 都有 pass
   证据指针，并通过 `verify_webrtc_first_qoe_production_soak_evidence.sh` 确认长时 soak
   summary/CSV/config/archive 一致且满足 P5 下限，通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，通过 `verify_capture_library_evidence.sh` 确认 capture manifest/QoE 绑定和质量门槛均通过，同时写出 production soak rows、real renderer backend 和 capture QoE
   rows/minima 供排障。

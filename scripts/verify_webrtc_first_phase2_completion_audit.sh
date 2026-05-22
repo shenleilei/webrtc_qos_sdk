@@ -439,6 +439,7 @@ if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
   capture_dir="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_library_dir)"
   capture_manifest="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest)"
   capture_manifest_sha256="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest_sha256)"
+  capture_media_sha256="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_media_sha256)"
   capture_entries="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" entries)"
   capture_categories="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" categories)"
   capture_fixture=0
@@ -469,7 +470,7 @@ if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
     if [[ "${capture_fixture}" -eq 1 && "${ALLOW_FIXTURE_CAPTURE}" != "1" ]]; then
       audit_fail capture_library "fixture_library_not_formal dir=${capture_dir} manifest=${capture_manifest}"
     else
-      audit_pass capture_library "summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV} manifest_sha256=${capture_manifest_sha256} entries=${capture_entries} categories=${capture_categories}"
+      audit_pass capture_library "summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV} manifest_sha256=${capture_manifest_sha256} media_sha256=${capture_media_sha256} entries=${capture_entries} categories=${capture_categories}"
     fi
   else
     reason="manifest_not_valid"

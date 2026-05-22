@@ -151,6 +151,9 @@ if manifest.get("capture_manifest_verification") != "true":
 manifest_sha = manifest.get("capture_manifest_sha256", "")
 if not valid_sha256(manifest_sha):
     raise SystemExit("capture manifest summary missing sha256")
+manifest_media_sha = manifest.get("capture_media_sha256", "")
+if not valid_sha256(manifest_media_sha):
+    raise SystemExit("capture manifest summary missing capture_media_sha256")
 if qoe.get("capture_qoe_verification") != "true":
     raise SystemExit("capture QoE summary did not verify")
 qoe_manifest_sha = qoe.get("capture_manifest_sha256", "")
@@ -158,6 +161,11 @@ if not valid_sha256(qoe_manifest_sha):
     raise SystemExit("capture QoE summary missing capture_manifest_sha256")
 if qoe_manifest_sha != manifest_sha:
     raise SystemExit("capture QoE summary manifest sha256 mismatch")
+qoe_media_sha = qoe.get("capture_media_sha256", "")
+if not valid_sha256(qoe_media_sha):
+    raise SystemExit("capture QoE summary missing capture_media_sha256")
+if qoe_media_sha != manifest_media_sha:
+    raise SystemExit("capture QoE summary media sha256 mismatch")
 
 fixture_markers = (
     "fixture",
@@ -246,6 +254,7 @@ if entries <= 0:
 
 print("capture_library_evidence_verification=true")
 print(f"capture_manifest_sha256={manifest_sha}")
+print(f"capture_media_sha256={manifest_media_sha}")
 print(f"rows={len(rows)}")
 print(f"pass_rows={len(rows) - len(failed_rows)}")
 print("categories=" + ",".join(sorted(csv_categories)))

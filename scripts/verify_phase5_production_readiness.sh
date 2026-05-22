@@ -308,6 +308,10 @@ if not valid_sha256(capture_library.get("manifest_sha256")):
     raise SystemExit("external phase2 import bad capture manifest sha256")
 if capture_library.get("qoe_manifest_sha256") != capture_library.get("manifest_sha256"):
     raise SystemExit("external phase2 import capture QoE manifest sha256 mismatch")
+if not valid_sha256(capture_library.get("media_sha256")):
+    raise SystemExit("external phase2 import bad capture media sha256")
+if capture_library.get("qoe_media_sha256") != capture_library.get("media_sha256"):
+    raise SystemExit("external phase2 import capture QoE media sha256 mismatch")
 if capture_library.get("fixture") is not False:
     raise SystemExit("external phase2 import used fixture capture")
 rows = int(as_float(capture_library.get("rows")))

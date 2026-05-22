@@ -339,10 +339,14 @@ def capture_qoe_summary_complete(values, manifest_values):
     pass_rows = number_value(values, "pass_rows", -1)
     manifest_sha = manifest_values.get("capture_manifest_sha256", "")
     qoe_manifest_sha = values.get("capture_manifest_sha256", "")
+    media_sha = manifest_values.get("capture_media_sha256", "")
+    qoe_media_sha = values.get("capture_media_sha256", "")
     return (
         values.get("capture_qoe_verification") == "true"
         and valid_sha256(manifest_sha)
+        and valid_sha256(media_sha)
         and qoe_manifest_sha == manifest_sha
+        and qoe_media_sha == media_sha
         and rows > 0
         and pass_rows == rows
         and capture_categories_cover(values, manifest_values)
@@ -438,6 +442,7 @@ capture_fixture_marker = has_capture_fixture_marker(capture_manifest_summary)
 capture_manifest_complete = (
     capture_manifest.get("capture_manifest_verification") == "true"
     and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
+    and valid_sha256(capture_manifest.get("capture_media_sha256"))
     and not capture_fixture_marker
 )
 capture_qoe_complete = capture_qoe_summary_complete(capture_qoe, capture_manifest)
@@ -808,6 +813,8 @@ doc = {
         ),
         "manifest_sha256": capture_manifest.get("capture_manifest_sha256", ""),
         "qoe_manifest_sha256": capture_qoe.get("capture_manifest_sha256", ""),
+        "media_sha256": capture_manifest.get("capture_media_sha256", ""),
+        "qoe_media_sha256": capture_qoe.get("capture_media_sha256", ""),
         "rows": parse_number(capture_qoe.get("rows", "0")),
         "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
         "playable_ratio_min": parse_number(capture_qoe.get("playable_ratio_min", "0")),
@@ -909,6 +916,9 @@ with open(release_summary, "w", encoding="utf-8") as fh:
     fh.write(f"real_renderer_status={doc['real_renderer']['status']}\n")
     fh.write(
         f"capture_manifest_sha256={doc['capture_library']['manifest_sha256']}\n"
+    )
+    fh.write(
+        f"capture_media_sha256={doc['capture_library']['media_sha256']}\n"
     )
     fh.write(f"capture_qoe_csv={rel(capture_qoe_csv)}\n")
     fh.write(f"capture_qoe_summary={rel(capture_qoe_summary)}\n")

@@ -98,10 +98,18 @@ with open(manifest, newline="", encoding="utf-8") as f:
 if not rows:
     raise SystemExit("capture manifest has no enabled rows: %s" % manifest)
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 seen_labels = set()
 seen_paths = {}
 categories = set()
 errors = []
+media_records = []
 for row in rows:
     key = row["category"] + "/" + row["label"]
     if key in seen_labels:
@@ -115,6 +123,16 @@ for row in rows:
         )
     seen_paths[real_path] = key
     categories.add(row["category"])
+    media_sha256 = file_sha256(row["path"])
+    media_records.append(
+        {
+            "category": row["category"],
+            "label": row["label"],
+            "path": row["path"],
+            "size": os.path.getsize(row["path"]),
+            "sha256": media_sha256,
+        }
+    )
 
     ext = os.path.splitext(row["path"])[1].lower()
     if ext not in supported_video and ext not in supported_raw:
@@ -176,10 +194,29 @@ if resolved_capture_list:
         for row in rows:
             f.write("%s\t%s\t%s\n" % (row["category"], row["label"], row["path"]))
 
+media_digest_input = "\n".join(
+    "%s\t%s\t%s\t%d\t%s"
+    % (
+        item["category"],
+        item["label"],
+        item["sha256"],
+        item["size"],
+        os.path.basename(item["path"]),
+    )
+    for item in sorted(
+        media_records,
+        key=lambda item: (item["category"], item["label"], item["sha256"], item["path"]),
+    )
+) + "\n"
+capture_media_sha256 = hashlib.sha256(
+    media_digest_input.encode("utf-8")
+).hexdigest()
+
 summary = {
     "capture_manifest_verification": "true",
     "capture_manifest": manifest,
     "capture_manifest_sha256": manifest_sha256,
+    "capture_media_sha256": capture_media_sha256,
     "capture_library_dir": capture_dir,
     "entries": str(len(rows)),
     "categories": ",".join(sorted(categories)),

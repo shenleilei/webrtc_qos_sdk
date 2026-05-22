@@ -801,6 +801,16 @@ for section_name, keys in (
         and section.get("qoe_manifest_sha256") != section.get("manifest_sha256")
     ):
         raise SystemExit("external phase2 import capture QoE manifest sha256 mismatch")
+    if section_name == "capture_library" and not (
+        len(section.get("media_sha256", "")) == 64
+        and all(ch in "0123456789abcdefABCDEF" for ch in section["media_sha256"])
+    ):
+        raise SystemExit("external phase2 import bad capture media sha256")
+    if (
+        section_name == "capture_library"
+        and section.get("qoe_media_sha256") != section.get("media_sha256")
+    ):
+        raise SystemExit("external phase2 import capture QoE media sha256 mismatch")
     if section_name == "real_renderer" and float(
         section.get("rendered_frames", 0) or 0
     ) <= 0:
@@ -999,6 +1009,9 @@ PY
   rg -q '^capture_manifest_sha256=[0-9a-fA-F]{64}$' \
     "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
     fail "capture manifest summary missing sha256"
+  rg -q '^capture_media_sha256=[0-9a-fA-F]{64}$' \
+    "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
+    fail "capture manifest summary missing media sha256"
   local required_capture_categories
   required_capture_categories="$(
     awk -F= '$1=="required_categories"{gsub(/,/," ",$2); print $2}' \
@@ -1291,6 +1304,12 @@ if capture.get("manifest_sha256") != manifest_summary.get("capture_manifest_sha2
     raise SystemExit("release evidence capture manifest sha256 mismatch")
 if capture.get("qoe_manifest_sha256") != capture.get("manifest_sha256"):
     raise SystemExit("release evidence capture QoE manifest sha256 mismatch")
+if not valid_sha256(capture.get("media_sha256")):
+    raise SystemExit("release evidence capture media sha256 missing")
+if capture.get("media_sha256") != manifest_summary.get("capture_media_sha256"):
+    raise SystemExit("release evidence capture media sha256 mismatch")
+if capture.get("qoe_media_sha256") != capture.get("media_sha256"):
+    raise SystemExit("release evidence capture QoE media sha256 mismatch")
 
 def normalize_rel(path):
     return os.path.normpath(path).replace(os.sep, "/")
@@ -1550,6 +1569,7 @@ for expected in (
     "capture_qoe_csv=",
     "capture_qoe_rows=",
     "capture_manifest_sha256=",
+    "capture_media_sha256=",
 ):
     if expected not in summary:
         raise SystemExit(f"release evidence summary missing {expected}")

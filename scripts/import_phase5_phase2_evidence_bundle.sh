@@ -391,8 +391,16 @@ checks = {
     "capture_library_evidence": has_file(
         os.path.join(output_root, "logs", "capture_library_evidence.log")
     )
+    and has_line(
+        os.path.join(output_root, "logs", "capture_library_evidence.log"),
+        "capture_library_evidence_verification=true",
+    )
+    and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
     and capture_manifest.get("capture_manifest_sha256")
-    == capture_qoe.get("capture_manifest_sha256"),
+    == capture_qoe.get("capture_manifest_sha256")
+    and valid_sha256(capture_manifest.get("capture_media_sha256"))
+    and capture_manifest.get("capture_media_sha256")
+    == capture_qoe.get("capture_media_sha256"),
     "evidence_bundle": has_prefix(audit_summary, "check=evidence_bundle status=pass "),
     "production_soak_raw_evidence": has_file(production_soak_summary)
     and has_file(production_soak_csv)
@@ -412,6 +420,7 @@ checks = {
     and has_file(capture_qoe_csv)
     and has_file(capture_qoe_summary)
     and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
+    and valid_sha256(capture_manifest.get("capture_media_sha256"))
     and capture_qoe.get("capture_qoe_verification") == "true",
 }
 if capture_fixture and allow_fixture_capture != "1":
@@ -475,6 +484,8 @@ report = {
         "qoe_summary": rel(capture_qoe_summary),
         "manifest_sha256": capture_manifest.get("capture_manifest_sha256", ""),
         "qoe_manifest_sha256": capture_qoe.get("capture_manifest_sha256", ""),
+        "media_sha256": capture_manifest.get("capture_media_sha256", ""),
+        "qoe_media_sha256": capture_qoe.get("capture_media_sha256", ""),
         "fixture": capture_fixture,
         "rows": parse_number(capture_qoe.get("rows", "0")),
         "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
@@ -554,8 +565,16 @@ with open(report_summary, "w", encoding="utf-8") as fh:
         f"{capture_manifest.get('capture_manifest_sha256', '')}\n"
     )
     fh.write(
+        "capture_media_sha256="
+        f"{capture_manifest.get('capture_media_sha256', '')}\n"
+    )
+    fh.write(
         "capture_qoe_manifest_sha256="
         f"{capture_qoe.get('capture_manifest_sha256', '')}\n"
+    )
+    fh.write(
+        "capture_qoe_media_sha256="
+        f"{capture_qoe.get('capture_media_sha256', '')}\n"
     )
     fh.write(f"capture_qoe_csv={rel(capture_qoe_csv)}\n")
 
