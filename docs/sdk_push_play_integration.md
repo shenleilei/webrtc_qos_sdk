@@ -26,6 +26,12 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 REQUIRE_ALL=1 NINJA_JOBS=2 \
 - `role_transport`
   只提供业务传输边界 support
 
+当前 media 模型还要额外强调一条：
+
+- 一个 `VideoPushClient` 实例当前只对应一个主视频 track 和一个 sender SSRC。
+- 一个 `VideoPlayClient` 实例当前也只对应一个主 sender SSRC 接收路径。
+- “一个 source 下多个 video track、不同 SSRC” 目前还没有进入公共 API。
+
 业务项目通常直接按角色链接，不自己手动拼 `webrtc_googcc + webrtc_pacing + webrtc_rtp_rtcp + ...`。
 
 ## 3. CMake 接入

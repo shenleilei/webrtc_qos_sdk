@@ -42,6 +42,16 @@ The business side still owns:
 
 ## Important Boundaries
 
+### Track Model
+
+- Current public media model is single-track per facade instance.
+- One `VideoPushClient` instance currently maps to one H264 sender SSRC.
+- One `VideoPlayClient` instance currently maps to one primary sender SSRC.
+- Public API and runtime state are still keyed around a single
+  `session.ids.sender_ssrc`.
+- Multi-track video from one source, using multiple media SSRCs under one
+  higher-level source, is not implemented yet.
+
 ### Retransmission
 
 - Current recovery is `NACK + original RTP retransmission`.
@@ -160,3 +170,4 @@ Notes:
 - Do not collapse RTCP sender SSRC back into business `receiver_id`.
 - Do not count retransmission traffic into sender media SR packet/octet totals.
 - Do not assume `ServerQosRouter` itself manages multi-receiver media fanout.
+- Do not describe the current public model as multi-track-per-source support.
