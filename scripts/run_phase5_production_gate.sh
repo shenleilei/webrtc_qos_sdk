@@ -293,6 +293,58 @@ def number_value(values, key, default=0):
     return parsed if isinstance(parsed, (int, float)) else default
 
 
+def has_capture_fixture_marker(path):
+    if not os.path.exists(path):
+        return False
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read().lower()
+    return any(
+        marker in text
+        for marker in (
+            "fixture",
+            "artifacts/capture_library_phase2_fixture",
+            "artifacts/capture_library_fixture",
+        )
+    )
+
+
+def category_tokens(value):
+    return {
+        token.strip()
+        for token in str(value or "").replace(",", " ").split()
+        if token.strip()
+    }
+
+
+def capture_categories_cover(values, manifest_values):
+    required_categories = category_tokens(
+        values.get("required_categories")
+        or manifest_values.get("required_categories")
+        or "indoor_face,outdoor_walking,low_light_noise,screen_text,high_motion,scene_cut"
+    )
+    observed_categories = category_tokens(
+        values.get("categories") or manifest_values.get("categories") or ""
+    )
+    return bool(required_categories) and required_categories <= observed_categories
+
+
+def capture_qoe_summary_complete(values, manifest_values):
+    rows = number_value(values, "rows")
+    pass_rows = number_value(values, "pass_rows", -1)
+    return (
+        values.get("capture_qoe_verification") == "true"
+        and rows > 0
+        and pass_rows == rows
+        and capture_categories_cover(values, manifest_values)
+        and number_value(values, "playable_ratio_min") > 0
+        and number_value(values, "avg_psnr_y_min") > 0
+        and number_value(values, "avg_ssim_y_min") > 0
+        and number_value(values, "decode_errors", 1) == 0
+        and number_value(values, "freeze_count", 1) == 0
+        and number_value(values, "renderer_proxy_drop_frames", 1) == 0
+    )
+
+
 implementation_summary = os.path.join(
     implementation_dir, "phase5_implementation_gate_summary.txt"
 )
@@ -346,6 +398,13 @@ production_soak_runtime = kv_summary(production_soak_config)
 real_renderer = kv_summary(real_renderer_summary)
 capture_manifest = kv_summary(capture_manifest_summary)
 capture_qoe = kv_summary(capture_qoe_summary)
+capture_fixture_marker = has_capture_fixture_marker(capture_manifest_summary)
+capture_manifest_complete = (
+    capture_manifest.get("capture_manifest_verification") == "true"
+    and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
+    and not capture_fixture_marker
+)
+capture_qoe_complete = capture_qoe_summary_complete(capture_qoe, capture_manifest)
 slo_status = "missing"
 if os.path.exists(debug_slo):
     with open(debug_slo, "r", encoding="utf-8") as fh:
@@ -388,15 +447,13 @@ checks = {
     "real_renderer_metrics": has_file(real_renderer_metrics),
     "capture_library": has_prefix(
         phase2_audit_summary, "check=capture_library status=pass "
-    ),
-    "capture_manifest_summary": capture_manifest.get(
-        "capture_manifest_verification"
     )
-    == "true"
-    and valid_sha256(capture_manifest.get("capture_manifest_sha256")),
-    "capture_qoe_csv": has_file(capture_qoe_csv)
-    and capture_qoe.get("capture_qoe_verification") == "true",
-    "capture_qoe_summary": capture_qoe.get("capture_qoe_verification") == "true",
+    and capture_manifest_complete
+    and has_file(capture_qoe_csv)
+    and capture_qoe_complete,
+    "capture_manifest_summary": capture_manifest_complete,
+    "capture_qoe_csv": has_file(capture_qoe_csv) and capture_qoe_complete,
+    "capture_qoe_summary": capture_qoe_complete,
     "evidence_bundle": has_prefix(
         phase2_audit_summary, "check=evidence_bundle status=pass "
     )

@@ -492,6 +492,14 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'capture manifest sha256 mismatch' production_gate_release_capture_manifest_sha256_verifier
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_minima' production_gate_release_capture_qoe_minima
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'has_capture_fixture_marker' production_gate_release_rejects_fixture_capture
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'capture_categories_cover' production_gate_release_capture_category_cover_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'capture_qoe_summary_complete' production_gate_release_capture_qoe_complete_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'pass_rows == rows' production_gate_release_capture_qoe_pass_rows_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_capture_library_qoe_csv.sh' production_gate_release_capture_qoe_reverify
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
@@ -514,6 +522,12 @@ require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'real_renderer_raw_evidence' production_gate_external_import_renderer_raw_evidence
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'capture_qoe_raw_evidence' production_gate_external_import_capture_raw_evidence
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'has_fixture_marker' production_gate_external_import_rejects_fixture_capture
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'required_categories' production_gate_external_import_capture_required_categories
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'renderer_proxy_drop_frames' production_gate_external_import_capture_drop_count
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'production_soak_archive' production_gate_external_import_soak_archive_pointer
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
@@ -540,6 +554,14 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'external phase2 import missing artifact pointer' production_gate_external_import_artifact_pointer_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'external phase2 import missing \{section_name\}' production_gate_external_import_section_pointer_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'external phase2 import used fixture capture library' production_gate_external_import_fixture_reverify
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'external phase2 import capture required categories are incomplete' production_gate_external_import_capture_category_reverify
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence capture manifest used fixture library' production_gate_release_capture_fixture_reverify
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence capture required categories are incomplete' production_gate_release_capture_category_reverify
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'phase5_release_evidence.json' production_gate_release_evidence_collector
 require_doc_pattern scripts/verify_phase5_production_gate.sh \

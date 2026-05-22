@@ -274,7 +274,10 @@ manifest 内容。`scripts/verify_capture_library_qoe_csv.sh`
 会离线复验 `webrtc_first_qoe_capture_library_720p.csv`：所有行必须 `pass=true`，必需类别
 必须覆盖，`playable_ratio / avg_psnr_y / avg_ssim_y` 不能低于门槛，`decode_errors /
 freeze_count / renderer_proxy_drop_frames` 必须为 0。Phase-2 completion audit 和外部
-bundle 导入都会调用该 verifier。
+bundle 导入都会调用该 verifier。Phase-5 release evidence 生成阶段也会独立拒绝
+fixture capture manifest，并要求 capture QoE summary 行数完整、`pass_rows == rows`、
+必需类别覆盖、QoE 下限存在且 `decode_errors / freeze_count / renderer_proxy_drop_frames`
+为 0，避免先把不完整素材库证据写成发布 pass 再由离线 verifier 打回。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
 `PHASE5_GATE_DIR` 指向已经 `REQUIRE_PASS=1` 验证通过的 Phase-5 production gate；

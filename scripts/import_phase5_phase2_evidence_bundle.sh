@@ -206,6 +206,21 @@ def valid_sha256(value):
     )
 
 
+def has_fixture_marker(path):
+    if not os.path.exists(path):
+        return False
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read().lower()
+    return any(
+        marker in text
+        for marker in (
+            "fixture",
+            "artifacts/capture_library_phase2_fixture",
+            "artifacts/capture_library_fixture",
+        )
+    )
+
+
 phase5_min_soak_minutes = 120.0
 configured_min_soak_minutes = float(min_soak_minutes)
 if configured_min_soak_minutes < phase5_min_soak_minutes:
@@ -251,6 +266,7 @@ production_soak_minutes = parse_number(
 real_renderer = read_kv(real_renderer_summary)
 capture_manifest = read_kv(capture_manifest_summary)
 capture_qoe = read_kv(capture_qoe_summary)
+capture_fixture = has_fixture_marker(capture_manifest_summary)
 observed_git_heads = []
 for value in (
     metadata.get("GIT_HEAD"),
@@ -287,6 +303,8 @@ checks = {
     and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
     and capture_qoe.get("capture_qoe_verification") == "true",
 }
+if capture_fixture and allow_fixture_capture != "1":
+    checks["capture_qoe_raw_evidence"] = False
 
 git_match = bool(expected_git_head) and expected_git_head in observed_git_heads
 if require_git_head_match == "1":
@@ -338,9 +356,19 @@ report = {
         "qoe_csv": rel(capture_qoe_csv),
         "qoe_summary": rel(capture_qoe_summary),
         "manifest_sha256": capture_manifest.get("capture_manifest_sha256", ""),
+        "fixture": capture_fixture,
         "rows": parse_number(capture_qoe.get("rows", "0")),
         "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
         "categories": capture_qoe.get("categories", ""),
+        "required_categories": capture_qoe.get("required_categories", ""),
+        "playable_ratio_min": parse_number(capture_qoe.get("playable_ratio_min", "0")),
+        "avg_psnr_y_min": parse_number(capture_qoe.get("avg_psnr_y_min", "0")),
+        "avg_ssim_y_min": parse_number(capture_qoe.get("avg_ssim_y_min", "0")),
+        "decode_errors": parse_number(capture_qoe.get("decode_errors", "0")),
+        "freeze_count": parse_number(capture_qoe.get("freeze_count", "0")),
+        "renderer_proxy_drop_frames": parse_number(
+            capture_qoe.get("renderer_proxy_drop_frames", "0")
+        ),
     },
     "checks": [
         {"check": name, "status": "pass" if passed else "fail"}

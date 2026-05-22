@@ -533,7 +533,8 @@ require_failed_readiness_evidence() {
 import json
 import sys
 
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
+report_path = sys.argv[1]
+with open(report_path, "r", encoding="utf-8") as fh:
     report = json.load(fh)
 if report.get("schema_version") != 1:
     raise SystemExit("external phase2 import schema_version mismatch")
@@ -730,6 +731,49 @@ for section_name, keys in (
         and all(ch in "0123456789abcdefABCDEF" for ch in section["manifest_sha256"])
     ):
         raise SystemExit("external phase2 import bad capture manifest sha256")
+
+def import_number(section, key, default=0):
+    value = section.get(key, default)
+    if value is None or value == "":
+        value = default
+    return float(value)
+
+def import_category_tokens(value):
+    return {
+        token.strip()
+        for token in str(value or "").replace(",", " ").split()
+        if token.strip()
+    }
+
+def import_categories_cover(observed, required):
+    required_categories = import_category_tokens(
+        required
+        or "indoor_face,outdoor_walking,low_light_noise,screen_text,high_motion,scene_cut"
+    )
+    observed_categories = import_category_tokens(observed)
+    return bool(required_categories) and required_categories <= observed_categories
+
+capture = report.get("capture_library", {})
+if capture.get("fixture") is True:
+    raise SystemExit("external phase2 import used fixture capture library")
+rows = int(capture.get("rows", 0) or 0)
+pass_rows = int(capture.get("pass_rows", 0) or 0)
+if rows <= 0 or pass_rows != rows:
+    raise SystemExit("external phase2 import capture QoE rows are incomplete")
+if not import_categories_cover(capture.get("categories"), capture.get("required_categories")):
+    raise SystemExit("external phase2 import capture required categories are incomplete")
+if import_number(capture, "playable_ratio_min") <= 0:
+    raise SystemExit("external phase2 import capture playable ratio missing")
+if import_number(capture, "avg_psnr_y_min") <= 0:
+    raise SystemExit("external phase2 import capture PSNR missing")
+if import_number(capture, "avg_ssim_y_min") <= 0:
+    raise SystemExit("external phase2 import capture SSIM missing")
+if import_number(capture, "decode_errors", 1) != 0:
+    raise SystemExit("external phase2 import capture decode errors are non-zero")
+if import_number(capture, "freeze_count", 1) != 0:
+    raise SystemExit("external phase2 import capture freeze count is non-zero")
+if import_number(capture, "renderer_proxy_drop_frames", 1) != 0:
+    raise SystemExit("external phase2 import capture renderer drops are non-zero")
 PY
   else
     require_file "${readiness_dir}/logs/capture_manifest.log"
@@ -961,6 +1005,21 @@ def valid_sha256(value):
         ch in "0123456789abcdefABCDEF" for ch in value
     )
 
+def category_tokens(value):
+    return {
+        token.strip()
+        for token in str(value or "").replace(",", " ").split()
+        if token.strip()
+    }
+
+def categories_cover(observed, required):
+    required_categories = category_tokens(
+        required
+        or "indoor_face,outdoor_walking,low_light_noise,screen_text,high_motion,scene_cut"
+    )
+    observed_categories = category_tokens(observed)
+    return bool(required_categories) and required_categories <= observed_categories
+
 required_evidence = {
     "phase5_implementation_gate",
     "phase5_implementation_gate_metrics",
@@ -1033,12 +1092,23 @@ for key in ("manifest_summary", "qoe_csv", "qoe_summary"):
 manifest_summary_path = os.path.join(gate_dir, capture["manifest_summary"])
 manifest_summary = {}
 with open(manifest_summary_path, "r", encoding="utf-8") as fh:
+    manifest_summary_text = ""
     for line in fh:
+        manifest_summary_text += line
         line = line.strip()
         if not line or "=" not in line:
             continue
         key, value = line.split("=", 1)
         manifest_summary[key] = value
+if any(
+    marker in manifest_summary_text.lower()
+    for marker in (
+        "fixture",
+        "artifacts/capture_library_phase2_fixture",
+        "artifacts/capture_library_fixture",
+    )
+):
+    raise SystemExit("release evidence capture manifest used fixture library")
 if not valid_sha256(capture.get("manifest_sha256")):
     raise SystemExit("release evidence capture manifest sha256 missing")
 if capture.get("manifest_sha256") != manifest_summary.get("capture_manifest_sha256"):
@@ -1187,6 +1257,8 @@ rows = int(capture.get("rows", 0) or 0)
 pass_rows = int(capture.get("pass_rows", 0) or 0)
 if rows <= 0 or pass_rows != rows:
     raise SystemExit("release evidence capture QoE rows are incomplete")
+if not categories_cover(capture.get("categories"), capture.get("required_categories")):
+    raise SystemExit("release evidence capture required categories are incomplete")
 if capture_number("playable_ratio_min") <= 0:
     raise SystemExit("release evidence capture playable ratio missing")
 if capture_number("avg_psnr_y_min") <= 0:
