@@ -239,8 +239,8 @@ readiness `.prom` 指标、clean tracked worktree 证据，并直接复验顶层
 `manifest.sha256` 文件集合一致、底层 Phase-2 evidence bundle manifest、
 `phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`、`phase2_completion_audit_metrics.prom`，同时强制复验 `phase5_release_evidence.json` 和
-release evidence 里索引的 production soak archive、真实 renderer metrics 和 capture QoE
-CSV，避免只相信 summary。
+release evidence 里索引的 production soak archive、真实 renderer summary/metrics 和 capture QoE
+CSV；真实 renderer 证据会通过 `verify_real_renderer_evidence.sh` 复验非 Xvfb backend、实际 rendered frames、late/gap/jitter 预算，避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
 production soak archive 也必须是可追溯的正式证据：runner 在
@@ -267,8 +267,9 @@ bundle 里的 git head 与当前 P5 gate 的 git head 一致，且 bundle metada
 tracked worktree clean。导入报告还必须索引原始证据：
 production soak summary/CSV/config/archive、真实 renderer summary/metrics、capture
 manifest summary、capture manifest sha256、capture QoE CSV/summary，并输出 `production_soak_raw_evidence`、
-`real_renderer_raw_evidence`、`capture_qoe_raw_evidence` 三个检查项，避免外部机器只给
-pass 摘要而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
+`real_renderer_raw_evidence`、`real_renderer_rendered_frames`、`capture_qoe_raw_evidence` 检查项；导入时会调用
+`verify_real_renderer_evidence.sh` 复验真实 renderer summary/metrics，避免外部机器只给
+pass 摘要、Xvfb-only renderer 或没有实际 rendered frames 的结果而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
 `external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
 和业务素材；但只有导入报告 `import_status=pass`，且 clean tracked worktree、git head、
 production soak、真实 renderer、capture QoE、capture manifest sha256 和原始证据指针都
@@ -1433,7 +1434,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 成功路径必须生成并离线复验 `phase5_release_evidence.json`，确认 production soak、
   production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、正式
   capture library、capture QoE CSV、evidence bundle 和 completion audit 都有 pass
-  证据指针，并写出 production soak rows、real renderer backend 和 capture QoE
+  证据指针，并通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，同时写出 production soak rows、real renderer backend 和 capture QoE
   rows/minima 供排障。
 - 成功路径必须离线复验底层 Phase-2 evidence bundle 和 completion audit，确认
   production soak、真实 renderer、正式 capture library 均为 pass，且 `.prom`

@@ -218,6 +218,7 @@ for required in (
     "production_soak_raw_evidence",
     "real_renderer",
     "real_renderer_raw_evidence",
+    "real_renderer_rendered_frames",
     "capture_library",
     "capture_qoe_raw_evidence",
     "evidence_bundle",
@@ -292,6 +293,8 @@ if real_renderer.get("backend") == "xvfb" and allow_xvfb_renderer != "1":
 for key in ("summary", "metrics"):
     if not real_renderer.get(key):
         raise SystemExit(f"external phase2 import missing real_renderer.{key}")
+if as_float(real_renderer.get("rendered_frames")) <= 0:
+    raise SystemExit("external phase2 import real renderer rendered no frames")
 
 capture_library = report.get("capture_library", {})
 for key in ("manifest_summary", "qoe_csv", "qoe_summary", "manifest_sha256"):

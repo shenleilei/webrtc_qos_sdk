@@ -540,6 +540,18 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
   'rendered_frames.*> 0' production_gate_release_requires_rendered_frames
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'real_renderer_status=' production_gate_release_renderer_status_summary
+require_doc_pattern scripts/verify_real_renderer_evidence.sh \
+  'real_renderer_evidence_verification=true' production_gate_real_renderer_evidence_verifier
+require_doc_pattern scripts/verify_real_renderer_evidence.sh \
+  'real renderer rendered frames below minimum' production_gate_real_renderer_rendered_frames_verifier
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'verify_real_renderer_evidence.sh' production_gate_phase2_renderer_evidence_reverify
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'real_renderer_rendered_frames' production_gate_external_import_renderer_rendered_frames_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'external phase2 import real renderer rendered no frames' production_readiness_external_renderer_frames_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_real_renderer_evidence.sh' production_gate_renderer_evidence_reverify
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_csv' production_gate_release_capture_qoe_index
 require_doc_pattern scripts/verify_capture_library_manifest.sh \

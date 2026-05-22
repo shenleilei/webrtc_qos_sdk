@@ -747,6 +747,7 @@ for required in (
     "production_soak_raw_evidence",
     "real_renderer",
     "real_renderer_raw_evidence",
+    "real_renderer_rendered_frames",
     "capture_library",
     "capture_qoe_raw_evidence",
     "evidence_bundle",
@@ -786,6 +787,10 @@ for section_name, keys in (
         and all(ch in "0123456789abcdefABCDEF" for ch in section["manifest_sha256"])
     ):
         raise SystemExit("external phase2 import bad capture manifest sha256")
+    if section_name == "real_renderer" and float(
+        section.get("rendered_frames", 0) or 0
+    ) <= 0:
+        raise SystemExit("external phase2 import real renderer rendered no frames")
 
 def import_number(section, key, default=0):
     value = section.get(key, default)
@@ -910,6 +915,8 @@ require_phase2_completion_evidence() {
       fail "imported Phase-2 evidence was not generated from a clean tracked worktree"
     rg -q '^check=phase2_completion_audit_metrics status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
       fail "imported Phase-2 evidence did not include completion audit metrics"
+    rg -q '^check=real_renderer_rendered_frames status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
+      fail "imported Phase-2 renderer evidence rendered no frames"
   fi
 
   require_file "${evidence_bundle}/manifest.sha256"
@@ -955,13 +962,10 @@ if float(sys.argv[1] or 0) < 120:
 PY
   require_file "${real_renderer_summary}"
   require_file "${real_renderer_metrics}"
-  rg -q '^real_renderer_status=pass$' "${real_renderer_summary}" ||
-    fail "real renderer summary did not pass"
-  if rg -q '^renderer_backend=xvfb$' "${real_renderer_summary}"; then
-    fail "real renderer summary used xvfb backend"
-  fi
-  rg -q '^(frame,|metric,value)' "${real_renderer_metrics}" ||
-    fail "real renderer metrics missing expected header"
+  SUMMARY_FILE="${real_renderer_summary}" \
+    METRICS_FILE="${real_renderer_metrics}" \
+    ALLOW_XVFB_RENDERER=0 \
+    "${SDK_ROOT}/scripts/verify_real_renderer_evidence.sh" >/dev/null
   require_file "${evidence_bundle}/capture_library/capture_manifest_summary.txt"
   require_file "${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv"
   require_file "${evidence_bundle}/capture_library/capture_qoe_summary.txt"

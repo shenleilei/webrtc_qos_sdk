@@ -11,6 +11,7 @@ SMOKE_SUMMARY="${SMOKE_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify
 QOE_SUMMARY="${QOE_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_qoe/phase2_verify_summary.txt}"
 PRODUCTION_SOAK_DIR="${PRODUCTION_SOAK_DIR:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/production_soak}"
 REAL_RENDERER_SUMMARY="${REAL_RENDERER_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/real_renderer/real_renderer_summary.txt}"
+REAL_RENDERER_METRICS="${REAL_RENDERER_METRICS:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/real_renderer/real_renderer_metrics.csv}"
 CAPTURE_MANIFEST_SUMMARY="${CAPTURE_MANIFEST_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/capture_manifest_summary.txt}"
 CAPTURE_QOE_CSV="${CAPTURE_QOE_CSV:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/webrtc_first_qoe_capture_library_720p.csv}"
 CAPTURE_QOE_SUMMARY="${CAPTURE_QOE_SUMMARY:-${OUTPUT_DIR}/capture_qoe_summary.txt}"
@@ -33,6 +34,7 @@ if [[ -n "${EVIDENCE_BUNDLE_DIR}" ]]; then
   QOE_SUMMARY="${EVIDENCE_BUNDLE_DIR}/qoe/phase2_verify_summary.txt"
   PRODUCTION_SOAK_DIR="${EVIDENCE_BUNDLE_DIR}/production_soak"
   REAL_RENDERER_SUMMARY="${EVIDENCE_BUNDLE_DIR}/real_renderer/real_renderer_summary.txt"
+  REAL_RENDERER_METRICS="${EVIDENCE_BUNDLE_DIR}/real_renderer/real_renderer_metrics.csv"
   CAPTURE_MANIFEST_SUMMARY="${EVIDENCE_BUNDLE_DIR}/capture_library/capture_manifest_summary.txt"
   CAPTURE_QOE_CSV="${EVIDENCE_BUNDLE_DIR}/capture_library/webrtc_first_qoe_capture_library_720p.csv"
   CAPTURE_QOE_SUMMARY="${EVIDENCE_BUNDLE_DIR}/capture_library/capture_qoe_summary.txt"
@@ -397,16 +399,21 @@ PY
 fi
 
 if [[ -f "${REAL_RENDERER_SUMMARY}" ]]; then
-  renderer_status="$(kv_value "${REAL_RENDERER_SUMMARY}" real_renderer_status)"
-  renderer_backend="$(kv_value "${REAL_RENDERER_SUMMARY}" renderer_backend)"
-  if [[ "${renderer_status}" == "pass" ]]; then
-    if [[ "${renderer_backend}" == "xvfb" && "${ALLOW_XVFB_RENDERER}" != "1" ]]; then
-      audit_fail real_renderer "xvfb_only_not_real_display summary=${REAL_RENDERER_SUMMARY}"
-    else
-      audit_pass real_renderer "summary=${REAL_RENDERER_SUMMARY} backend=${renderer_backend:-unknown}"
-    fi
+  real_renderer_output=""
+  real_renderer_status=0
+  if ! real_renderer_output="$(env \
+      SUMMARY_FILE="${REAL_RENDERER_SUMMARY}" \
+      METRICS_FILE="${REAL_RENDERER_METRICS}" \
+      ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
+      "${SDK_ROOT}/scripts/verify_real_renderer_evidence.sh" 2>&1)"; then
+    real_renderer_status=1
+  fi
+  if [[ "${real_renderer_status}" -eq 0 ]]; then
+    renderer_backend="$(kv_value "${REAL_RENDERER_SUMMARY}" renderer_backend)"
+    rendered_frames="$(kv_value "${REAL_RENDERER_SUMMARY}" rendered_frames)"
+    audit_pass real_renderer "summary=${REAL_RENDERER_SUMMARY} metrics=${REAL_RENDERER_METRICS} backend=${renderer_backend:-unknown} rendered_frames=${rendered_frames:-unknown}"
   else
-    audit_fail real_renderer "status=${renderer_status:-missing} summary=${REAL_RENDERER_SUMMARY}"
+    audit_fail real_renderer "evidence_not_valid:${real_renderer_output} summary=${REAL_RENDERER_SUMMARY} metrics=${REAL_RENDERER_METRICS}"
   fi
 else
   if [[ -n "${EVIDENCE_BUNDLE_DIR}" ]]; then

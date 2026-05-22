@@ -168,6 +168,18 @@ if ! env SDK_ROOT="${SDK_ROOT}" \
   exit 1
 fi
 
+if ! env SUMMARY_FILE="${BUNDLE_OUTPUT_DIR}/real_renderer/real_renderer_summary.txt" \
+    METRICS_FILE="${BUNDLE_OUTPUT_DIR}/real_renderer/real_renderer_metrics.csv" \
+    ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
+    "${SDK_ROOT}/scripts/verify_real_renderer_evidence.sh" \
+    >"${LOG_DIR}/real_renderer_evidence.log" 2>&1; then
+  write_summary "phase2_production_gate_status=fail"
+  write_summary "real_renderer_evidence_log=${LOG_DIR}/real_renderer_evidence.log"
+  write_manifest
+  tail -n 80 "${LOG_DIR}/real_renderer_evidence.log" >&2 || true
+  exit 1
+fi
+
 python3 - \
   "${BUNDLE_OUTPUT_DIR}" \
   "${AUDIT_OUTPUT_DIR}/phase2_completion_audit_summary.txt" \
@@ -347,6 +359,10 @@ checks = {
     "real_renderer_raw_evidence": has_file(real_renderer_summary)
     and has_file(real_renderer_metrics)
     and real_renderer.get("real_renderer_status") == "pass",
+    "real_renderer_rendered_frames": parse_number(
+        real_renderer.get("rendered_frames", "0")
+    )
+    > 0,
     "capture_qoe_raw_evidence": has_file(capture_manifest_summary)
     and has_file(capture_qoe_csv)
     and has_file(capture_qoe_summary)
@@ -400,6 +416,13 @@ report = {
         "status": real_renderer.get("real_renderer_status", ""),
         "backend": real_renderer.get("renderer_backend", ""),
         "rendered_frames": parse_number(real_renderer.get("rendered_frames", "0")),
+        "late_frames": parse_number(real_renderer.get("late_frames", "0")),
+        "max_present_gap_ms": parse_number(
+            real_renderer.get("max_present_gap_ms", "0")
+        ),
+        "max_present_jitter_ms": parse_number(
+            real_renderer.get("max_present_jitter_ms", "0")
+        ),
     },
     "capture_library": {
         "manifest_summary": rel(capture_manifest_summary),
@@ -438,6 +461,9 @@ report = {
         "production_soak_archive": rel(production_soak_archive),
         "real_renderer_summary": rel(real_renderer_summary),
         "real_renderer_metrics": rel(real_renderer_metrics),
+        "real_renderer_evidence_log": rel(
+            os.path.join(output_root, "logs", "real_renderer_evidence.log")
+        ),
         "capture_manifest_summary": rel(capture_manifest_summary),
         "capture_qoe_csv": rel(capture_qoe_csv),
         "capture_qoe_summary": rel(capture_qoe_summary),
@@ -463,6 +489,10 @@ with open(report_summary, "w", encoding="utf-8") as fh:
     fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
     fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
     fh.write(f"real_renderer_metrics={rel(real_renderer_metrics)}\n")
+    fh.write(
+        "real_renderer_rendered_frames="
+        f"{real_renderer.get('rendered_frames', '0')}\n"
+    )
     fh.write(
         "capture_manifest_sha256="
         f"{capture_manifest.get('capture_manifest_sha256', '')}\n"
