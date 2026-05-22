@@ -260,6 +260,14 @@ server->OnDownlinkQuality(quality);
 const auto cap = server->CurrentSenderRateCap(now_us);
 ```
 
+### 6.3 多 receiver 边界
+
+- 当前 `ServerQosRouter` 支持多 receiver 的反馈语义：
+  `OnReceiverRtcp(receiver_id, ...)`、`OnDownlinkQuality(quality)`、worst-receiver sender cap 选择、以及本地重传/缺包上抛时的目标 `receiver_id`。
+- 当前 `ServerQosRouter` 不维护“接收端列表”或自动做 sender RTP 的全量 fanout。
+- `receiver_output` 只是一个单包回调；如果一个 sender 要同时发给多个 receiver，业务侧需要自己维护 receiver registry，并把 sender RTP/RTCP bytes fanout 到实际的多个下游传输连接。
+- 换句话说：多 receiver 的 QoS/反馈/修复语义在 SDK 内；多 receiver 的媒体分发拓扑仍由业务 transport/router 掌握。
+
 ## 7. 推荐消息回路
 
 ### 7.1 Push -> Server
