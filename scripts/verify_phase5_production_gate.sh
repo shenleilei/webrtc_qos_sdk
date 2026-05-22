@@ -216,6 +216,20 @@ if report.get("schema_version") != 1:
     raise SystemExit("external phase2 import schema_version mismatch")
 if report.get("source") != "phase5_phase2_external_evidence_import":
     raise SystemExit("external phase2 import source mismatch")
+artifacts = report.get("artifacts", {})
+for key in (
+    "production_soak_summary",
+    "production_soak_csv",
+    "production_soak_config",
+    "production_soak_archive",
+    "real_renderer_summary",
+    "real_renderer_metrics",
+    "capture_manifest_summary",
+    "capture_qoe_csv",
+    "capture_qoe_summary",
+):
+    if key not in artifacts:
+        raise SystemExit(f"external phase2 import missing artifact pointer {key}")
 PY
     fi
   else
@@ -339,13 +353,41 @@ for required in (
     "bundle_manifest",
     "phase2_completion_audit",
     "production_soak",
+    "production_soak_raw_evidence",
     "real_renderer",
+    "real_renderer_raw_evidence",
     "capture_library",
+    "capture_qoe_raw_evidence",
     "evidence_bundle",
     "git_head_match",
 ):
     if checks.get(required) != "pass":
         raise SystemExit(f"external phase2 import missing pass check {required}")
+artifacts = report.get("artifacts", {})
+for key in (
+    "production_soak_summary",
+    "production_soak_csv",
+    "production_soak_config",
+    "production_soak_archive",
+    "real_renderer_summary",
+    "real_renderer_metrics",
+    "capture_manifest_summary",
+    "capture_qoe_csv",
+    "capture_qoe_summary",
+):
+    if not artifacts.get(key):
+        raise SystemExit(f"external phase2 import missing artifact pointer {key}")
+for section_name, keys in (
+    ("production_soak", ("summary", "csv", "config", "archive")),
+    ("real_renderer", ("summary", "metrics")),
+    ("capture_library", ("manifest_summary", "qoe_csv", "qoe_summary")),
+):
+    section = report.get(section_name, {})
+    for key in keys:
+        if not section.get(key):
+            raise SystemExit(
+                f"external phase2 import missing {section_name}.{key}"
+            )
 PY
   else
     require_file "${readiness_dir}/logs/capture_manifest.log"

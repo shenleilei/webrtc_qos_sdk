@@ -224,10 +224,14 @@ PHASE2_EVIDENCE_BUNDLE_DIR=/path/to/phase2_evidence_bundle \
 bundle 到 P5 gate 目录内，复验 bundle `manifest.sha256`，重新运行
 `verify_webrtc_first_phase2_completion_audit.sh`，要求 production soak、真实 renderer、
 正式 capture library manifest、capture QoE CSV 和 evidence bundle 全部 pass，并默认要求
-bundle 里的 git head 与当前 P5 gate 的 git head 一致。readiness 在存在
-`PHASE2_EVIDENCE_BUNDLE_DIR` 时会用 `external_phase2_evidence_bundle` 作为生产环境证据
-来源，不再要求当前机器也有真实显示器和业务素材；但 release evidence 和 production gate
-verifier 仍会离线复验导入报告。
+bundle 里的 git head 与当前 P5 gate 的 git head 一致。导入报告还必须索引原始证据：
+production soak summary/CSV/config/archive、真实 renderer summary/metrics、capture
+manifest summary、capture QoE CSV/summary，并输出 `production_soak_raw_evidence`、
+`real_renderer_raw_evidence`、`capture_qoe_raw_evidence` 三个检查项，避免外部机器只给
+pass 摘要而缺少可复验文件。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
+`external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
+和业务素材；但 release evidence 和 production gate verifier 仍会离线复验导入报告及这些
+原始证据指针。
 
 正式 capture library 不能只证明 manifest 存在。`scripts/verify_capture_library_qoe_csv.sh`
 会离线复验 `webrtc_first_qoe_capture_library_720p.csv`：所有行必须 `pass=true`，必需类别

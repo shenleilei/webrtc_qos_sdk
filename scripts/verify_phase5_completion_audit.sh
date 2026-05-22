@@ -247,12 +247,28 @@ require_doc_pattern scripts/verify_capture_library_qoe_csv.sh \
   'missing_categories' production_gate_capture_qoe_category_gate
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'phase5_phase2_external_evidence_import' production_gate_external_evidence_import_report
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'production_soak_raw_evidence' production_gate_external_import_soak_raw_evidence
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'real_renderer_raw_evidence' production_gate_external_import_renderer_raw_evidence
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'capture_qoe_raw_evidence' production_gate_external_import_capture_raw_evidence
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'production_soak_archive' production_gate_external_import_soak_archive_pointer
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'real_renderer_metrics' production_gate_external_import_renderer_metrics_pointer
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'capture_qoe_csv' production_gate_external_import_capture_qoe_pointer
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'PHASE2_EVIDENCE_BUNDLE_DIR' production_gate_external_evidence_import_runner
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'external_phase2_evidence_bundle' production_readiness_external_evidence_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_evidence_source=external_bundle' production_gate_external_evidence_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'external phase2 import missing artifact pointer' production_gate_external_import_artifact_pointer_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'external phase2 import missing \{section_name\}' production_gate_external_import_section_pointer_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'phase5_release_evidence.json' production_gate_release_evidence_collector
 require_doc_pattern scripts/verify_phase5_production_gate.sh \

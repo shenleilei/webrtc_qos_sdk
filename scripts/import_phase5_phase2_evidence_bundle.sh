@@ -170,10 +170,50 @@ def has_prefix(path, prefix):
         return any(line.startswith(prefix) for line in fh)
 
 
+def parse_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    if number.is_integer():
+        return int(number)
+    return number
+
+
+def has_file(path):
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
+
 metadata = read_kv(os.path.join(bundle_dir, "metadata.env"))
 soak_metadata = read_kv(
     os.path.join(bundle_dir, "production_soak", "archive", "metadata.txt")
 )
+production_soak_dir = os.path.join(bundle_dir, "production_soak")
+production_soak_summary = os.path.join(
+    production_soak_dir, "webrtc_first_qoe_production_soak_summary.txt"
+)
+production_soak_csv = os.path.join(
+    production_soak_dir, "webrtc_first_qoe_production_soak.csv"
+)
+production_soak_config = os.path.join(
+    production_soak_dir, "webrtc_first_qoe_production_soak_config.env"
+)
+production_soak_archive = os.path.join(
+    production_soak_dir, "webrtc_first_qoe_production_soak_archive.tar.gz"
+)
+real_renderer_summary = os.path.join(bundle_dir, "real_renderer", "real_renderer_summary.txt")
+real_renderer_metrics = os.path.join(bundle_dir, "real_renderer", "real_renderer_metrics.csv")
+capture_manifest_summary = os.path.join(
+    bundle_dir, "capture_library", "capture_manifest_summary.txt"
+)
+capture_qoe_csv = os.path.join(
+    bundle_dir, "capture_library", "webrtc_first_qoe_capture_library_720p.csv"
+)
+capture_qoe_summary = os.path.join(bundle_dir, "capture_library", "capture_qoe_summary.txt")
+production_soak = read_kv(production_soak_summary)
+production_soak_runtime = read_kv(production_soak_config)
+real_renderer = read_kv(real_renderer_summary)
+capture_qoe = read_kv(capture_qoe_summary)
 observed_git_heads = []
 for value in (
     metadata.get("GIT_HEAD"),
@@ -192,6 +232,17 @@ checks = {
     "real_renderer": has_prefix(audit_summary, "check=real_renderer status=pass "),
     "capture_library": has_prefix(audit_summary, "check=capture_library status=pass "),
     "evidence_bundle": has_prefix(audit_summary, "check=evidence_bundle status=pass "),
+    "production_soak_raw_evidence": has_file(production_soak_summary)
+    and has_file(production_soak_csv)
+    and has_file(production_soak_config)
+    and has_file(production_soak_archive),
+    "real_renderer_raw_evidence": has_file(real_renderer_summary)
+    and has_file(real_renderer_metrics)
+    and real_renderer.get("real_renderer_status") == "pass",
+    "capture_qoe_raw_evidence": has_file(capture_manifest_summary)
+    and has_file(capture_qoe_csv)
+    and has_file(capture_qoe_summary)
+    and capture_qoe.get("capture_qoe_verification") == "true",
 }
 
 git_match = bool(expected_git_head) and expected_git_head in observed_git_heads
@@ -216,6 +267,35 @@ report = {
         "real_renderer_required": True,
         "fixture_capture_allowed": allow_fixture_capture == "1",
     },
+    "production_soak": {
+        "summary": rel(production_soak_summary),
+        "csv": rel(production_soak_csv),
+        "config": rel(production_soak_config),
+        "archive": rel(production_soak_archive),
+        "soak_minutes": parse_number(production_soak_runtime.get("SOAK_MINUTES", "0")),
+        "rows": parse_number(production_soak.get("rows", "0")),
+        "pass_rows": parse_number(production_soak.get("pass_rows", "0")),
+        "decode_errors": parse_number(production_soak.get("decode_errors", "0")),
+        "freeze_count": parse_number(production_soak.get("freeze_count", "0")),
+        "renderer_proxy_drop_frames": parse_number(
+            production_soak.get("renderer_proxy_drop_frames", "0")
+        ),
+    },
+    "real_renderer": {
+        "summary": rel(real_renderer_summary),
+        "metrics": rel(real_renderer_metrics),
+        "status": real_renderer.get("real_renderer_status", ""),
+        "backend": real_renderer.get("renderer_backend", ""),
+        "rendered_frames": parse_number(real_renderer.get("rendered_frames", "0")),
+    },
+    "capture_library": {
+        "manifest_summary": rel(capture_manifest_summary),
+        "qoe_csv": rel(capture_qoe_csv),
+        "qoe_summary": rel(capture_qoe_summary),
+        "rows": parse_number(capture_qoe.get("rows", "0")),
+        "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
+        "categories": capture_qoe.get("categories", ""),
+    },
     "checks": [
         {"check": name, "status": "pass" if passed else "fail"}
         for name, passed in sorted(checks.items())
@@ -226,6 +306,15 @@ report = {
         "phase2_completion_audit_log": rel(
             os.path.join(output_root, "logs", "phase2_completion_audit.log")
         ),
+        "production_soak_summary": rel(production_soak_summary),
+        "production_soak_csv": rel(production_soak_csv),
+        "production_soak_config": rel(production_soak_config),
+        "production_soak_archive": rel(production_soak_archive),
+        "real_renderer_summary": rel(real_renderer_summary),
+        "real_renderer_metrics": rel(real_renderer_metrics),
+        "capture_manifest_summary": rel(capture_manifest_summary),
+        "capture_qoe_csv": rel(capture_qoe_csv),
+        "capture_qoe_summary": rel(capture_qoe_summary),
     },
 }
 
@@ -240,6 +329,10 @@ with open(report_summary, "w", encoding="utf-8") as fh:
     fh.write(f"git_head_match={'true' if git_match else 'false'}\n")
     for name, passed in sorted(checks.items()):
         fh.write(f"check={name} status={'pass' if passed else 'fail'}\n")
+    fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
+    fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
+    fh.write(f"real_renderer_metrics={rel(real_renderer_metrics)}\n")
+    fh.write(f"capture_qoe_csv={rel(capture_qoe_csv)}\n")
 
 if import_status != "pass":
     failed = ",".join(name for name, passed in checks.items() if not passed)
