@@ -6,6 +6,7 @@ WEBRTC_PREFIX="${WEBRTC_PREFIX:-${PREFIX:-${SDK_ROOT}/dist/linux-x86_64}}"
 PHASE5_BUILD_ID="${PHASE5_BUILD_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${SDK_ROOT}/artifacts/phase5_production_gate/${PHASE5_BUILD_ID}}"
 PHASE2_OUTPUT_ROOT="${PHASE2_OUTPUT_ROOT:-${OUTPUT_ROOT}/webrtc_first_production_gate}"
+PHASE2_EVIDENCE_BUNDLE_DIR="${PHASE2_EVIDENCE_BUNDLE_DIR:-}"
 DEFAULT_PHASE5_IMPLEMENTATION_GATE_DIR="${OUTPUT_ROOT}/phase5_implementation_gate"
 PHASE5_IMPLEMENTATION_GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR:-${DEFAULT_PHASE5_IMPLEMENTATION_GATE_DIR}}"
 PHASE5_DEBUG_BUNDLE_DIR="${PHASE5_DEBUG_BUNDLE_DIR:-${OUTPUT_ROOT}/phase5_debug_bundle}"
@@ -90,6 +91,7 @@ write_release_evidence() {
     "${PHASE5_READINESS_DIR}" \
     "${PHASE5_DEBUG_BUNDLE_DIR}" \
     "${PHASE2_OUTPUT_ROOT}" \
+    "${PHASE2_EVIDENCE_BUNDLE_DIR}" \
     "${RELEASE_EVIDENCE_JSON}" \
     "${RELEASE_EVIDENCE_SUMMARY}" \
     "${SOAK_MINUTES}" \
@@ -110,6 +112,7 @@ import sys
     readiness_dir,
     debug_bundle_dir,
     phase2_dir,
+    imported_phase2_evidence_bundle,
     release_json,
     release_summary,
     soak_minutes,
@@ -118,7 +121,7 @@ import sys
     real_renderer_use_xvfb,
     capture_library_dir,
     capture_library_manifest,
-) = sys.argv[1:16]
+) = sys.argv[1:17]
 
 
 def rel(path):
@@ -279,6 +282,10 @@ doc = {
         "real_renderer_use_xvfb": real_renderer_use_xvfb,
         "capture_library_dir": capture_library_dir,
         "capture_library_manifest": capture_library_manifest,
+        "phase2_evidence_source": "external_bundle"
+        if imported_phase2_evidence_bundle
+        else "direct_phase2_production_gate",
+        "imported_phase2_evidence_bundle": imported_phase2_evidence_bundle,
         "multi_receiver_fanout": "deferred_before_p5_completion",
     },
     "observability": {
@@ -296,6 +303,9 @@ doc = {
         "phase2_evidence_bundle": rel(phase2_evidence_bundle),
         "phase2_completion_audit": rel(phase2_audit_summary),
     },
+    "phase2_evidence_source": "external_bundle"
+    if imported_phase2_evidence_bundle
+    else "direct_phase2_production_gate",
     "fanout": {
         "status": "deferred",
         "reason": "P5 baseline excludes multi-receiver fanout",
@@ -310,6 +320,7 @@ with open(release_summary, "w", encoding="utf-8") as fh:
     fh.write(f"release_status={release_status}\n")
     fh.write(f"formal_completion_status={doc['formal_completion_status']}\n")
     fh.write("scope=phase5_formal_production_release_evidence\n")
+    fh.write(f"phase2_evidence_source={doc['phase2_evidence_source']}\n")
     fh.write("fanout_status=deferred\n")
     for item in evidence:
         fh.write(
@@ -383,6 +394,7 @@ require_script "${SDK_ROOT}/scripts/verify_phase5_production_readiness.sh"
 require_script "${SDK_ROOT}/scripts/collect_phase5_debug_bundle.sh"
 require_script "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh"
 require_script "${SDK_ROOT}/scripts/run_webrtc_first_phase2_production_gate.sh"
+require_script "${SDK_ROOT}/scripts/import_phase5_phase2_evidence_bundle.sh"
 require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.sh"
 
 {
@@ -391,6 +403,7 @@ require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.
   printf 'WEBRTC_PREFIX=%s\n' "${WEBRTC_PREFIX}"
   printf 'OUTPUT_ROOT=%s\n' "${OUTPUT_ROOT}"
   printf 'PHASE2_OUTPUT_ROOT=%s\n' "${PHASE2_OUTPUT_ROOT}"
+  printf 'PHASE2_EVIDENCE_BUNDLE_DIR=%s\n' "${PHASE2_EVIDENCE_BUNDLE_DIR}"
   printf 'PHASE5_IMPLEMENTATION_GATE_DIR=%s\n' "${PHASE5_IMPLEMENTATION_GATE_DIR}"
   printf 'PHASE5_DEBUG_BUNDLE_DIR=%s\n' "${PHASE5_DEBUG_BUNDLE_DIR}"
   printf 'FAILURE_DEBUG_BUNDLE_DIR=%s\n' "${FAILURE_DEBUG_BUNDLE_DIR}"
@@ -421,6 +434,7 @@ write_summary "sdk_root=${SDK_ROOT}"
 write_summary "webrtc_prefix=${WEBRTC_PREFIX}"
 write_summary "output_root=${OUTPUT_ROOT}"
 write_summary "phase2_output_root=${PHASE2_OUTPUT_ROOT}"
+write_summary "phase2_evidence_bundle_dir=${PHASE2_EVIDENCE_BUNDLE_DIR}"
 write_summary "phase5_implementation_gate_dir=${PHASE5_IMPLEMENTATION_GATE_DIR}"
 write_summary "phase5_readiness_dir=${PHASE5_READINESS_DIR}"
 write_summary "soak_minutes=${SOAK_MINUTES}"
@@ -465,6 +479,7 @@ if [[ "${RUN_PHASE5_READINESS}" == "1" ]]; then
       CAPTURE_HEIGHT="${CAPTURE_HEIGHT}" \
       CAPTURE_FRAMES="${CAPTURE_FRAMES}" \
       REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
+      PHASE2_EVIDENCE_BUNDLE_DIR="${PHASE2_EVIDENCE_BUNDLE_DIR}" \
       REQUIRE_READY=1 \
       "${SDK_ROOT}/scripts/verify_phase5_production_readiness.sh"
 else
@@ -483,27 +498,39 @@ else
   write_summary "step=phase5_debug_bundle status=skipped RUN_PHASE5_DEBUG_BUNDLE=${RUN_PHASE5_DEBUG_BUNDLE}"
 fi
 
-run_step webrtc_first_production_gate \
-  env SDK_ROOT="${SDK_ROOT}" WEBRTC_PREFIX="${WEBRTC_PREFIX}" \
-    OUTPUT_ROOT="${PHASE2_OUTPUT_ROOT}" \
-    SOAK_MINUTES="${SOAK_MINUTES}" \
-    MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
-    SOAK_CYCLES="${SOAK_CYCLES}" \
-    PREFLIGHT_ONLY="${PREFLIGHT_ONLY}" \
-    ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
-    REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB}" \
-    FACADE_FRAMES="${FACADE_FRAMES}" \
-    QOE_FRAMES="${QOE_FRAMES}" QOE_WIDTH="${QOE_WIDTH}" \
-    QOE_HEIGHT="${QOE_HEIGHT}" QOE_CONTENT_MODE="${QOE_CONTENT_MODE}" \
-    CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR}" \
-    CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST}" \
-    CAPTURE_WIDTH="${CAPTURE_WIDTH}" \
-    CAPTURE_HEIGHT="${CAPTURE_HEIGHT}" \
-    CAPTURE_FRAMES="${CAPTURE_FRAMES}" \
-    CAPTURE_SCENARIOS="${CAPTURE_SCENARIOS}" \
-    CAPTURE_SEEDS="${CAPTURE_SEEDS}" \
-    REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
-    "${SDK_ROOT}/scripts/run_webrtc_first_phase2_production_gate.sh"
+if [[ -n "${PHASE2_EVIDENCE_BUNDLE_DIR}" ]]; then
+  run_step import_phase2_evidence_bundle \
+    env SDK_ROOT="${SDK_ROOT}" \
+      OUTPUT_ROOT="${PHASE2_OUTPUT_ROOT}" \
+      PHASE2_EVIDENCE_BUNDLE_DIR="${PHASE2_EVIDENCE_BUNDLE_DIR}" \
+      MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
+      ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
+      ALLOW_FIXTURE_CAPTURE=0 \
+      REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
+      "${SDK_ROOT}/scripts/import_phase5_phase2_evidence_bundle.sh"
+else
+  run_step webrtc_first_production_gate \
+    env SDK_ROOT="${SDK_ROOT}" WEBRTC_PREFIX="${WEBRTC_PREFIX}" \
+      OUTPUT_ROOT="${PHASE2_OUTPUT_ROOT}" \
+      SOAK_MINUTES="${SOAK_MINUTES}" \
+      MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
+      SOAK_CYCLES="${SOAK_CYCLES}" \
+      PREFLIGHT_ONLY="${PREFLIGHT_ONLY}" \
+      ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
+      REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB}" \
+      FACADE_FRAMES="${FACADE_FRAMES}" \
+      QOE_FRAMES="${QOE_FRAMES}" QOE_WIDTH="${QOE_WIDTH}" \
+      QOE_HEIGHT="${QOE_HEIGHT}" QOE_CONTENT_MODE="${QOE_CONTENT_MODE}" \
+      CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR}" \
+      CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST}" \
+      CAPTURE_WIDTH="${CAPTURE_WIDTH}" \
+      CAPTURE_HEIGHT="${CAPTURE_HEIGHT}" \
+      CAPTURE_FRAMES="${CAPTURE_FRAMES}" \
+      CAPTURE_SCENARIOS="${CAPTURE_SCENARIOS}" \
+      CAPTURE_SEEDS="${CAPTURE_SEEDS}" \
+      REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
+      "${SDK_ROOT}/scripts/run_webrtc_first_phase2_production_gate.sh"
+fi
 
 if [[ "${PHASE5_DRY_RUN}" != "1" ]]; then
   run_step phase5_release_evidence write_release_evidence

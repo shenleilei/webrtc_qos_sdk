@@ -120,6 +120,8 @@ if expected_status == "ready":
     if actions:
         raise SystemExit("ready report contains remediation actions")
     required_passes = {"webrtc_modules", "capture_manifest", "real_renderer"}
+    if any(item.get("check") == "external_phase2_evidence_bundle" for item in checks):
+        required_passes.add("external_phase2_evidence_bundle")
     passed = {item.get("check") for item in checks if item.get("status") == "pass"}
     missing = sorted(required_passes - passed)
     if missing:
@@ -140,6 +142,7 @@ else:
         "real_renderer",
         "webrtc_modules",
         "soak_config",
+        "external_phase2_evidence_bundle",
     }
     action_names = {item.get("action") for item in actions}
     has_actionable = any(name in actionable or str(name).startswith("script_") for name in action_names)
@@ -190,17 +193,40 @@ require_failed_readiness_evidence() {
   require_file "${readiness_dir}/check_records.jsonl"
   require_file "${readiness_dir}/action_records.jsonl"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
-  require_file "${readiness_dir}/logs/capture_manifest.log"
-  require_file "${readiness_dir}/logs/real_renderer.log"
+  if [[ -f "${readiness_dir}/logs/external_phase2_evidence_bundle.log" ]]; then
+    require_file "${readiness_dir}/logs/external_phase2_evidence_bundle.log"
+    if [[ -f "${readiness_dir}/external_phase2_evidence_import/manifest.sha256" ]]; then
+      (
+        cd "${readiness_dir}/external_phase2_evidence_import"
+        sha256sum -c manifest.sha256 >/dev/null
+      )
+    fi
+    if [[ -f "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json" ]]; then
+      python3 - "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    report = json.load(fh)
+if report.get("schema_version") != 1:
+    raise SystemExit("external phase2 import schema_version mismatch")
+if report.get("source") != "phase5_phase2_external_evidence_import":
+    raise SystemExit("external phase2 import source mismatch")
+PY
+    fi
+  else
+    require_file "${readiness_dir}/logs/capture_manifest.log"
+    require_file "${readiness_dir}/logs/real_renderer.log"
+  fi
   (
     cd "${readiness_dir}"
     sha256sum -c manifest.sha256 >/dev/null
   )
   rg -q '^phase5_production_readiness_status=not_ready$' "${readiness_summary}" ||
     fail "failed readiness evidence did not record not_ready"
-  if ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules|soak_config|script_[^ ]+) status=fail ' \
+  if ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules|soak_config|external_phase2_evidence_bundle|script_[^ ]+) status=fail ' \
       "${readiness_summary}" &&
-      ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules) status=skipped ' \
+      ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules|external_phase2_evidence_bundle) status=skipped ' \
         "${readiness_summary}"; then
     fail "failed readiness evidence has no actionable failed/skipped readiness check"
   fi
@@ -212,7 +238,7 @@ require_failed_readiness_evidence() {
     fail "failed readiness evidence missing readiness report pointer"
   rg -q '^risk_milestone_report_json=' "${readiness_summary}" ||
     fail "failed readiness evidence missing risk milestone report pointer"
-  rg -q '^action=(capture_manifest|real_renderer|webrtc_modules|soak_config|script_[^ ]+) status=(fail|skipped) ' \
+  rg -q '^action=(capture_manifest|real_renderer|webrtc_modules|soak_config|external_phase2_evidence_bundle|script_[^ ]+) status=(fail|skipped) ' \
     "${readiness_dir}/next_required_actions.txt" ||
     fail "failed readiness evidence missing actionable remediation file"
   verify_readiness_json "${readiness_dir}" "not_ready"
@@ -283,8 +309,44 @@ require_success_readiness() {
   require_file "${readiness_dir}/risk_milestone_summary.txt"
   require_file "${readiness_dir}/check_records.jsonl"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
-  require_file "${readiness_dir}/logs/capture_manifest.log"
-  require_file "${readiness_dir}/logs/real_renderer.log"
+  if [[ -f "${readiness_dir}/logs/external_phase2_evidence_bundle.log" ]]; then
+    require_file "${readiness_dir}/logs/external_phase2_evidence_bundle.log"
+    require_file "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json"
+    require_file "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.txt"
+    require_file "${readiness_dir}/external_phase2_evidence_import/manifest.sha256"
+    (
+      cd "${readiness_dir}/external_phase2_evidence_import"
+      sha256sum -c manifest.sha256 >/dev/null
+    )
+    python3 - "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    report = json.load(fh)
+if report.get("schema_version") != 1:
+    raise SystemExit("external phase2 import schema_version mismatch")
+if report.get("source") != "phase5_phase2_external_evidence_import":
+    raise SystemExit("external phase2 import source mismatch")
+if report.get("import_status") != "pass":
+    raise SystemExit("external phase2 import did not pass")
+checks = {item.get("check"): item.get("status") for item in report.get("checks", [])}
+for required in (
+    "bundle_manifest",
+    "phase2_completion_audit",
+    "production_soak",
+    "real_renderer",
+    "capture_library",
+    "evidence_bundle",
+    "git_head_match",
+):
+    if checks.get(required) != "pass":
+        raise SystemExit(f"external phase2 import missing pass check {required}")
+PY
+  else
+    require_file "${readiness_dir}/logs/capture_manifest.log"
+    require_file "${readiness_dir}/logs/real_renderer.log"
+  fi
   (
     cd "${readiness_dir}"
     sha256sum -c manifest.sha256 >/dev/null
@@ -303,6 +365,12 @@ require_success_readiness() {
     fail "phase5 production readiness missing capture manifest pass"
   rg -q '^check=real_renderer status=pass ' "${readiness_summary}" ||
     fail "phase5 production readiness missing real renderer pass"
+  if rg -q '^check=external_phase2_evidence_bundle status=pass ' "${readiness_summary}"; then
+    rg -q '^check=capture_manifest status=pass source=external_phase2_evidence_bundle ' "${readiness_summary}" ||
+      fail "external readiness missing capture manifest external source"
+    rg -q '^check=real_renderer status=pass source=external_phase2_evidence_bundle ' "${readiness_summary}" ||
+      fail "external readiness missing real renderer external source"
+  fi
   verify_readiness_json "${readiness_dir}" "ready"
 }
 
@@ -319,6 +387,14 @@ require_phase2_completion_evidence() {
     fail "underlying production gate summary missing evidence bundle pointer"
   rg -q '^completion_audit=' "${phase2_summary}" ||
     fail "underlying production gate summary missing completion audit pointer"
+  if rg -q '^phase2_evidence_source=external_bundle$' "${phase2_summary}"; then
+    require_file "${phase2_dir}/phase2_external_evidence_import.json"
+    require_file "${phase2_dir}/phase2_external_evidence_import.txt"
+    rg -q '^import_status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
+      fail "imported Phase-2 evidence report did not pass"
+    rg -q '^check=git_head_match status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
+      fail "imported Phase-2 evidence did not match git head"
+  fi
 
   require_file "${evidence_bundle}/manifest.sha256"
   require_file "${evidence_bundle}/files.txt"
@@ -473,6 +549,9 @@ fi
 if summary_has '^step=webrtc_first_production_gate status=(planned|pass|fail)( |$)'; then
   require_file "${GATE_DIR}/logs/webrtc_first_production_gate.log"
 fi
+if summary_has '^step=import_phase2_evidence_bundle status=(planned|pass|fail)( |$)'; then
+  require_file "${GATE_DIR}/logs/import_phase2_evidence_bundle.log"
+fi
 if summary_has '^step=phase5_release_evidence status=(planned|pass|fail)( |$)'; then
   require_file "${GATE_DIR}/logs/phase5_release_evidence.log"
 fi
@@ -488,8 +567,10 @@ if ! summary_has '^phase5_production_gate_status=fail$'; then
     summary_has '^step=verify_phase5_implementation_gate status=(planned|pass|fail)( |$)' ||
       fail "summary missing implementation gate verify step"
   fi
-  summary_has '^step=webrtc_first_production_gate status=(planned|pass|fail)( |$)' ||
-    fail "summary missing production gate step"
+  if ! summary_has '^step=webrtc_first_production_gate status=(planned|pass|fail)( |$)' &&
+      ! summary_has '^step=import_phase2_evidence_bundle status=(planned|pass|fail)( |$)'; then
+    fail "summary missing production gate or imported phase2 evidence step"
+  fi
   if ! summary_has '^phase5_production_gate_status=dry_run$'; then
     summary_has '^step=phase5_release_evidence status=(pass|fail)( |$)' ||
       fail "summary missing release evidence step"
@@ -511,8 +592,10 @@ if [[ "${REQUIRE_PASS}" == "1" ]]; then
     fail "debug bundle collect step did not pass"
   summary_has '^step=verify_phase5_debug_bundle status=pass ' ||
     fail "debug bundle verify step did not pass"
-  summary_has '^step=webrtc_first_production_gate status=pass ' ||
-    fail "production gate step did not pass"
+  if ! summary_has '^step=webrtc_first_production_gate status=pass ' &&
+      ! summary_has '^step=import_phase2_evidence_bundle status=pass '; then
+    fail "production gate or imported phase2 evidence step did not pass"
+  fi
   summary_has '^step=phase5_release_evidence status=pass ' ||
     fail "release evidence step did not pass"
   require_success_implementation_gate

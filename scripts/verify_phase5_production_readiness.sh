@@ -15,6 +15,8 @@ CHECK_RECORDS_JSONL="${OUTPUT_DIR}/check_records.jsonl"
 ACTION_RECORDS_JSONL="${OUTPUT_DIR}/action_records.jsonl"
 FILES_FILE="${FILES_FILE:-${OUTPUT_DIR}/files.txt}"
 MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_DIR}/manifest.sha256}"
+PHASE2_EVIDENCE_BUNDLE_DIR="${PHASE2_EVIDENCE_BUNDLE_DIR:-}"
+EXTERNAL_PHASE2_IMPORT_DIR="${EXTERNAL_PHASE2_IMPORT_DIR:-${OUTPUT_DIR}/external_phase2_evidence_import}"
 
 SOAK_MINUTES="${SOAK_MINUTES:-120}"
 MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
@@ -64,6 +66,9 @@ action_for_check() {
       ;;
     real_renderer)
       printf 'run on a host with a real display/GPU renderer and rerun scripts/verify_real_renderer_smoke.sh with REQUIRE_REAL_RENDERER=1'
+      ;;
+    external_phase2_evidence_bundle)
+      printf 'provide a Phase-2 evidence bundle from the formal renderer/capture/soak host and set PHASE2_EVIDENCE_BUNDLE_DIR'
       ;;
     *)
       printf 'fix check=%s and rerun scripts/verify_phase5_production_readiness.sh' "${name}"
@@ -183,7 +188,8 @@ write_readiness_reports() {
     "${REAL_RENDERER_USE_XVFB}" \
     "${CAPTURE_LIBRARY_DIR}" \
     "${CAPTURE_LIBRARY_MANIFEST}" \
-    "${REQUIRE_READY}" <<'PY'
+    "${REQUIRE_READY}" \
+    "${PHASE2_EVIDENCE_BUNDLE_DIR}" <<'PY'
 import json
 import os
 import sys
@@ -208,7 +214,8 @@ import sys
     capture_library_dir,
     capture_library_manifest,
     require_ready,
-) = sys.argv[1:20]
+    phase2_evidence_bundle_dir,
+) = sys.argv[1:21]
 
 
 def read_jsonl(path):
@@ -279,12 +286,19 @@ def gate_backed_blockers(names):
     ]
 
 
-production_checks = [
-    "soak_config",
-    "webrtc_modules",
-    "capture_manifest",
-    "real_renderer",
-]
+if phase2_evidence_bundle_dir:
+    production_checks = [
+        "soak_config",
+        "webrtc_modules",
+        "external_phase2_evidence_bundle",
+    ]
+else:
+    production_checks = [
+        "soak_config",
+        "webrtc_modules",
+        "capture_manifest",
+        "real_renderer",
+    ]
 logging_checks = [
     "script_verify_phase5_logging.sh",
     "script_run_phase5_implementation_gate.sh",
@@ -492,6 +506,7 @@ report = {
         "real_renderer_use_xvfb": real_renderer_use_xvfb,
         "capture_library_dir": capture_library_dir,
         "capture_library_manifest": capture_library_manifest,
+        "phase2_evidence_bundle_dir": phase2_evidence_bundle_dir,
         "require_ready": require_ready == "1",
     },
     "checks": checks,
@@ -542,6 +557,7 @@ write_summary "allow_xvfb_renderer=${ALLOW_XVFB_RENDERER}"
 write_summary "real_renderer_use_xvfb=${REAL_RENDERER_USE_XVFB}"
 write_summary "capture_library_dir=${CAPTURE_LIBRARY_DIR}"
 write_summary "capture_library_manifest=${CAPTURE_LIBRARY_MANIFEST}"
+write_summary "phase2_evidence_bundle_dir=${PHASE2_EVIDENCE_BUNDLE_DIR}"
 write_summary "require_ready=${REQUIRE_READY}"
 if git -C "${SDK_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
   write_summary "git_head=$(git -C "${SDK_ROOT}" rev-parse HEAD)"
@@ -563,6 +579,7 @@ for script in \
     verify_webrtc_modules.sh \
     verify_capture_library_manifest.sh \
     verify_real_renderer_smoke.sh \
+    import_phase5_phase2_evidence_bundle.sh \
     run_phase5_production_gate.sh \
     verify_phase5_production_gate.sh \
     verify_phase5_completion_audit.sh; do
@@ -593,31 +610,49 @@ else
   record_skip "webrtc_modules" "RUN_WEBRTC_MODULES=${RUN_WEBRTC_MODULES}"
 fi
 
-if [[ "${RUN_CAPTURE_MANIFEST}" == "1" ]]; then
-  run_check "capture_manifest" \
+if [[ -n "${PHASE2_EVIDENCE_BUNDLE_DIR}" ]]; then
+  run_check "external_phase2_evidence_bundle" \
     env SDK_ROOT="${SDK_ROOT}" \
-      CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR}" \
-      CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST}" \
+      OUTPUT_ROOT="${EXTERNAL_PHASE2_IMPORT_DIR}" \
+      PHASE2_EVIDENCE_BUNDLE_DIR="${PHASE2_EVIDENCE_BUNDLE_DIR}" \
+      MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
+      ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
+      ALLOW_FIXTURE_CAPTURE=0 \
       REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
-      CAPTURE_WIDTH="${CAPTURE_WIDTH}" \
-      CAPTURE_HEIGHT="${CAPTURE_HEIGHT}" \
-      MIN_CAPTURE_FRAMES="${CAPTURE_FRAMES}" \
-      SUMMARY_FILE="${OUTPUT_DIR}/capture_manifest_summary.txt" \
-      "${SDK_ROOT}/scripts/verify_capture_library_manifest.sh"
+      "${SDK_ROOT}/scripts/import_phase5_phase2_evidence_bundle.sh"
+  if [[ -s "${EXTERNAL_PHASE2_IMPORT_DIR}/phase2_external_evidence_import.json" ]]; then
+    record_pass "capture_manifest" \
+      "source=external_phase2_evidence_bundle report=${EXTERNAL_PHASE2_IMPORT_DIR}/phase2_external_evidence_import.json"
+    record_pass "real_renderer" \
+      "source=external_phase2_evidence_bundle report=${EXTERNAL_PHASE2_IMPORT_DIR}/phase2_external_evidence_import.json"
+  fi
 else
-  record_skip "capture_manifest" "RUN_CAPTURE_MANIFEST=${RUN_CAPTURE_MANIFEST}"
-fi
+  if [[ "${RUN_CAPTURE_MANIFEST}" == "1" ]]; then
+    run_check "capture_manifest" \
+      env SDK_ROOT="${SDK_ROOT}" \
+        CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR}" \
+        CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST}" \
+        REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
+        CAPTURE_WIDTH="${CAPTURE_WIDTH}" \
+        CAPTURE_HEIGHT="${CAPTURE_HEIGHT}" \
+        MIN_CAPTURE_FRAMES="${CAPTURE_FRAMES}" \
+        SUMMARY_FILE="${OUTPUT_DIR}/capture_manifest_summary.txt" \
+        "${SDK_ROOT}/scripts/verify_capture_library_manifest.sh"
+  else
+    record_skip "capture_manifest" "RUN_CAPTURE_MANIFEST=${RUN_CAPTURE_MANIFEST}"
+  fi
 
-if [[ "${RUN_REAL_RENDERER}" == "1" ]]; then
-  run_check "real_renderer" \
-    env SDK_ROOT="${SDK_ROOT}" \
-      OUTPUT_DIR="${OUTPUT_DIR}/real_renderer" \
-      REQUIRE_REAL_RENDERER=1 \
-      USE_XVFB="${REAL_RENDERER_USE_XVFB}" \
-      FRAMES=5 \
-      "${SDK_ROOT}/scripts/verify_real_renderer_smoke.sh"
-else
-  record_skip "real_renderer" "RUN_REAL_RENDERER=${RUN_REAL_RENDERER}"
+  if [[ "${RUN_REAL_RENDERER}" == "1" ]]; then
+    run_check "real_renderer" \
+      env SDK_ROOT="${SDK_ROOT}" \
+        OUTPUT_DIR="${OUTPUT_DIR}/real_renderer" \
+        REQUIRE_REAL_RENDERER=1 \
+        USE_XVFB="${REAL_RENDERER_USE_XVFB}" \
+        FRAMES=5 \
+        "${SDK_ROOT}/scripts/verify_real_renderer_smoke.sh"
+  else
+    record_skip "real_renderer" "RUN_REAL_RENDERER=${RUN_REAL_RENDERER}"
+  fi
 fi
 
 if [[ "${failures}" -eq 0 && "${skipped_count}" -eq 0 ]]; then

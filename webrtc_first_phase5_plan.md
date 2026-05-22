@@ -209,6 +209,22 @@ evidence bundle manifest、`phase2_completion_audit=pass` 和
 避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
+如果真实 renderer、正式 capture library 和 `SOAK_MINUTES>=120` 是在专用测试机跑出的，
+P5 顶层 gate 支持导入该机器收集的 Phase-2 evidence bundle：
+
+```bash
+PHASE2_EVIDENCE_BUNDLE_DIR=/path/to/phase2_evidence_bundle \
+  scripts/run_phase5_production_gate.sh
+```
+
+导入路径由 `scripts/import_phase5_phase2_evidence_bundle.sh` 负责。它会复制外部
+bundle 到 P5 gate 目录内，复验 bundle `manifest.sha256`，重新运行
+`verify_webrtc_first_phase2_completion_audit.sh`，要求 production soak、真实 renderer、
+正式 capture library 和 evidence bundle 全部 pass，并默认要求 bundle 里的 git head
+与当前 P5 gate 的 git head 一致。readiness 在存在 `PHASE2_EVIDENCE_BUNDLE_DIR` 时会用
+`external_phase2_evidence_bundle` 作为生产环境证据来源，不再要求当前机器也有真实显示器
+和业务素材；但 release evidence 和 production gate verifier 仍会离线复验导入报告。
+
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
 `PHASE5_GATE_DIR` 指向已经 `REQUIRE_PASS=1` 验证通过的 Phase-5 production gate；
 如果该 gate 内包含 `phase5_implementation_gate/`，audit 会自动复验实现证据，也可以
@@ -1301,6 +1317,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - Phase-5 release contract gate。
 - Phase-5 debug bundle collect/verify。
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
+- 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 manifest、completion
+  audit、git head、production soak、真实 renderer 和正式 capture library。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
 - production wrapper 必须在进入 readiness/soak 前复验 implementation gate，不能只
   运行不校验。
