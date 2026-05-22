@@ -176,26 +176,30 @@ soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture m
 readiness 报告。默认本地缺正式素材或真实 renderer 时只生成 not-ready 报告；
 正式 CI 可设置 `REQUIRE_READY=1` 作为硬门禁。
 
-wrapper 会先跑 Phase-5 release contract、production readiness 和 debug bundle 门禁，再调用底层
+wrapper 会先跑并复验 Phase-5 implementation gate，再跑 release contract、production
+readiness 和 debug bundle 门禁，然后调用底层
 `run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
 正式 capture library、evidence bundle 和 completion audit。默认输出目录为
 `artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
-`files.txt` 和 `manifest.sha256`。非 dry-run 失败时会自动收集并校验
-`failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和
-runtime config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包
-存在且 manifest 可离线校验，如果失败发生在 readiness 阶段，还会离线复验
-readiness manifest 和 failed/skipped check；在 gate 成功时也会离线复验 `phase5_debug_bundle/`
-的日志、metrics、alerts、timeline 和 runtime config，离线复验
+`files.txt` 和 `manifest.sha256`；`phase5_implementation_gate/` 固定在 production
+gate 目录内，保证正式证据自包含。非 dry-run 失败时会自动收集并校验
+`failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和 runtime
+config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包存在且
+manifest 可离线校验，如果失败发生在 implementation 或 readiness 阶段，还会离线复验
+对应 summary、manifest 和失败 step/check；在 gate 成功时会离线复验
+`phase5_implementation_gate/` 的实现证据、`phase5_debug_bundle/` 的日志、metrics、
+alerts、timeline 和 runtime config，离线复验
 `phase5_production_readiness/` 的 ready 状态，并直接复验底层 Phase-2
 evidence bundle manifest、`phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`，避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
-`PHASE5_IMPLEMENTATION_GATE_DIR` 指向已通过的 Phase-5 implementation gate，同时要求
 `PHASE5_GATE_DIR` 指向已经 `REQUIRE_PASS=1` 验证通过的 Phase-5 production gate；
-如果显式设置 `REQUIRE_PRODUCTION_EVIDENCE=0`，仍必须提供 implementation gate 证据，
-但只返回 `implemented_without_required_production_evidence`，不能用来宣布生产完成。
+如果该 gate 内包含 `phase5_implementation_gate/`，audit 会自动复验实现证据，也可以
+显式传 `PHASE5_IMPLEMENTATION_GATE_DIR`。如果设置 `REQUIRE_PRODUCTION_EVIDENCE=0`，
+仍必须提供 implementation gate 证据，但只返回
+`implemented_without_required_production_evidence`，不能用来宣布生产完成。
 
 #### 验收标准
 
@@ -1223,6 +1227,10 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - Phase-5 debug bundle collect/verify。
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
+- production wrapper 必须在进入 readiness/soak 前复验 implementation gate，不能只
+  运行不校验。
+- 成功路径必须离线复验 `phase5_implementation_gate/`，确认实现证据在 production
+  gate 内闭合。
 - 成功路径必须离线复验 `phase5_debug_bundle/`，确认日志、metrics、alerts、
   timeline 和 runtime config 都可用。
 - 成功路径必须离线复验底层 Phase-2 evidence bundle 和 completion audit，确认

@@ -6,6 +6,8 @@ WEBRTC_PREFIX="${WEBRTC_PREFIX:-${PREFIX:-${SDK_ROOT}/dist/linux-x86_64}}"
 PHASE5_BUILD_ID="${PHASE5_BUILD_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${SDK_ROOT}/artifacts/phase5_production_gate/${PHASE5_BUILD_ID}}"
 PHASE2_OUTPUT_ROOT="${PHASE2_OUTPUT_ROOT:-${OUTPUT_ROOT}/webrtc_first_production_gate}"
+DEFAULT_PHASE5_IMPLEMENTATION_GATE_DIR="${OUTPUT_ROOT}/phase5_implementation_gate"
+PHASE5_IMPLEMENTATION_GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR:-${DEFAULT_PHASE5_IMPLEMENTATION_GATE_DIR}}"
 PHASE5_DEBUG_BUNDLE_DIR="${PHASE5_DEBUG_BUNDLE_DIR:-${OUTPUT_ROOT}/phase5_debug_bundle}"
 FAILURE_DEBUG_BUNDLE_DIR="${FAILURE_DEBUG_BUNDLE_DIR:-${OUTPUT_ROOT}/failure_debug_bundle}"
 PHASE5_READINESS_DIR="${PHASE5_READINESS_DIR:-${OUTPUT_ROOT}/phase5_production_readiness}"
@@ -20,6 +22,7 @@ MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-${SOAK_MINUTES}}"
 SOAK_CYCLES="${SOAK_CYCLES:-1}"
 PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 PHASE5_DRY_RUN="${PHASE5_DRY_RUN:-0}"
+RUN_PHASE5_IMPLEMENTATION_GATE="${RUN_PHASE5_IMPLEMENTATION_GATE:-1}"
 RUN_PHASE5_RELEASE_CONTRACT="${RUN_PHASE5_RELEASE_CONTRACT:-1}"
 RUN_PHASE5_READINESS="${RUN_PHASE5_READINESS:-1}"
 RUN_PHASE5_DEBUG_BUNDLE="${RUN_PHASE5_DEBUG_BUNDLE:-1}"
@@ -27,6 +30,7 @@ ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB:-$([[ "${ALLOW_XVFB_RENDERER}" == "1" ]] && echo auto || echo 0)}"
 
 FACADE_FRAMES="${FACADE_FRAMES:-120}"
+PHASE5_IMPLEMENTATION_FRAMES="${PHASE5_IMPLEMENTATION_FRAMES:-36}"
 QOE_FRAMES="${QOE_FRAMES:-120}"
 QOE_WIDTH="${QOE_WIDTH:-1280}"
 QOE_HEIGHT="${QOE_HEIGHT:-720}"
@@ -40,6 +44,11 @@ CAPTURE_FRAMES="${CAPTURE_FRAMES:-120}"
 CAPTURE_SCENARIOS="${CAPTURE_SCENARIOS:-baseline weak_network_low_rps_low_bitrate walking_dead_zone_recover oscillating_edge_recover}"
 CAPTURE_SEEDS="${CAPTURE_SEEDS:-1}"
 REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
+
+if [[ "${PHASE5_IMPLEMENTATION_GATE_DIR}" != "${DEFAULT_PHASE5_IMPLEMENTATION_GATE_DIR}" ]]; then
+  echo "phase5 production gate failed: PHASE5_IMPLEMENTATION_GATE_DIR must be ${DEFAULT_PHASE5_IMPLEMENTATION_GATE_DIR} for self-contained evidence" >&2
+  exit 1
+fi
 
 mkdir -p "${OUTPUT_ROOT}" "${LOG_DIR}"
 rm -f "${SUMMARY_FILE}" "${METADATA_FILE}" "${FILES_FILE}" "${MANIFEST_FILE}"
@@ -123,6 +132,8 @@ run_step() {
   fi
 }
 
+require_script "${SDK_ROOT}/scripts/run_phase5_implementation_gate.sh"
+require_script "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh"
 require_script "${SDK_ROOT}/scripts/verify_phase5_release_contract.sh"
 require_script "${SDK_ROOT}/scripts/verify_phase5_production_readiness.sh"
 require_script "${SDK_ROOT}/scripts/collect_phase5_debug_bundle.sh"
@@ -136,6 +147,7 @@ require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.
   printf 'WEBRTC_PREFIX=%s\n' "${WEBRTC_PREFIX}"
   printf 'OUTPUT_ROOT=%s\n' "${OUTPUT_ROOT}"
   printf 'PHASE2_OUTPUT_ROOT=%s\n' "${PHASE2_OUTPUT_ROOT}"
+  printf 'PHASE5_IMPLEMENTATION_GATE_DIR=%s\n' "${PHASE5_IMPLEMENTATION_GATE_DIR}"
   printf 'PHASE5_DEBUG_BUNDLE_DIR=%s\n' "${PHASE5_DEBUG_BUNDLE_DIR}"
   printf 'FAILURE_DEBUG_BUNDLE_DIR=%s\n' "${FAILURE_DEBUG_BUNDLE_DIR}"
   printf 'PHASE5_READINESS_DIR=%s\n' "${PHASE5_READINESS_DIR}"
@@ -144,9 +156,11 @@ require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.
   printf 'SOAK_CYCLES=%s\n' "${SOAK_CYCLES}"
   printf 'PREFLIGHT_ONLY=%s\n' "${PREFLIGHT_ONLY}"
   printf 'PHASE5_DRY_RUN=%s\n' "${PHASE5_DRY_RUN}"
+  printf 'RUN_PHASE5_IMPLEMENTATION_GATE=%s\n' "${RUN_PHASE5_IMPLEMENTATION_GATE}"
   printf 'RUN_PHASE5_RELEASE_CONTRACT=%s\n' "${RUN_PHASE5_RELEASE_CONTRACT}"
   printf 'RUN_PHASE5_READINESS=%s\n' "${RUN_PHASE5_READINESS}"
   printf 'RUN_PHASE5_DEBUG_BUNDLE=%s\n' "${RUN_PHASE5_DEBUG_BUNDLE}"
+  printf 'PHASE5_IMPLEMENTATION_FRAMES=%s\n' "${PHASE5_IMPLEMENTATION_FRAMES}"
   printf 'ALLOW_XVFB_RENDERER=%s\n' "${ALLOW_XVFB_RENDERER}"
   printf 'REAL_RENDERER_USE_XVFB=%s\n' "${REAL_RENDERER_USE_XVFB}"
   printf 'CAPTURE_LIBRARY_DIR=%s\n' "${CAPTURE_LIBRARY_DIR}"
@@ -163,12 +177,26 @@ write_summary "sdk_root=${SDK_ROOT}"
 write_summary "webrtc_prefix=${WEBRTC_PREFIX}"
 write_summary "output_root=${OUTPUT_ROOT}"
 write_summary "phase2_output_root=${PHASE2_OUTPUT_ROOT}"
+write_summary "phase5_implementation_gate_dir=${PHASE5_IMPLEMENTATION_GATE_DIR}"
 write_summary "phase5_readiness_dir=${PHASE5_READINESS_DIR}"
 write_summary "soak_minutes=${SOAK_MINUTES}"
 write_summary "min_production_soak_minutes=${MIN_PRODUCTION_SOAK_MINUTES}"
 write_summary "preflight_only=${PREFLIGHT_ONLY}"
 write_summary "phase5_dry_run=${PHASE5_DRY_RUN}"
 write_summary "capture_library_manifest=${CAPTURE_LIBRARY_MANIFEST}"
+
+if [[ "${RUN_PHASE5_IMPLEMENTATION_GATE}" == "1" ]]; then
+  run_step phase5_implementation_gate \
+    env SDK_ROOT="${SDK_ROOT}" PREFIX="${WEBRTC_PREFIX}" \
+      OUTPUT_ROOT="${PHASE5_IMPLEMENTATION_GATE_DIR}" \
+      FRAMES="${PHASE5_IMPLEMENTATION_FRAMES}" \
+      "${SDK_ROOT}/scripts/run_phase5_implementation_gate.sh"
+  run_step verify_phase5_implementation_gate \
+    env GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR}" REQUIRE_PASS=1 \
+      "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh"
+else
+  write_summary "step=phase5_implementation_gate status=skipped RUN_PHASE5_IMPLEMENTATION_GATE=${RUN_PHASE5_IMPLEMENTATION_GATE}"
+fi
 
 if [[ "${RUN_PHASE5_RELEASE_CONTRACT}" == "1" ]]; then
   run_step phase5_release_contract \
@@ -238,6 +266,7 @@ else
   write_summary "phase5_production_gate_status=pass"
 fi
 write_summary "phase5_metadata=${METADATA_FILE}"
+write_summary "phase5_implementation_gate=${PHASE5_IMPLEMENTATION_GATE_DIR}"
 write_summary "phase5_production_readiness=${PHASE5_READINESS_DIR}"
 write_summary "phase5_debug_bundle=${PHASE5_DEBUG_BUNDLE_DIR}"
 write_summary "webrtc_first_production_gate=${PHASE2_OUTPUT_ROOT}"

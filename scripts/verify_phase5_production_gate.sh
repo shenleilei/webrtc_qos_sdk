@@ -25,6 +25,8 @@ require_file "${GATE_DIR}/manifest.sha256"
 
 [[ -x "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" ]] ||
   fail "missing debug bundle verifier: ${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh"
+[[ -x "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh" ]] ||
+  fail "missing implementation gate verifier: ${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh"
 
 (
   cd "${GATE_DIR}"
@@ -79,6 +81,25 @@ require_failed_readiness_evidence() {
   fi
 }
 
+require_failed_implementation_evidence() {
+  summary_has '^step=phase5_implementation_gate status=fail ' || return 0
+  summary_has '^phase5_implementation_gate_dir=' ||
+    fail "failed implementation gate summary missing implementation directory"
+  local implementation_dir="${GATE_DIR}/phase5_implementation_gate"
+  local implementation_summary="${implementation_dir}/phase5_implementation_gate_summary.txt"
+  require_file "${implementation_summary}"
+  require_file "${implementation_dir}/files.txt"
+  require_file "${implementation_dir}/manifest.sha256"
+  (
+    cd "${implementation_dir}"
+    sha256sum -c manifest.sha256 >/dev/null
+  )
+  rg -q '^phase5_implementation_gate_status=fail$' "${implementation_summary}" ||
+    fail "failed implementation evidence did not record fail status"
+  rg -q '^step=[^ ]+ status=fail ' "${implementation_summary}" ||
+    fail "failed implementation evidence missing failed step"
+}
+
 require_success_debug_bundle() {
   summary_has '^phase5_debug_bundle=' ||
     fail "passed gate summary missing phase5 debug bundle directory"
@@ -94,6 +115,19 @@ require_success_debug_bundle() {
   )
   BUNDLE_DIR="${GATE_DIR}/phase5_debug_bundle" \
     "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" >/dev/null
+}
+
+require_success_implementation_gate() {
+  summary_has '^phase5_implementation_gate=' ||
+    fail "passed gate summary missing phase5 implementation gate directory"
+  require_file "${GATE_DIR}/phase5_implementation_gate/manifest.sha256"
+  require_file "${GATE_DIR}/phase5_implementation_gate/phase5_implementation_gate_summary.txt"
+  (
+    cd "${GATE_DIR}/phase5_implementation_gate"
+    sha256sum -c manifest.sha256 >/dev/null
+  )
+  GATE_DIR="${GATE_DIR}/phase5_implementation_gate" REQUIRE_PASS=1 \
+    "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh" >/dev/null
 }
 
 require_success_readiness() {
@@ -163,11 +197,19 @@ require_phase2_completion_evidence() {
 
 summary_has '^phase5_production_gate=running$' ||
   fail "summary missing gate start marker"
+summary_has '^step=phase5_implementation_gate status=(planned|pass|fail|skipped)( |$)' ||
+  fail "summary missing implementation gate step"
 summary_has '^step=phase5_release_contract status=(planned|pass|fail|skipped)( |$)' ||
   fail "summary missing release contract step"
 summary_has '^step=phase5_production_readiness status=(planned|pass|fail|skipped)( |$)' ||
   fail "summary missing production readiness step"
 
+if summary_has '^step=phase5_implementation_gate status=(planned|pass|fail)( |$)'; then
+  require_file "${GATE_DIR}/logs/phase5_implementation_gate.log"
+fi
+if summary_has '^step=verify_phase5_implementation_gate status=(planned|pass|fail)( |$)'; then
+  require_file "${GATE_DIR}/logs/verify_phase5_implementation_gate.log"
+fi
 if summary_has '^step=phase5_release_contract status=(planned|pass|fail)( |$)'; then
   require_file "${GATE_DIR}/logs/phase5_release_contract.log"
 fi
@@ -191,6 +233,10 @@ if ! summary_has '^phase5_production_gate_status=fail$'; then
     summary_has '^step=verify_phase5_debug_bundle status=(planned|pass|fail)( |$)' ||
     fail "summary missing debug bundle verify step"
   fi
+  if ! summary_has '^step=phase5_implementation_gate status=skipped'; then
+    summary_has '^step=verify_phase5_implementation_gate status=(planned|pass|fail)( |$)' ||
+      fail "summary missing implementation gate verify step"
+  fi
   summary_has '^step=webrtc_first_production_gate status=(planned|pass|fail)( |$)' ||
     fail "summary missing production gate step"
 fi
@@ -198,6 +244,10 @@ fi
 if [[ "${REQUIRE_PASS}" == "1" ]]; then
   summary_has '^phase5_production_gate_status=pass$' ||
     fail "phase5 production gate did not pass"
+  summary_has '^step=phase5_implementation_gate status=pass ' ||
+    fail "implementation gate step did not pass"
+  summary_has '^step=verify_phase5_implementation_gate status=pass ' ||
+    fail "implementation gate verify step did not pass"
   summary_has '^step=phase5_release_contract status=pass ' ||
     fail "release contract step did not pass"
   summary_has '^step=phase5_production_readiness status=pass ' ||
@@ -208,6 +258,7 @@ if [[ "${REQUIRE_PASS}" == "1" ]]; then
     fail "debug bundle verify step did not pass"
   summary_has '^step=webrtc_first_production_gate status=pass ' ||
     fail "production gate step did not pass"
+  require_success_implementation_gate
   require_success_debug_bundle
   require_success_readiness
   require_phase2_completion_evidence
@@ -217,9 +268,11 @@ else
   if summary_has '^phase5_production_gate_status=fail$'; then
     summary_has '^step=[^ ]+ status=fail ' ||
       fail "failed gate summary missing failed step"
+    require_failed_implementation_evidence
     require_failed_readiness_evidence
     require_failed_gate_debug_bundle
   elif summary_has '^phase5_production_gate_status=pass$'; then
+    require_success_implementation_gate
     require_success_readiness
     require_success_debug_bundle
     require_phase2_completion_evidence

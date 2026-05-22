@@ -6,7 +6,12 @@ OUTPUT_DIR="${OUTPUT_DIR:-${SDK_ROOT}/artifacts/phase5_completion_audit}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_DIR}/phase5_completion_audit_summary.txt}"
 PHASE5_GATE_DIR="${PHASE5_GATE_DIR:-}"
 PHASE5_DEBUG_BUNDLE_DIR="${PHASE5_DEBUG_BUNDLE_DIR:-${SDK_ROOT}/artifacts/phase5_debug_bundle}"
-PHASE5_IMPLEMENTATION_GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR:-${SDK_ROOT}/artifacts/phase5_implementation_gate/latest}"
+if [[ -z "${PHASE5_IMPLEMENTATION_GATE_DIR:-}" && -n "${PHASE5_GATE_DIR}" &&
+    -d "${PHASE5_GATE_DIR}/phase5_implementation_gate" ]]; then
+  PHASE5_IMPLEMENTATION_GATE_DIR="${PHASE5_GATE_DIR}/phase5_implementation_gate"
+else
+  PHASE5_IMPLEMENTATION_GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR:-${SDK_ROOT}/artifacts/phase5_implementation_gate/latest}"
+fi
 REQUIRE_PRODUCTION_EVIDENCE="${REQUIRE_PRODUCTION_EVIDENCE:-1}"
 ALLOW_DRY_RUN_GATE="${ALLOW_DRY_RUN_GATE:-0}"
 
@@ -170,6 +175,14 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_failed_readiness_evidence' production_gate_failed_readiness_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'phase5_production_readiness' production_gate_runs_readiness_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase5_implementation_gate' production_gate_runs_implementation_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'verify_phase5_implementation_gate' production_gate_verifies_implementation_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'require_success_implementation_gate' production_gate_success_implementation_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'require_failed_implementation_evidence' production_gate_failed_implementation_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
@@ -222,6 +235,9 @@ if [[ -n "${PHASE5_GATE_DIR}" ]]; then
         else
           audit_fail production_evidence "dry_run_not_production gate=${PHASE5_GATE_DIR}"
         fi
+      elif rg -q '^phase5_production_gate_status=fail$' \
+          "${PHASE5_GATE_DIR}/phase5_production_gate_summary.txt"; then
+        audit_warn production_evidence "verified_failed_gate_not_production gate=${PHASE5_GATE_DIR}"
       else
         audit_pass production_evidence "gate=${PHASE5_GATE_DIR}"
       fi
