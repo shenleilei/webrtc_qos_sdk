@@ -14,7 +14,7 @@ REAL_RENDERER_SUMMARY="${REAL_RENDERER_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_fir
 REAL_RENDERER_METRICS="${REAL_RENDERER_METRICS:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/real_renderer/real_renderer_metrics.csv}"
 CAPTURE_MANIFEST_SUMMARY="${CAPTURE_MANIFEST_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/capture_manifest_summary.txt}"
 CAPTURE_QOE_CSV="${CAPTURE_QOE_CSV:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/webrtc_first_qoe_capture_library_720p.csv}"
-CAPTURE_QOE_SUMMARY="${CAPTURE_QOE_SUMMARY:-${OUTPUT_DIR}/capture_qoe_summary.txt}"
+CAPTURE_QOE_SUMMARY="${CAPTURE_QOE_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/capture_qoe_summary.txt}"
 
 MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
 MIN_PRODUCTION_ROWS="${MIN_PRODUCTION_ROWS:-1}"
@@ -435,37 +435,31 @@ if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
   capture_manifest_sha256="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest_sha256)"
   capture_entries="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" entries)"
   capture_categories="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" categories)"
-  capture_manifest_sha_valid=0
-  if is_sha256 "${capture_manifest_sha256}"; then
-    capture_manifest_sha_valid=1
-  fi
   capture_fixture=0
   if grep -Eiq 'fixture|artifacts/capture_library_phase2_fixture|artifacts/capture_library_fixture' "${CAPTURE_MANIFEST_SUMMARY}"; then
     capture_fixture=1
   fi
-  category_missing=0
-  for category in ${REQUIRED_CAPTURE_CATEGORIES}; do
-    if ! grep -Eq "(^|,)${category}(,|$)" <<<"${capture_categories}"; then
-      category_missing=1
-    fi
-  done
-  capture_qoe_output=""
-  capture_qoe_status=0
-  if ! capture_qoe_output="$(env CAPTURE_QOE_CSV="${CAPTURE_QOE_CSV}" \
+  capture_evidence_output=""
+  capture_evidence_status=0
+  if ! capture_evidence_output="$(env \
+      CAPTURE_MANIFEST_SUMMARY="${CAPTURE_MANIFEST_SUMMARY}" \
+      CAPTURE_QOE_CSV="${CAPTURE_QOE_CSV}" \
+      CAPTURE_QOE_SUMMARY="${CAPTURE_QOE_SUMMARY}" \
       MIN_CAPTURE_QOE_ROWS="${MIN_CAPTURE_QOE_ROWS}" \
       MIN_PLAYABLE_RATIO="${MIN_CAPTURE_PLAYABLE_RATIO}" \
       MIN_AVG_PSNR_Y="${MIN_CAPTURE_AVG_PSNR_Y}" \
       MIN_AVG_SSIM_Y="${MIN_CAPTURE_AVG_SSIM_Y}" \
+      MAX_DECODE_ERRORS=0 \
+      MAX_FREEZE_COUNT=0 \
+      MAX_RENDERER_PROXY_DROP_FRAMES=0 \
       REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
-      SUMMARY_FILE="$([[ -n "${EVIDENCE_BUNDLE_DIR}" ]] && echo "" || echo "${CAPTURE_QOE_SUMMARY}")" \
-      "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh" 2>&1)"; then
-    capture_qoe_status=1
+      ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE}" \
+      "${SDK_ROOT}/scripts/verify_capture_library_evidence.sh" 2>&1)"; then
+    capture_evidence_status=1
   fi
   if [[ "${capture_verified}" == "true" &&
-      "${capture_manifest_sha_valid}" -eq 1 &&
-      "${category_missing}" -eq 0 &&
       "${capture_entries:-0}" -gt 0 &&
-      "${capture_qoe_status}" -eq 0 ]]; then
+      "${capture_evidence_status}" -eq 0 ]]; then
     if [[ "${capture_fixture}" -eq 1 && "${ALLOW_FIXTURE_CAPTURE}" != "1" ]]; then
       audit_fail capture_library "fixture_library_not_formal dir=${capture_dir} manifest=${capture_manifest}"
     else
@@ -473,10 +467,8 @@ if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
     fi
   else
     reason="manifest_not_valid"
-    if [[ "${capture_qoe_status}" -ne 0 ]]; then
-      reason="qoe_not_valid:${capture_qoe_output}"
-    elif [[ "${capture_manifest_sha_valid}" -ne 1 ]]; then
-      reason="missing_or_invalid_manifest_sha256"
+    if [[ "${capture_evidence_status}" -ne 0 ]]; then
+      reason="evidence_not_valid:${capture_evidence_output}"
     fi
     audit_fail capture_library "${reason} entries=${capture_entries:-missing} categories=${capture_categories:-missing} summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV}"
   fi

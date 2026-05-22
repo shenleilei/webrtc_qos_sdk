@@ -220,6 +220,7 @@ for required in (
     "real_renderer_raw_evidence",
     "real_renderer_rendered_frames",
     "capture_library",
+    "capture_library_evidence",
     "capture_qoe_raw_evidence",
     "evidence_bundle",
     "git_head_match",
@@ -240,6 +241,7 @@ for key in (
     "capture_manifest_summary",
     "capture_qoe_csv",
     "capture_qoe_summary",
+    "capture_library_evidence_log",
 ):
     if not artifacts.get(key):
         raise SystemExit(f"external phase2 import missing artifact pointer {key}")
@@ -302,6 +304,8 @@ for key in ("manifest_summary", "qoe_csv", "qoe_summary", "manifest_sha256"):
         raise SystemExit(f"external phase2 import missing capture_library.{key}")
 if not valid_sha256(capture_library.get("manifest_sha256")):
     raise SystemExit("external phase2 import bad capture manifest sha256")
+if capture_library.get("qoe_manifest_sha256") != capture_library.get("manifest_sha256"):
+    raise SystemExit("external phase2 import capture QoE manifest sha256 mismatch")
 if capture_library.get("fixture") is not False:
     raise SystemExit("external phase2 import used fixture capture")
 rows = int(as_float(capture_library.get("rows")))

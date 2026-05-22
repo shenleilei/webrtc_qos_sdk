@@ -180,6 +180,20 @@ if ! env SUMMARY_FILE="${BUNDLE_OUTPUT_DIR}/real_renderer/real_renderer_summary.
   exit 1
 fi
 
+if ! env CAPTURE_MANIFEST_SUMMARY="${BUNDLE_OUTPUT_DIR}/capture_library/capture_manifest_summary.txt" \
+    CAPTURE_QOE_CSV="${BUNDLE_OUTPUT_DIR}/capture_library/webrtc_first_qoe_capture_library_720p.csv" \
+    CAPTURE_QOE_SUMMARY="${BUNDLE_OUTPUT_DIR}/capture_library/capture_qoe_summary.txt" \
+    ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE}" \
+    REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
+    "${SDK_ROOT}/scripts/verify_capture_library_evidence.sh" \
+    >"${LOG_DIR}/capture_library_evidence.log" 2>&1; then
+  write_summary "phase2_production_gate_status=fail"
+  write_summary "capture_library_evidence_log=${LOG_DIR}/capture_library_evidence.log"
+  write_manifest
+  tail -n 80 "${LOG_DIR}/capture_library_evidence.log" >&2 || true
+  exit 1
+fi
+
 python3 - \
   "${BUNDLE_OUTPUT_DIR}" \
   "${AUDIT_OUTPUT_DIR}/phase2_completion_audit_summary.txt" \
@@ -348,6 +362,11 @@ checks = {
     "production_soak": has_prefix(audit_summary, "check=production_soak status=pass "),
     "real_renderer": has_prefix(audit_summary, "check=real_renderer status=pass "),
     "capture_library": has_prefix(audit_summary, "check=capture_library status=pass "),
+    "capture_library_evidence": has_file(
+        os.path.join(output_root, "logs", "capture_library_evidence.log")
+    )
+    and capture_manifest.get("capture_manifest_sha256")
+    == capture_qoe.get("capture_manifest_sha256"),
     "evidence_bundle": has_prefix(audit_summary, "check=evidence_bundle status=pass "),
     "production_soak_raw_evidence": has_file(production_soak_summary)
     and has_file(production_soak_csv)
@@ -429,6 +448,7 @@ report = {
         "qoe_csv": rel(capture_qoe_csv),
         "qoe_summary": rel(capture_qoe_summary),
         "manifest_sha256": capture_manifest.get("capture_manifest_sha256", ""),
+        "qoe_manifest_sha256": capture_qoe.get("capture_manifest_sha256", ""),
         "fixture": capture_fixture,
         "rows": parse_number(capture_qoe.get("rows", "0")),
         "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
@@ -467,6 +487,9 @@ report = {
         "capture_manifest_summary": rel(capture_manifest_summary),
         "capture_qoe_csv": rel(capture_qoe_csv),
         "capture_qoe_summary": rel(capture_qoe_summary),
+        "capture_library_evidence_log": rel(
+            os.path.join(output_root, "logs", "capture_library_evidence.log")
+        ),
     },
 }
 
@@ -496,6 +519,10 @@ with open(report_summary, "w", encoding="utf-8") as fh:
     fh.write(
         "capture_manifest_sha256="
         f"{capture_manifest.get('capture_manifest_sha256', '')}\n"
+    )
+    fh.write(
+        "capture_qoe_manifest_sha256="
+        f"{capture_qoe.get('capture_manifest_sha256', '')}\n"
     )
     fh.write(f"capture_qoe_csv={rel(capture_qoe_csv)}\n")
 

@@ -148,3 +148,19 @@ MAX_RENDERER_PROXY_DROP_FRAMES="${MAX_RENDERER_PROXY_DROP_FRAMES}" \
 REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
 SUMMARY_FILE="${CAPTURE_QOE_SUMMARY}" \
   "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh"
+
+if [[ -s "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
+  capture_manifest_sha256="$(
+    awk -F= '$1=="capture_manifest_sha256"{print $2}' \
+      "${CAPTURE_MANIFEST_SUMMARY}" | tail -1
+  )"
+  capture_manifest_path="$(
+    awk -F= '$1=="capture_manifest"{print $2}' \
+      "${CAPTURE_MANIFEST_SUMMARY}" | tail -1
+  )"
+  {
+    echo "capture_manifest=${capture_manifest_path}"
+    echo "capture_manifest_summary=${CAPTURE_MANIFEST_SUMMARY}"
+    echo "capture_manifest_sha256=${capture_manifest_sha256}"
+  } >>"${CAPTURE_QOE_SUMMARY}"
+fi

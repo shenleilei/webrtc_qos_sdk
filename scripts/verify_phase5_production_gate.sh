@@ -31,6 +31,8 @@ require_file "${GATE_DIR}/phase5_production_gate_metrics.prom"
   fail "missing implementation gate verifier: ${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh"
 [[ -x "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh" ]] ||
   fail "missing capture QoE CSV verifier: ${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh"
+[[ -x "${SDK_ROOT}/scripts/verify_capture_library_evidence.sh" ]] ||
+  fail "missing capture evidence verifier: ${SDK_ROOT}/scripts/verify_capture_library_evidence.sh"
 [[ -x "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh" ]] ||
   fail "missing production soak archive verifier: ${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_archive.sh"
 
@@ -749,6 +751,7 @@ for required in (
     "real_renderer_raw_evidence",
     "real_renderer_rendered_frames",
     "capture_library",
+    "capture_library_evidence",
     "capture_qoe_raw_evidence",
     "evidence_bundle",
     "git_head_match",
@@ -768,6 +771,7 @@ for key in (
     "capture_manifest_summary",
     "capture_qoe_csv",
     "capture_qoe_summary",
+    "capture_library_evidence_log",
 ):
     if not artifacts.get(key):
         raise SystemExit(f"external phase2 import missing artifact pointer {key}")
@@ -787,6 +791,11 @@ for section_name, keys in (
         and all(ch in "0123456789abcdefABCDEF" for ch in section["manifest_sha256"])
     ):
         raise SystemExit("external phase2 import bad capture manifest sha256")
+    if (
+        section_name == "capture_library"
+        and section.get("qoe_manifest_sha256") != section.get("manifest_sha256")
+    ):
+        raise SystemExit("external phase2 import capture QoE manifest sha256 mismatch")
     if section_name == "real_renderer" and float(
         section.get("rendered_frames", 0) or 0
     ) <= 0:
@@ -975,18 +984,18 @@ PY
   rg -q '^capture_manifest_sha256=[0-9a-fA-F]{64}$' \
     "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
     fail "capture manifest summary missing sha256"
-  rg -q '^capture_qoe_verification=true$' \
-    "${evidence_bundle}/capture_library/capture_qoe_summary.txt" ||
-    fail "capture QoE summary did not verify"
   local required_capture_categories
   required_capture_categories="$(
     awk -F= '$1=="required_categories"{gsub(/,/," ",$2); print $2}' \
       "${evidence_bundle}/capture_library/capture_qoe_summary.txt" | tail -1
   )"
   required_capture_categories="${required_capture_categories:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
-  CAPTURE_QOE_CSV="${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv" \
+  CAPTURE_MANIFEST_SUMMARY="${evidence_bundle}/capture_library/capture_manifest_summary.txt" \
+    CAPTURE_QOE_CSV="${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv" \
+    CAPTURE_QOE_SUMMARY="${evidence_bundle}/capture_library/capture_qoe_summary.txt" \
     REQUIRED_CAPTURE_CATEGORIES="${required_capture_categories}" \
-    "${SDK_ROOT}/scripts/verify_capture_library_qoe_csv.sh" >/dev/null
+    ALLOW_FIXTURE_CAPTURE=0 \
+    "${SDK_ROOT}/scripts/verify_capture_library_evidence.sh" >/dev/null
 }
 
 require_release_evidence() {
@@ -1265,6 +1274,8 @@ if not valid_sha256(capture.get("manifest_sha256")):
     raise SystemExit("release evidence capture manifest sha256 missing")
 if capture.get("manifest_sha256") != manifest_summary.get("capture_manifest_sha256"):
     raise SystemExit("release evidence capture manifest sha256 mismatch")
+if capture.get("qoe_manifest_sha256") != capture.get("manifest_sha256"):
+    raise SystemExit("release evidence capture QoE manifest sha256 mismatch")
 
 def normalize_rel(path):
     return os.path.normpath(path).replace(os.sep, "/")

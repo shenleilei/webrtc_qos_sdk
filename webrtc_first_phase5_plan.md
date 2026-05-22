@@ -285,10 +285,12 @@ evidence 和 production gate verifier 仍会离线复验导入报告及这些原
 manifest 内容。`scripts/verify_capture_library_qoe_csv.sh`
 会离线复验 `webrtc_first_qoe_capture_library_720p.csv`：所有行必须 `pass=true`，必需类别
 必须覆盖，`playable_ratio / avg_psnr_y / avg_ssim_y` 不能低于门槛，`decode_errors /
-freeze_count / renderer_proxy_drop_frames` 必须为 0。Phase-2 completion audit 和外部
-bundle 导入都会调用该 verifier。Phase-5 release evidence 生成阶段也会独立拒绝
+freeze_count / renderer_proxy_drop_frames` 必须为 0。`scripts/verify_capture_library_evidence.sh`
+会进一步绑定复验 manifest summary、QoE CSV 和 QoE summary，要求 QoE summary 中的
+`capture_manifest_sha256` 等于 manifest summary，避免正式素材库或 CSV 被替换后只靠旧
+summary 通过。Phase-2 completion audit 和外部 bundle 导入都会调用该 verifier。Phase-5 release evidence 生成阶段也会独立拒绝
 fixture capture manifest，并要求 capture QoE summary 行数完整、`pass_rows == rows`、
-必需类别覆盖、QoE 下限存在且 `decode_errors / freeze_count / renderer_proxy_drop_frames`
+必需类别覆盖、QoE 下限存在、manifest sha 绑定且 `decode_errors / freeze_count / renderer_proxy_drop_frames`
 为 0，避免先把不完整素材库证据写成发布 pass 再由离线 verifier 打回。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
@@ -1407,7 +1409,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 `files.txt` /
   `manifest.sha256` / 实际文件集合一致性、completion
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
-  capture manifest sha256、capture QoE CSV，同时要求 bundle metadata 记录 clean tracked worktree。
+  capture manifest sha256、capture QoE CSV/summary 绑定，同时要求 bundle metadata 记录 clean tracked worktree。
 - production soak archive 必须记录并验证 clean tracked worktree；只允许未跟踪
   artifacts/build 目录存在，不能用带 tracked 源码修改的 soak 结果作为正式证据。
 - 顶层 metadata、summary、logs，以及 `files.txt` / `manifest.sha256` / 实际文件集合一致性。
@@ -1434,7 +1436,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 成功路径必须生成并离线复验 `phase5_release_evidence.json`，确认 production soak、
   production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、正式
   capture library、capture QoE CSV、evidence bundle 和 completion audit 都有 pass
-  证据指针，并通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，同时写出 production soak rows、real renderer backend 和 capture QoE
+  证据指针，并通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，通过 `verify_capture_library_evidence.sh` 确认 capture manifest/QoE 绑定和质量门槛均通过，同时写出 production soak rows、real renderer backend 和 capture QoE
   rows/minima 供排障。
 - 成功路径必须离线复验底层 Phase-2 evidence bundle 和 completion audit，确认
   production soak、真实 renderer、正式 capture library 均为 pass，且 `.prom`

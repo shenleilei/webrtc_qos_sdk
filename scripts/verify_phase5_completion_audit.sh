@@ -267,6 +267,7 @@ require_script verify_phase5_implementation_gate.sh implementation_gate_verifier
 require_script verify_phase5_production_readiness.sh production_readiness_gate
 require_script import_phase5_phase2_evidence_bundle.sh production_external_evidence_import_gate
 require_script verify_capture_library_qoe_csv.sh production_capture_qoe_csv_gate
+require_script verify_capture_library_evidence.sh production_capture_evidence_gate
 require_script run_phase5_production_gate.sh production_gate_wrapper
 require_script verify_phase5_production_gate.sh production_gate_verifier
 require_script verify_no_selfmade_media_stack.sh no_selfmade_media_stack_gate
@@ -566,6 +567,20 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_manifest_sha256' production_gate_release_capture_manifest_sha256_index
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'capture manifest sha256 mismatch' production_gate_release_capture_manifest_sha256_verifier
+require_doc_pattern scripts/verify_capture_library_evidence.sh \
+  'capture_library_evidence_verification=true' production_gate_capture_evidence_verifier
+require_doc_pattern scripts/verify_capture_library_evidence.sh \
+  'capture QoE summary manifest sha256 mismatch' production_gate_capture_qoe_manifest_sha_verifier
+require_doc_pattern scripts/run_webrtc_first_qoe_capture_library_720p.sh \
+  'capture_manifest_sha256=' production_gate_capture_qoe_summary_manifest_sha_collector
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'verify_capture_library_evidence.sh' production_gate_capture_evidence_audit
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'capture_library_evidence' production_gate_external_import_capture_evidence_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'capture QoE manifest sha256 mismatch' production_readiness_external_capture_qoe_sha_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_capture_library_evidence.sh' production_gate_capture_evidence_reverify
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'capture_qoe_minima' production_gate_release_capture_qoe_minima
 require_doc_pattern scripts/run_phase5_production_gate.sh \
@@ -580,8 +595,8 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_capture_library_qoe_csv.sh' production_gate_release_capture_qoe_reverify
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence capture QoE rows are incomplete' production_gate_release_capture_qoe_rows
-require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
-  'verify_capture_library_qoe_csv.sh' production_gate_capture_qoe_csv_audit
+require_doc_pattern scripts/verify_capture_library_evidence.sh \
+  'capture QoE CSV verification failed' production_gate_capture_qoe_csv_audit
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
   'qoe_csv=' production_gate_capture_qoe_csv_evidence
 require_doc_pattern scripts/run_webrtc_first_qoe_capture_library_720p.sh \

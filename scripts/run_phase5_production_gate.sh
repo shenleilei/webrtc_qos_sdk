@@ -337,8 +337,12 @@ def capture_categories_cover(values, manifest_values):
 def capture_qoe_summary_complete(values, manifest_values):
     rows = number_value(values, "rows")
     pass_rows = number_value(values, "pass_rows", -1)
+    manifest_sha = manifest_values.get("capture_manifest_sha256", "")
+    qoe_manifest_sha = values.get("capture_manifest_sha256", "")
     return (
         values.get("capture_qoe_verification") == "true"
+        and valid_sha256(manifest_sha)
+        and qoe_manifest_sha == manifest_sha
         and rows > 0
         and pass_rows == rows
         and capture_categories_cover(values, manifest_values)
@@ -803,6 +807,7 @@ doc = {
             "required_categories", capture_manifest.get("required_categories", "")
         ),
         "manifest_sha256": capture_manifest.get("capture_manifest_sha256", ""),
+        "qoe_manifest_sha256": capture_qoe.get("capture_manifest_sha256", ""),
         "rows": parse_number(capture_qoe.get("rows", "0")),
         "pass_rows": parse_number(capture_qoe.get("pass_rows", "0")),
         "playable_ratio_min": parse_number(capture_qoe.get("playable_ratio_min", "0")),
