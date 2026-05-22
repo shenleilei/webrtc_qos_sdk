@@ -53,6 +53,32 @@ require_failed_gate_debug_bundle() {
     "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" >/dev/null
 }
 
+require_failed_readiness_evidence() {
+  summary_has '^step=phase5_production_readiness status=fail ' || return 0
+  summary_has '^phase5_readiness_dir=' ||
+    fail "failed readiness gate summary missing readiness directory"
+  local readiness_dir="${GATE_DIR}/phase5_production_readiness"
+  local readiness_summary="${readiness_dir}/phase5_production_readiness_summary.txt"
+  require_file "${readiness_summary}"
+  require_file "${readiness_dir}/files.txt"
+  require_file "${readiness_dir}/manifest.sha256"
+  require_file "${readiness_dir}/logs/webrtc_modules.log"
+  require_file "${readiness_dir}/logs/capture_manifest.log"
+  require_file "${readiness_dir}/logs/real_renderer.log"
+  (
+    cd "${readiness_dir}"
+    sha256sum -c manifest.sha256 >/dev/null
+  )
+  rg -q '^phase5_production_readiness_status=not_ready$' "${readiness_summary}" ||
+    fail "failed readiness evidence did not record not_ready"
+  if ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules|soak_config) status=fail ' \
+      "${readiness_summary}" &&
+      ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules) status=skipped ' \
+        "${readiness_summary}"; then
+    fail "failed readiness evidence has no actionable failed/skipped readiness check"
+  fi
+}
+
 require_success_debug_bundle() {
   summary_has '^phase5_debug_bundle=' ||
     fail "passed gate summary missing phase5 debug bundle directory"
@@ -191,6 +217,7 @@ else
   if summary_has '^phase5_production_gate_status=fail$'; then
     summary_has '^step=[^ ]+ status=fail ' ||
       fail "failed gate summary missing failed step"
+    require_failed_readiness_evidence
     require_failed_gate_debug_bundle
   elif summary_has '^phase5_production_gate_status=pass$'; then
     require_success_readiness

@@ -153,6 +153,8 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_success_readiness' production_gate_success_readiness_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_failed_gate_debug_bundle' production_gate_failure_bundle_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'require_failed_readiness_evidence' production_gate_failed_readiness_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'phase5_production_readiness' production_gate_runs_readiness_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
