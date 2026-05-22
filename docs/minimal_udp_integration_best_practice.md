@@ -586,7 +586,9 @@ bitrate/FPS/NACK/retransmission 怎么变化”。
 
 `runtime_config.json` 是脱敏后的运行配置 dump，只记录 role、factory、UDP 边界、
 log/metrics/alerts 开关和 bundle 内相对路径，不记录媒体 bytes、原始帧、鉴权材料或
-运行机绝对目录。`verify_phase5_debug_bundle.sh` 会把这些脱敏标记作为硬门禁检查。
+运行机绝对目录。`verify_phase5_debug_bundle.sh` 会把这些脱敏标记作为硬门禁检查，
+并要求 push/server/play 日志中都存在 `config_dump`，确认每个 role 的实际启动配置
+快照可用于离线排查。
 
 ## 8. 错误码和运行契约
 

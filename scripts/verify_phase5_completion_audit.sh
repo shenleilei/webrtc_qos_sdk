@@ -125,6 +125,8 @@ require_doc_pattern scripts/verify_phase5_metrics.sh \
   'validated_metrics_rotation' metrics_rotation_gate
 require_doc_pattern scripts/verify_phase5_alerts.sh \
   'validated_alert_rotation' alerts_rotation_gate
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'config_dump=pass' debug_bundle_config_dump_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_phase5_debug_bundle.sh' production_gate_debug_bundle_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \

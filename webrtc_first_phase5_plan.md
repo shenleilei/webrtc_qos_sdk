@@ -717,6 +717,7 @@ bundle 内相对路径；媒体 bytes、原始帧、鉴权材料和运行机绝�
 - metrics summary 覆盖三类 role。
 - weak-network alert 规则齐全。
 - timeline 同时包含 log/metric/alert 三类事件。
+- push/server/play 日志中都有 `config_dump`，且只包含脱敏配置摘要。
 - runtime config 覆盖 push/server/play、日志/metrics/alerts 开关和脱敏标记。
 - `manifest.sha256` 可校验。
 - bundle 中不出现 `payload/annexb_bytes/rtp_bytes/token/secret/password` 类字段。

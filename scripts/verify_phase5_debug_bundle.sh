@@ -83,6 +83,50 @@ required_identity = {
     "sender_ssrc",
     "receiver_id",
 }
+required_config_dump = {
+    "schema_version",
+    "transport",
+    "peer_connection",
+    "resolved_track_count",
+    "start_bitrate_bps",
+    "min_bitrate_bps",
+    "max_bitrate_bps",
+    "twcc_extension_id",
+    "rtcp_sr_rr_interval_ms",
+    "logging_enabled",
+    "log_json_lines",
+    "log_max_file_bytes",
+    "log_max_files",
+    "log_max_queue_records",
+    "metrics_enabled",
+    "metrics_interval_ms",
+    "metrics_include_track_snapshots",
+    "alerts_enabled",
+    "alerts_high_loss_fraction_q8",
+    "alerts_low_target_bps",
+    "alerts_low_encoder_fps",
+    "redaction_media_bytes",
+    "redaction_runtime_paths",
+}
+forbidden_config_dump_keys = {
+    "payload",
+    "annexb_bytes",
+    "rtp_bytes",
+    "token",
+    "secret",
+    "password",
+    "log_dir",
+    "log_directory",
+    "metrics_dir",
+    "metrics_directory",
+    "alerts_dir",
+    "alerts_directory",
+    "directory",
+    "path",
+    "absolute_path",
+    "runtime_path",
+    "runtime_directory",
+}
 
 def read_jsonl(path):
     records = []
@@ -107,6 +151,41 @@ for role in roles:
         raise SystemExit(f"missing metric records for role {role}")
     if not alert_records:
         raise SystemExit(f"missing alert records for role {role}")
+    config_dumps = [
+        record for record in log_records if record.get("event") == "config_dump"
+    ]
+    if not config_dumps:
+        raise SystemExit(f"missing config_dump log record for role {role}")
+    for index, record in enumerate(config_dumps, 1):
+        missing = required_config_dump - record.keys()
+        if missing:
+            raise SystemExit(
+                f"config_dump:{role}:{index}: missing fields {sorted(missing)}"
+            )
+        leaked_keys = forbidden_config_dump_keys & {
+            str(key).lower() for key in record.keys()
+        }
+        if leaked_keys:
+            raise SystemExit(
+                f"config_dump:{role}:{index}: forbidden fields {sorted(leaked_keys)}"
+            )
+        if record.get("schema_version") != 1:
+            raise SystemExit(f"config_dump:{role}:{index}: bad schema_version")
+        if record.get("transport") != "udp" or record.get("peer_connection") is not False:
+            raise SystemExit(f"config_dump:{role}:{index}: bad transport boundary")
+        if int(record.get("resolved_track_count", 0)) <= 0:
+            raise SystemExit(f"config_dump:{role}:{index}: bad track count")
+        if record.get("redaction_media_bytes") != "omitted":
+            raise SystemExit(f"config_dump:{role}:{index}: missing media redaction")
+        if record.get("redaction_runtime_paths") != "omitted":
+            raise SystemExit(f"config_dump:{role}:{index}: missing path redaction")
+        for key, value in record.items():
+            if key in {"redaction_media_bytes", "redaction_runtime_paths"}:
+                continue
+            if isinstance(value, str) and value.startswith("/"):
+                raise SystemExit(
+                    f"config_dump:{role}:{index}: leaked absolute path in {key}"
+                )
     for collection_name, records in [
         ("log", log_records),
         ("metric", metric_records),
@@ -192,7 +271,7 @@ for key in ("media_bytes", "raw_frames", "auth_material", "absolute_runtime_path
         raise SystemExit(f"runtime_config.json missing redaction marker {key}")
 
 print(
-    "validated_phase5_debug_bundle roles=%s alerts=%d timeline=%d"
+    "validated_phase5_debug_bundle roles=%s alerts=%d timeline=%d config_dump=pass"
     % (",".join(sorted(roles)), len(alerts), len(timeline))
 )
 PY
