@@ -541,6 +541,7 @@ if report.get("source") != "phase5_phase2_external_evidence_import":
     raise SystemExit("external phase2 import source mismatch")
 artifacts = report.get("artifacts", {})
 for key in (
+    "phase2_evidence_metadata",
     "phase2_completion_audit_metrics",
     "production_soak_summary",
     "production_soak_csv",
@@ -683,6 +684,7 @@ if report.get("import_status") != "pass":
 checks = {item.get("check"): item.get("status") for item in report.get("checks", [])}
 for required in (
     "bundle_manifest",
+    "bundle_git_worktree_clean",
     "phase2_completion_audit",
     "phase2_completion_audit_metrics",
     "production_soak",
@@ -698,6 +700,7 @@ for required in (
         raise SystemExit(f"external phase2 import missing pass check {required}")
 artifacts = report.get("artifacts", {})
 for key in (
+    "phase2_evidence_metadata",
     "phase2_completion_audit_metrics",
     "production_soak_summary",
     "production_soak_csv",
@@ -789,6 +792,8 @@ require_phase2_completion_evidence() {
       fail "imported Phase-2 evidence report did not pass"
     rg -q '^check=git_head_match status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
       fail "imported Phase-2 evidence did not match git head"
+    rg -q '^check=bundle_git_worktree_clean status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
+      fail "imported Phase-2 evidence was not generated from a clean tracked worktree"
     rg -q '^check=phase2_completion_audit_metrics status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
       fail "imported Phase-2 evidence did not include completion audit metrics"
   fi

@@ -75,6 +75,13 @@ copy_dir_if_exists() {
   printf 'COLLECTED_AT_UTC=%q\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if git -C "${SDK_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
     printf 'GIT_HEAD=%q\n' "$(git -C "${SDK_ROOT}" rev-parse HEAD)"
+    printf 'GIT_BRANCH=%q\n' "$(git -C "${SDK_ROOT}" rev-parse --abbrev-ref HEAD)"
+    if git -C "${SDK_ROOT}" diff --quiet --ignore-submodules -- &&
+        git -C "${SDK_ROOT}" diff --cached --quiet --ignore-submodules --; then
+      printf 'GIT_TRACKED_WORKTREE_CLEAN=%q\n' "1"
+    else
+      printf 'GIT_TRACKED_WORKTREE_CLEAN=%q\n' "0"
+    fi
   fi
 } >"${METADATA_FILE}"
 

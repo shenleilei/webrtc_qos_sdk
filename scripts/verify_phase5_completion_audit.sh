@@ -424,6 +424,12 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'webrtc_qos_phase2_completion_audit_info' production_gate_phase2_completion_metrics_verifier
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'phase2_completion_audit_metrics' production_gate_external_import_phase2_completion_metrics
+require_doc_pattern scripts/collect_webrtc_first_phase2_evidence_bundle.sh \
+  'GIT_TRACKED_WORKTREE_CLEAN' production_gate_phase2_bundle_git_clean_collector
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'bundle_git_worktree_clean' production_gate_external_import_git_clean_gate
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'bundle_git_worktree_clean status=pass' production_gate_external_import_git_clean_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \

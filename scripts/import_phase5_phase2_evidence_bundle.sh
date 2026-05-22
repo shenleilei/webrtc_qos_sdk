@@ -232,6 +232,7 @@ for value in (
 
 checks = {
     "bundle_manifest": os.path.exists(os.path.join(bundle_dir, "manifest.sha256")),
+    "bundle_git_worktree_clean": metadata.get("GIT_TRACKED_WORKTREE_CLEAN") == "1",
     "phase2_completion_audit": has_line(audit_summary, "phase2_completion_audit=pass")
     and has_line(audit_summary, "phase2_completion_status=complete"),
     "phase2_completion_audit_metrics": has_file(audit_metrics),
@@ -268,10 +269,12 @@ report = {
     "require_git_head_match": require_git_head_match == "1",
     "observed_git_heads": observed_git_heads,
     "git_head_match": git_match,
+    "source_git_worktree_clean": metadata.get("GIT_TRACKED_WORKTREE_CLEAN") == "1",
     "requirements": {
         "min_production_soak_minutes": float(min_soak_minutes),
         "formal_capture_required": True,
         "real_renderer_required": True,
+        "clean_tracked_worktree_required": True,
         "fixture_capture_allowed": allow_fixture_capture == "1",
     },
     "production_soak": {
@@ -309,6 +312,7 @@ report = {
     ],
     "artifacts": {
         "phase2_evidence_bundle": rel(bundle_dir),
+        "phase2_evidence_metadata": rel(os.path.join(bundle_dir, "metadata.env")),
         "phase2_completion_audit": rel(audit_summary),
         "phase2_completion_audit_metrics": rel(audit_metrics),
         "phase2_completion_audit_log": rel(
@@ -335,6 +339,10 @@ with open(report_summary, "w", encoding="utf-8") as fh:
     fh.write(f"expected_git_head={expected_git_head or 'unknown'}\n")
     fh.write(f"observed_git_heads={','.join(observed_git_heads) or 'none'}\n")
     fh.write(f"git_head_match={'true' if git_match else 'false'}\n")
+    fh.write(
+        "source_git_worktree_clean="
+        f"{'true' if metadata.get('GIT_TRACKED_WORKTREE_CLEAN') == '1' else 'false'}\n"
+    )
     for name, passed in sorted(checks.items()):
         fh.write(f"check={name} status={'pass' if passed else 'fail'}\n")
     fh.write(f"phase2_completion_audit_metrics={rel(audit_metrics)}\n")

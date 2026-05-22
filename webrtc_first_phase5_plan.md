@@ -238,7 +238,8 @@ PHASE2_EVIDENCE_BUNDLE_DIR=/path/to/phase2_evidence_bundle \
 bundle 到 P5 gate 目录内，复验 bundle `manifest.sha256`，重新运行
 `verify_webrtc_first_phase2_completion_audit.sh`，要求 production soak、真实 renderer、
 正式 capture library manifest、capture QoE CSV、completion audit `.prom` 指标和 evidence bundle 全部 pass，并默认要求
-bundle 里的 git head 与当前 P5 gate 的 git head 一致。导入报告还必须索引原始证据：
+bundle 里的 git head 与当前 P5 gate 的 git head 一致，且 bundle metadata 证明外部测试机
+tracked worktree clean。导入报告还必须索引原始证据：
 production soak summary/CSV/config/archive、真实 renderer summary/metrics、capture
 manifest summary、capture QoE CSV/summary，并输出 `production_soak_raw_evidence`、
 `real_renderer_raw_evidence`、`capture_qoe_raw_evidence` 三个检查项，避免外部机器只给
@@ -1366,7 +1367,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
 - 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 manifest、completion
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
-  capture QoE CSV。
+  capture QoE CSV，同时要求 bundle metadata 记录 clean tracked worktree。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
 - 正式 production gate metadata 和 release evidence 必须证明 tracked worktree clean；
   未跟踪 artifacts/build 目录不阻塞，但未提交的 tracked 源码修改不能生成 pass 证据。
