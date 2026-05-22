@@ -6,6 +6,7 @@ WEBRTC_PREFIX="${WEBRTC_PREFIX:-${PREFIX:-${SDK_ROOT}/dist/linux-x86_64}}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SDK_ROOT}/artifacts/phase5_production_readiness}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_DIR}/phase5_production_readiness_summary.txt}"
 LOG_DIR="${LOG_DIR:-${OUTPUT_DIR}/logs}"
+NEXT_REQUIRED_ACTIONS_FILE="${OUTPUT_DIR}/next_required_actions.txt"
 FILES_FILE="${FILES_FILE:-${OUTPUT_DIR}/files.txt}"
 MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_DIR}/manifest.sha256}"
 
@@ -27,18 +28,56 @@ RUN_REAL_RENDERER="${RUN_REAL_RENDERER:-1}"
 
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}" "${LOG_DIR}"
+: >"${NEXT_REQUIRED_ACTIONS_FILE}"
 
 failures=0
 skipped_count=0
+action_count=0
 
 write_summary() {
   printf '%s\n' "$*" | tee -a "${SUMMARY_FILE}"
+}
+
+action_for_check() {
+  local name="$1"
+  case "${name}" in
+    script_*)
+      local script="${name#script_}"
+      printf 'restore_or_make_executable script=scripts/%s before rerunning readiness' "${script}"
+      ;;
+    soak_config)
+      printf 'set SOAK_MINUTES>=%s for the formal production gate' "${MIN_PRODUCTION_SOAK_MINUTES}"
+      ;;
+    webrtc_modules)
+      printf 'build_or_install WebRTC modules and set PREFIX or WEBRTC_PREFIX, then run scripts/verify_webrtc_modules.sh with REQUIRE_ALL=1'
+      ;;
+    capture_manifest)
+      printf 'provide formal capture library manifest.csv with required categories and set CAPTURE_LIBRARY_DIR/CAPTURE_LIBRARY_MANIFEST'
+      ;;
+    real_renderer)
+      printf 'run on a host with a real display/GPU renderer and rerun scripts/verify_real_renderer_smoke.sh with REQUIRE_REAL_RENDERER=1'
+      ;;
+    *)
+      printf 'fix check=%s and rerun scripts/verify_phase5_production_readiness.sh' "${name}"
+      ;;
+  esac
+}
+
+record_action() {
+  local name="$1"
+  local status="$2"
+  local reason="$3"
+  printf 'action=%s status=%s reason=%s required=%s\n' \
+    "${name}" "${status}" "${reason}" "$(action_for_check "${name}")" \
+    >>"${NEXT_REQUIRED_ACTIONS_FILE}"
+  action_count=$((action_count + 1))
 }
 
 record_fail() {
   local name="$1"
   local reason="$2"
   write_summary "check=${name} status=fail reason=${reason}"
+  record_action "${name}" "fail" "${reason}"
   failures=$((failures + 1))
 }
 
@@ -52,6 +91,7 @@ record_skip() {
   local name="$1"
   local reason="$2"
   write_summary "check=${name} status=skipped ${reason}"
+  record_action "${name}" "skipped" "${reason}"
   skipped_count=$((skipped_count + 1))
 }
 
@@ -99,6 +139,11 @@ if git -C "${SDK_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 for script in \
+    run_phase5_implementation_gate.sh \
+    verify_phase5_implementation_gate.sh \
+    verify_phase5_release_contract.sh \
+    collect_phase5_debug_bundle.sh \
+    verify_phase5_debug_bundle.sh \
     verify_webrtc_modules.sh \
     verify_capture_library_manifest.sh \
     verify_real_renderer_smoke.sh \
@@ -161,6 +206,8 @@ fi
 
 write_summary "failure_count=${failures}"
 write_summary "skipped_count=${skipped_count}"
+write_summary "action_count=${action_count}"
+write_summary "next_required_actions_file=${NEXT_REQUIRED_ACTIONS_FILE}"
 if [[ "${failures}" -eq 0 && "${skipped_count}" -eq 0 ]]; then
   write_summary "phase5_production_readiness_status=ready"
 else
@@ -172,7 +219,7 @@ write_summary "manifest=${MANIFEST_FILE}"
 write_manifest
 
 if rg -q 'payload|annexb_bytes|rtp_bytes|token|secret|password' \
-  "${SUMMARY_FILE}"; then
+  "${SUMMARY_FILE}" "${NEXT_REQUIRED_ACTIONS_FILE}"; then
   echo "phase5 production readiness failed: sensitive field in summary" >&2
   exit 1
 fi

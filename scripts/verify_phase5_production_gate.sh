@@ -64,6 +64,7 @@ require_failed_readiness_evidence() {
   require_file "${readiness_summary}"
   require_file "${readiness_dir}/files.txt"
   require_file "${readiness_dir}/manifest.sha256"
+  require_file "${readiness_dir}/next_required_actions.txt"
   require_file "${readiness_dir}/logs/webrtc_modules.log"
   require_file "${readiness_dir}/logs/capture_manifest.log"
   require_file "${readiness_dir}/logs/real_renderer.log"
@@ -73,12 +74,17 @@ require_failed_readiness_evidence() {
   )
   rg -q '^phase5_production_readiness_status=not_ready$' "${readiness_summary}" ||
     fail "failed readiness evidence did not record not_ready"
-  if ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules|soak_config) status=fail ' \
+  if ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules|soak_config|script_[^ ]+) status=fail ' \
       "${readiness_summary}" &&
       ! rg -q '^check=(capture_manifest|real_renderer|webrtc_modules) status=skipped ' \
         "${readiness_summary}"; then
     fail "failed readiness evidence has no actionable failed/skipped readiness check"
   fi
+  rg -q '^next_required_actions_file=' "${readiness_summary}" ||
+    fail "failed readiness evidence missing next required actions pointer"
+  rg -q '^action=(capture_manifest|real_renderer|webrtc_modules|soak_config|script_[^ ]+) status=(fail|skipped) ' \
+    "${readiness_dir}/next_required_actions.txt" ||
+    fail "failed readiness evidence missing actionable remediation file"
 }
 
 require_failed_implementation_evidence() {
@@ -153,6 +159,8 @@ require_success_readiness() {
     fail "phase5 production readiness recorded failures"
   rg -q '^skipped_count=0$' "${readiness_summary}" ||
     fail "phase5 production readiness recorded skipped checks"
+  rg -q '^action_count=0$' "${readiness_summary}" ||
+    fail "phase5 production readiness recorded remediation actions"
   rg -q '^check=webrtc_modules status=pass ' "${readiness_summary}" ||
     fail "phase5 production readiness missing WebRTC modules pass"
   rg -q '^check=capture_manifest status=pass ' "${readiness_summary}" ||

@@ -189,6 +189,12 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'phase5_production_readiness_status=ready' production_readiness_status_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'next_required_actions_file' production_readiness_actions_file
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'action_for_check' production_readiness_action_mapping
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'next_required_actions.txt' production_gate_failed_readiness_actions
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   "! -path './manifest.sha256'" production_gate_top_manifest_scope
 

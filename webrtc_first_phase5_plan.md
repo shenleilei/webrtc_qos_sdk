@@ -173,8 +173,8 @@ alerts 产物、debug bundle manifest 和运行 JSON 统一身份字段，避免
 `verify_phase5_production_readiness.sh` 是正式验收前的轻量 preflight。它不跑长时
 soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture manifest、
 真实 renderer 可用性和 Phase-5 gate/audit 脚本是否齐全，并输出带 manifest 的
-readiness 报告。默认本地缺正式素材或真实 renderer 时只生成 not-ready 报告；
-正式 CI 可设置 `REQUIRE_READY=1` 作为硬门禁。
+readiness 报告和 `next_required_actions.txt`。默认本地缺正式素材或真实 renderer
+时只生成 not-ready 报告；正式 CI 可设置 `REQUIRE_READY=1` 作为硬门禁。
 
 wrapper 会先跑并复验 Phase-5 implementation gate，再跑 release contract、production
 readiness 和 debug bundle 门禁，然后调用底层
@@ -187,7 +187,8 @@ gate 目录内，保证正式证据自包含。非 dry-run 失败时会自动收
 config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包存在且
 manifest 可离线校验；如果 implementation gate 已经 pass，即使后续 readiness 或 soak
 失败，也会离线复验这份实现证据；如果失败发生在 implementation 或 readiness 阶段，
-还会离线复验对应 summary、manifest 和失败 step/check；在 gate 成功时会离线复验
+还会离线复验对应 summary、manifest、失败 step/check 和 `next_required_actions.txt`；
+在 gate 成功时会离线复验
 `phase5_implementation_gate/` 的实现证据、`phase5_debug_bundle/` 的日志、metrics、
 alerts、timeline 和 runtime config，离线复验
 `phase5_production_readiness/` 的 ready 状态，并直接复验底层 Phase-2
@@ -1238,7 +1239,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   production soak、真实 renderer、正式 capture library 均为 pass。
 - 非 dry-run 失败时自动输出 verified `failure_debug_bundle/`，并由顶层 verifier
   强制校验。
-- readiness 失败时必须保留并校验 readiness summary、logs 和 manifest。
+- readiness 失败时必须保留并校验 readiness summary、logs、manifest 和
+  `next_required_actions.txt`。
 - completion audit 对“implementation gate 已通过但正式生产证据缺失”和“正式完成”
   做硬区分。
 
