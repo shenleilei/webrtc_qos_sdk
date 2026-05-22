@@ -682,6 +682,10 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_top_manifest_consistency' production_gate_top_manifest_file_set_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence missing production gate metrics' production_gate_release_top_metrics_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence contains duplicate ids' production_gate_release_duplicate_id_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'release evidence contains unexpected ids' production_gate_release_unexpected_id_verifier
 
 if has_file "${PHASE5_DEBUG_BUNDLE_DIR}/manifest.sha256" &&
     has_file "${PHASE5_DEBUG_BUNDLE_DIR}/runtime_config.json"; then

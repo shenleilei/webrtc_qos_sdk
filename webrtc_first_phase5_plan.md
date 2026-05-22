@@ -220,7 +220,9 @@ production gate、底层 Phase-2 completion audit `.prom` 指标、production so
 正式 capture library、capture manifest summary、capture QoE CSV、capture QoE summary、
 evidence bundle 和 completion audit 的 pass 状态及相对 artifact 路径，同时记录
 production soak rows、real renderer backend、readiness report/metrics/risk milestone 指针、debug health/monitoring/incident 指针、顶层 gate 文件清单/sha256 manifest/metrics 指针、capture QoE rows/minima 和
-`multi_receiver_fanout=deferred_before_p5_completion`。非 dry-run 失败时会自动收集并校验
+`multi_receiver_fanout=deferred_before_p5_completion`。release evidence verifier 会按固定
+evidence id 集合校验，重复 id 或未知 id 都会失败，避免发布证据里混入未审计条目。
+非 dry-run 失败时会自动收集并校验
 `failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和 runtime
 config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包存在且
 manifest 可离线校验；如果 implementation gate 已经 pass，即使后续 readiness 或 soak

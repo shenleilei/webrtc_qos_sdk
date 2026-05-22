@@ -1133,9 +1133,14 @@ evidence = doc.get("evidence")
 if not isinstance(evidence, list):
     raise SystemExit("release evidence list missing")
 by_id = {item.get("id"): item for item in evidence}
+if len(by_id) != len(evidence):
+    raise SystemExit("release evidence contains duplicate ids")
 missing = required_evidence - by_id.keys()
 if missing:
     raise SystemExit(f"release evidence missing ids: {sorted(missing)}")
+unexpected = by_id.keys() - required_evidence
+if unexpected:
+    raise SystemExit(f"release evidence contains unexpected ids: {sorted(unexpected)}")
 for evidence_id, item in by_id.items():
     if item.get("status") != "pass":
         raise SystemExit(f"release evidence {evidence_id} did not pass")
