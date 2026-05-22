@@ -157,6 +157,8 @@ BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
   scripts/verify_phase5_debug_bundle.sh
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_minimal_udp_external_app.sh
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_release_contract.sh
 ```
 
 `verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口。`VERIFY_LEVEL=smoke` 会串起 no-selfmade、WebRTC module smoke、外部 CMake package、loopback、pacing probe、role facade 和 synthetic 弱网矩阵；`VERIFY_LEVEL=qoe` 在 smoke 基础上增加低 RPS/低码率真实 H264 QoE 和恢复时间分布；`VERIFY_LEVEL=production` 会继续进入 production soak，并可通过 `REQUIRE_REAL_RENDERER=1 / REQUIRE_CAPTURE_LIBRARY=1` 把真实 renderer 和正式采集素材库变成硬门禁。当前 `SOAK_MINUTES=0` 的默认本地 production smoke 只验证 runner/archive 链路，默认配置为 `FRAMES_PER_CYCLE=12 / CONTENT_MODES=block_motion / SCENARIOS=weak_network_low_rps_low_bitrate`；正式验收仍必须显式跑 `SOAK_MINUTES>=120`。
@@ -199,6 +201,8 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 `collect_phase5_debug_bundle.sh` / `verify_phase5_debug_bundle.sh` 是 Phase-5 排障包门禁：collector 默认跑一次 UDP selftest，同时开启 `--log-dir / --metrics-dir / --alerts-dir`，把 metadata、build config、git status、session config、runtime config dump、push/server/play 日志、metrics、alerts、timeline、first problem 和 sha256 manifest 收集到一个目录；verifier 离线校验必需文件、JSON 字段、弱网告警规则、timeline、manifest、runtime config 脱敏标记，以及 bundle 中不能出现 payload/token/secret/password 类字段。
 
 `verify_phase5_minimal_udp_external_app.sh` 是 Phase-5 外部最小 UDP 业务样板门禁：它先从当前源码安装一个临时 SDK prefix，再从 `examples/minimal_udp_app` 用 `find_package(WebRtcQosSdk)` 构建 sender/server/receiver/selftest，验证样板不 include SDK `src/` 或 WebRTC PeerConnection 内部头，并检查 selftest 生成三角色日志、metrics 和 alerts。
+
+`verify_phase5_release_contract.sh` 是 Phase-5 发布契约门禁：它从当前源码安装临时 SDK prefix，检查 public headers、WebRTC adapter headers、role archives、role bundle archives 和 CMake package，再用外部 consumer 分别链接普通 `role_*` 与 `role_*_bundle` target，验证 runtime logging/metrics/alerts 字段和 PeerConnection-free 发布边界。
 
 ## WebRTC-first Demo
 

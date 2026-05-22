@@ -859,8 +859,25 @@ prefix 构建外部 CMake fixture，验证错误返回、日志事件和 alerts 
   - `WebRtcQosSdk::role_*_bundle`
 - dist README 增加 Phase-5 minimal UDP external sample、日志目录和 metrics 说明。
 
+当前已新增发布契约门禁：
+
+```bash
+scripts/verify_phase5_release_contract.sh
+```
+
+该脚本会从当前源码安装临时 SDK prefix，检查 public headers、WebRTC adapter
+headers、role archives、role bundle archives 和 CMake package，再用外部 consumer
+分别链接普通 `role_*` 与 `role_*_bundle` target，验证 runtime
+logging/metrics/alerts 配置字段、三角色工厂函数和 PeerConnection-free 发布边界。
+
 #### 验收标准
 
+- `scripts/verify_phase5_release_contract.sh` 通过。
+- public headers、WebRTC adapter headers、role archives 和 role bundle archives 全部
+  存在于安装 prefix。
+- 外部 CMake consumer 可分别链接普通 `role_*` 和 `role_*_bundle` target。
+- consumer 可使用 logging/metrics/alerts 字段并生成对应运行产物。
+- 发布包不暴露 PeerConnection 依赖，也不带回旧自研媒体栈。
 - 旧外部 CMake consumer 仍能构建和运行。
 - 新 external sample 可只用 install prefix 构建。
 - 发布包不引入完整 WebRTC PeerConnection 依赖。
@@ -1066,7 +1083,22 @@ scripts/verify_phase5_minimal_udp_external_app.sh
 - no PeerConnection / no SDK src include。
 - 日志和 metrics 进入 output dir。
 
-### 6.7 生产验收门禁
+### 6.7 Release contract 门禁
+
+```bash
+scripts/verify_phase5_release_contract.sh
+```
+
+覆盖：
+
+- 安装 prefix 包含 public headers、WebRTC adapter headers、role archives 和 role
+  bundle archives。
+- CMake package 导出普通 `role_*` 和 `role_*_bundle` target。
+- 外部 consumer 分别链接普通 role target 和 role bundle target。
+- runtime logging/metrics/alerts 字段在安装包 consumer 中可用。
+- 发布包不暴露 PeerConnection，也不带回旧自研媒体栈。
+
+### 6.8 生产验收门禁
 
 继续使用：
 
