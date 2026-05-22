@@ -188,6 +188,55 @@ kv_value() {
   sed -n "s/^${key}=//p" "${file}" | tail -n 1
 }
 
+verify_evidence_bundle_manifest_consistency() {
+  python3 - "${EVIDENCE_BUNDLE_DIR}" <<'PY'
+import os
+import sys
+
+bundle_dir = sys.argv[1]
+files_path = os.path.join(bundle_dir, "files.txt")
+manifest_path = os.path.join(bundle_dir, "manifest.sha256")
+
+with open(files_path, "r", encoding="utf-8") as handle:
+    files = [line.strip() for line in handle if line.strip()]
+with open(manifest_path, "r", encoding="utf-8") as handle:
+    manifest_files = []
+    for line_no, line in enumerate(handle, 1):
+        line = line.rstrip("\n")
+        if len(line) < 67:
+            raise SystemExit(
+                f"phase2 evidence bundle manifest line {line_no} is too short"
+            )
+        digest, rel = line.split(None, 1)
+        if len(digest) != 64 or not all(
+            ch in "0123456789abcdefABCDEF" for ch in digest
+        ):
+            raise SystemExit(
+                f"phase2 evidence bundle manifest line {line_no} has invalid sha256"
+            )
+        manifest_files.append(rel.lstrip("*"))
+
+actual_files = []
+for root, _, names in os.walk(bundle_dir):
+    for name in names:
+        path = os.path.join(root, name)
+        rel = os.path.relpath(path, bundle_dir)
+        if rel in {"manifest.sha256", "files.txt"}:
+            continue
+        actual_files.append(rel)
+actual_files.sort()
+
+if files != sorted(files):
+    raise SystemExit("phase2 evidence bundle files.txt is not sorted")
+if files != manifest_files:
+    raise SystemExit(
+        "phase2 evidence bundle files.txt and manifest.sha256 file sets differ"
+    )
+if files != actual_files:
+    raise SystemExit("phase2 evidence bundle files.txt does not match actual files")
+PY
+}
+
 failures=0
 
 audit_fail() {
@@ -240,10 +289,11 @@ fi
 if [[ -n "${EVIDENCE_BUNDLE_DIR}" ]]; then
   if [[ ! -f "${EVIDENCE_BUNDLE_DIR}/manifest.sha256" || ! -f "${EVIDENCE_BUNDLE_DIR}/files.txt" ]]; then
     audit_fail evidence_bundle "missing_manifest bundle=${EVIDENCE_BUNDLE_DIR}"
-  elif (cd "${EVIDENCE_BUNDLE_DIR}" && sha256sum -c manifest.sha256 >/dev/null); then
+  elif (cd "${EVIDENCE_BUNDLE_DIR}" && sha256sum -c manifest.sha256 >/dev/null) &&
+      verify_evidence_bundle_manifest_consistency; then
     audit_pass evidence_bundle "bundle=${EVIDENCE_BUNDLE_DIR}"
   else
-    audit_fail evidence_bundle "sha256_mismatch bundle=${EVIDENCE_BUNDLE_DIR}"
+    audit_fail evidence_bundle "manifest_mismatch bundle=${EVIDENCE_BUNDLE_DIR}"
   fi
 fi
 

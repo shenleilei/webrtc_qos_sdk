@@ -259,7 +259,8 @@ PHASE2_EVIDENCE_BUNDLE_DIR=/path/to/phase2_evidence_bundle \
 ```
 
 导入路径由 `scripts/import_phase5_phase2_evidence_bundle.sh` 负责。它会复制外部
-bundle 到 P5 gate 目录内，复验 bundle `manifest.sha256`，重新运行
+bundle 到 P5 gate 目录内，复验源 bundle、复制后 bundle 和导入目录的 `files.txt` /
+`manifest.sha256` / 实际文件集合一致性，重新运行
 `verify_webrtc_first_phase2_completion_audit.sh`，要求 production soak、真实 renderer、
 正式 capture library manifest、capture QoE CSV、completion audit `.prom` 指标和 evidence bundle 全部 pass，并默认要求
 bundle 里的 git head 与当前 P5 gate 的 git head 一致，且 bundle metadata 证明外部测试机
@@ -1402,7 +1403,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - Phase-5 release contract gate。
 - Phase-5 debug bundle collect/verify。
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
-- 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 manifest、completion
+- 可选导入专用测试机生成的 Phase-2 evidence bundle，并复验 `files.txt` /
+  `manifest.sha256` / 实际文件集合一致性、completion
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
   capture manifest sha256、capture QoE CSV，同时要求 bundle metadata 记录 clean tracked worktree。
 - production soak archive 必须记录并验证 clean tracked worktree；只允许未跟踪

@@ -574,6 +574,9 @@ require_failed_readiness_evidence() {
         cd "${readiness_dir}/external_phase2_evidence_import"
         sha256sum -c manifest.sha256 >/dev/null
       )
+      verify_top_manifest_consistency \
+        "${readiness_dir}/external_phase2_evidence_import" \
+        "readiness external phase2 import"
     fi
     if [[ -f "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json" ]]; then
       python3 - "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json" <<'PY'
@@ -718,6 +721,9 @@ require_success_readiness() {
       cd "${readiness_dir}/external_phase2_evidence_import"
       sha256sum -c manifest.sha256 >/dev/null
     )
+    verify_top_manifest_consistency \
+      "${readiness_dir}/external_phase2_evidence_import" \
+      "readiness external phase2 import"
     python3 - "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json" <<'PY'
 import json
 import sys
@@ -733,6 +739,7 @@ if report.get("import_status") != "pass":
 checks = {item.get("check"): item.get("status") for item in report.get("checks", [])}
 for required in (
     "bundle_manifest",
+    "bundle_files_manifest_consistency",
     "bundle_git_worktree_clean",
     "phase2_completion_audit",
     "phase2_completion_audit_metrics",
@@ -886,8 +893,17 @@ require_phase2_completion_evidence() {
   if rg -q '^phase2_evidence_source=external_bundle$' "${phase2_summary}"; then
     require_file "${phase2_dir}/phase2_external_evidence_import.json"
     require_file "${phase2_dir}/phase2_external_evidence_import.txt"
+    require_file "${phase2_dir}/files.txt"
+    require_file "${phase2_dir}/manifest.sha256"
+    (
+      cd "${phase2_dir}"
+      sha256sum -c manifest.sha256 >/dev/null
+    )
+    verify_top_manifest_consistency "${phase2_dir}" "phase2 external import"
     rg -q '^import_status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
       fail "imported Phase-2 evidence report did not pass"
+    rg -q '^check=bundle_files_manifest_consistency status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
+      fail "imported Phase-2 evidence manifest file set was not consistent"
     rg -q '^check=git_head_match status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
       fail "imported Phase-2 evidence did not match git head"
     rg -q '^check=bundle_git_worktree_clean status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
@@ -902,6 +918,7 @@ require_phase2_completion_evidence() {
     cd "${evidence_bundle}"
     sha256sum -c manifest.sha256 >/dev/null
   )
+  verify_top_manifest_consistency "${evidence_bundle}" "phase2 evidence bundle"
 
   require_file "${completion_audit}"
   rg -q '^phase2_completion_audit=pass$' "${completion_audit}" ||

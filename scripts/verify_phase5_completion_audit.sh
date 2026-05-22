@@ -365,6 +365,8 @@ require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'debug bundle files.txt does not match actual files' debug_bundle_manifest_actual_files_gate
 require_doc_pattern scripts/collect_phase5_debug_bundle.sh \
+  "! -path './manifest.sha256'" debug_bundle_top_manifest_scope
+require_doc_pattern scripts/collect_phase5_debug_bundle.sh \
   'phase5_monitoring_metrics.prom' debug_bundle_monitoring_metrics_collector
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'phase5_monitoring_metrics.prom' debug_bundle_monitoring_metrics_verifier
@@ -466,10 +468,28 @@ require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'phase2_completion_audit_metrics' production_gate_external_import_phase2_completion_metrics
 require_doc_pattern scripts/collect_webrtc_first_phase2_evidence_bundle.sh \
   'GIT_TRACKED_WORKTREE_CLEAN' production_gate_phase2_bundle_git_clean_collector
+require_doc_pattern scripts/collect_webrtc_first_phase2_evidence_bundle.sh \
+  "! -path './manifest.sha256'" production_gate_phase2_bundle_top_manifest_scope
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'phase2 evidence bundle files.txt and manifest.sha256 file sets differ' production_gate_phase2_bundle_manifest_file_set_verifier
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'phase2 evidence bundle files.txt does not match actual files' production_gate_phase2_bundle_manifest_actual_files_verifier
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'bundle_git_worktree_clean' production_gate_external_import_git_clean_gate
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'source phase2 evidence bundle' production_gate_external_import_source_manifest_verifier
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'copied phase2 evidence bundle' production_gate_external_import_copy_manifest_verifier
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'bundle_files_manifest_consistency' production_gate_external_import_manifest_consistency_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'bundle_git_worktree_clean status=pass' production_gate_external_import_git_clean_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'bundle_files_manifest_consistency status=pass' production_gate_external_import_manifest_consistency_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'verify_top_manifest_consistency "\$\{evidence_bundle\}" "phase2 evidence bundle"' production_gate_phase2_evidence_bundle_manifest_consistency_verifier
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'readiness external phase2 import' production_gate_readiness_external_import_manifest_consistency_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \

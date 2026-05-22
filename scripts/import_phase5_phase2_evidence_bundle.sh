@@ -43,6 +43,51 @@ write_manifest() {
   )
 }
 
+verify_evidence_bundle_manifest_consistency() {
+  local dir="$1"
+  local label="$2"
+  python3 - "${dir}" "${label}" <<'PY'
+import os
+import sys
+
+bundle_dir, label = sys.argv[1:3]
+files_path = os.path.join(bundle_dir, "files.txt")
+manifest_path = os.path.join(bundle_dir, "manifest.sha256")
+
+with open(files_path, "r", encoding="utf-8") as handle:
+    files = [line.strip() for line in handle if line.strip()]
+with open(manifest_path, "r", encoding="utf-8") as handle:
+    manifest_files = []
+    for line_no, line in enumerate(handle, 1):
+        line = line.rstrip("\n")
+        if len(line) < 67:
+            raise SystemExit(f"{label} manifest line {line_no} is too short")
+        digest, rel = line.split(None, 1)
+        if len(digest) != 64 or not all(
+            ch in "0123456789abcdefABCDEF" for ch in digest
+        ):
+            raise SystemExit(f"{label} manifest line {line_no} has invalid sha256")
+        manifest_files.append(rel.lstrip("*"))
+
+actual_files = []
+for root, _, names in os.walk(bundle_dir):
+    for name in names:
+        path = os.path.join(root, name)
+        rel = os.path.relpath(path, bundle_dir)
+        if rel in {"manifest.sha256", "files.txt"}:
+            continue
+        actual_files.append(rel)
+actual_files.sort()
+
+if files != sorted(files):
+    raise SystemExit(f"{label} files.txt is not sorted")
+if files != manifest_files:
+    raise SystemExit(f"{label} files.txt and manifest.sha256 file sets differ")
+if files != actual_files:
+    raise SystemExit(f"{label} files.txt does not match actual files")
+PY
+}
+
 [[ -n "${SOURCE_EVIDENCE_BUNDLE_DIR}" ]] ||
   fail "set PHASE2_EVIDENCE_BUNDLE_DIR or SOURCE_EVIDENCE_BUNDLE_DIR"
 
@@ -80,6 +125,8 @@ esac
   cd "${SOURCE_EVIDENCE_BUNDLE_DIR}"
   sha256sum -c manifest.sha256 >/dev/null
 )
+verify_evidence_bundle_manifest_consistency "${SOURCE_EVIDENCE_BUNDLE_DIR}" \
+  "source phase2 evidence bundle"
 
 rm -rf "${OUTPUT_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${LOG_DIR}"
@@ -99,6 +146,8 @@ cp -a "${SOURCE_EVIDENCE_BUNDLE_DIR}" "${BUNDLE_OUTPUT_DIR}"
   cd "${BUNDLE_OUTPUT_DIR}"
   sha256sum -c manifest.sha256 >/dev/null
 )
+verify_evidence_bundle_manifest_consistency "${BUNDLE_OUTPUT_DIR}" \
+  "copied phase2 evidence bundle"
 
 if ! env SDK_ROOT="${SDK_ROOT}" \
     OUTPUT_DIR="${AUDIT_OUTPUT_DIR}" \
@@ -279,6 +328,7 @@ for value in (
 
 checks = {
     "bundle_manifest": os.path.exists(os.path.join(bundle_dir, "manifest.sha256")),
+    "bundle_files_manifest_consistency": True,
     "bundle_git_worktree_clean": metadata.get("GIT_TRACKED_WORKTREE_CLEAN") == "1",
     "phase2_completion_audit": has_line(audit_summary, "phase2_completion_audit=pass")
     and has_line(audit_summary, "phase2_completion_status=complete"),

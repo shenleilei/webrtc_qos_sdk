@@ -210,6 +210,7 @@ if min_soak_minutes_number < phase5_minimum:
 checks = {item.get("check"): item.get("status") for item in report.get("checks", [])}
 for required in (
     "bundle_manifest",
+    "bundle_files_manifest_consistency",
     "bundle_git_worktree_clean",
     "phase2_completion_audit",
     "phase2_completion_audit_metrics",
@@ -787,8 +788,8 @@ write_manifest() {
   (
     cd "${OUTPUT_DIR}"
     find . -type f \
-      ! -name 'manifest.sha256' \
-      ! -name 'files.txt' \
+      ! -path './manifest.sha256' \
+      ! -path './files.txt' \
       | sed 's#^\./##' \
       | sort >"${FILES_FILE}"
     while IFS= read -r file; do

@@ -1386,8 +1386,8 @@ PY
 (
   cd "${OUTPUT_DIR}"
   find . -type f \
-    ! -name 'manifest.sha256' \
-    ! -name 'files.txt' \
+    ! -path './manifest.sha256' \
+    ! -path './files.txt' \
     | sed 's#^\./##' \
     | sort >"${FILES_FILE}"
   while IFS= read -r file; do
