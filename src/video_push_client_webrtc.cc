@@ -922,6 +922,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     if (!packet.padding && !packet.retransmission) {
       ++track->sent_rtp_packet_count;
       track->sent_rtp_octet_count += packet.bytes.size();
+      RecordRtpOutput(now_us);
       packet_history_.Store(
           TransportPacketHistoryKey{kSenderPacketHistoryHopId,
                                     track->config.ids.sender_ssrc,
@@ -948,6 +949,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   }
 
   void MaybeWriteMetrics(int64_t now_us) {
+    RefreshRtpOutputGap(now_us);
     if (!metrics_writer_.ShouldWrite(now_us)) {
       return;
     }
@@ -969,6 +971,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
 
   void MaybeWriteQosAlerts(int64_t now_us) {
     const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    RefreshRtpOutputGap(now_us);
     if (alert_config.alert_on_process_tick_gap &&
         snapshot_.process_tick_gap_us >
             static_cast<uint64_t>(alert_config.max_process_tick_gap_ms) *
@@ -982,6 +985,18 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                          static_cast<uint64_t>(
                              alert_config.max_process_tick_gap_ms) *
                              1000);
+    }
+    if (alert_config.alert_on_media_flow_gap) {
+      const uint64_t threshold_us =
+          static_cast<uint64_t>(alert_config.max_rtp_output_gap_ms) * 1000;
+      if (snapshot_.rtp_output_gap_us > threshold_us) {
+        logger_.Warn("sender_rtp_output_gap", config_.session.ids,
+                     Status::Error(StatusCode::kInternalError,
+                                   "sender RTP output gap exceeded threshold"));
+        alert_writer_.Warn("sender_rtp_output_gap", "availability",
+                           config_.session.ids, now_us,
+                           snapshot_.rtp_output_gap_us, threshold_us);
+      }
     }
     if (!alert_config.alert_on_qos_degradation) {
       return;
@@ -1024,6 +1039,34 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     last_process_tick_time_us_ = now_us;
   }
 
+  void RecordRtpOutput(int64_t now_us) {
+    if (last_rtp_output_time_us_ < 0) {
+      snapshot_.rtp_output_gap_us = 0;
+      last_rtp_output_time_us_ = now_us;
+      return;
+    }
+    if (now_us < last_rtp_output_time_us_) {
+      return;
+    }
+    snapshot_.rtp_output_gap_us =
+        static_cast<uint64_t>(now_us - last_rtp_output_time_us_);
+    snapshot_.max_rtp_output_gap_us =
+        std::max(snapshot_.max_rtp_output_gap_us,
+                 snapshot_.rtp_output_gap_us);
+    last_rtp_output_time_us_ = now_us;
+  }
+
+  void RefreshRtpOutputGap(int64_t now_us) {
+    if (last_rtp_output_time_us_ < 0 || now_us < last_rtp_output_time_us_) {
+      return;
+    }
+    snapshot_.rtp_output_gap_us =
+        static_cast<uint64_t>(now_us - last_rtp_output_time_us_);
+    snapshot_.max_rtp_output_gap_us =
+        std::max(snapshot_.max_rtp_output_gap_us,
+                 snapshot_.rtp_output_gap_us);
+  }
+
   VideoPushClientConfig config_;
   RuntimeLogger logger_;
   RuntimeMetricsWriter metrics_writer_;
@@ -1044,6 +1087,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   SenderRateCap sender_rate_cap_;
   uint32_t latest_rtt_ms_ = 0;
   int64_t last_process_tick_time_us_ = -1;
+  int64_t last_rtp_output_time_us_ = -1;
 };
 
 }  // namespace

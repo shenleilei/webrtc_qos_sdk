@@ -79,6 +79,10 @@ required = {
     "process_tick_count",
     "process_tick_gap_us",
     "max_process_tick_gap_us",
+    "rtp_output_gap_us",
+    "max_rtp_output_gap_us",
+    "rtp_input_gap_us",
+    "max_rtp_input_gap_us",
 }
 records = []
 for path in metrics_dir.glob("*.jsonl"):
@@ -142,6 +146,12 @@ for role in ("push", "server", "play"):
         raise SystemExit(f"{role} metrics did not capture process tick count")
     if max(r["max_process_tick_gap_us"] for r in session_records) <= 0:
         raise SystemExit(f"{role} metrics did not capture process tick gap")
+    if role in {"push", "server"}:
+        if max(r["max_rtp_output_gap_us"] for r in session_records) <= 0:
+            raise SystemExit(f"{role} metrics did not capture RTP output gap")
+    if role == "play":
+        if max(r["max_rtp_input_gap_us"] for r in session_records) <= 0:
+            raise SystemExit("play metrics did not capture RTP input gap")
 
 track_ids = {r["track_id"] for r in push_tracks if r["track_id"] != 0}
 if len(track_ids) < 2:

@@ -35,6 +35,13 @@ struct QosSnapshot {
   uint32_t process_tick_count = 0;
   uint64_t process_tick_gap_us = 0;
   uint64_t max_process_tick_gap_us = 0;
+  // Media availability gaps. Push/server update RTP output gaps; play updates
+  // RTP input gaps. A large value means the event loop is alive but media is
+  // not flowing.
+  uint64_t rtp_output_gap_us = 0;
+  uint64_t max_rtp_output_gap_us = 0;
+  uint64_t rtp_input_gap_us = 0;
+  uint64_t max_rtp_input_gap_us = 0;
 };
 
 }  // namespace webrtc_qos

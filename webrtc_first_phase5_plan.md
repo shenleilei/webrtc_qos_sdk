@@ -444,7 +444,8 @@ role config 已追加 `RuntimeMetricsConfig metrics`。当前 JSONL 覆盖
 `session/track` 两类 scope，包含身份字段、target bitrate、FPS、downlink
 loss、NACK、PLI、retransmission、drop、probe/padding，以及
 `process_tick_count / process_tick_gap_us / max_process_tick_gap_us` 等运行循环
-健康度字段。
+健康度字段，以及 `rtp_output_gap_us / max_rtp_output_gap_us`、
+`rtp_input_gap_us / max_rtp_input_gap_us` 等媒体流健康度字段。
 
 #### 指标分层
 
@@ -502,6 +503,8 @@ codec/render 级：
   低阈值强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
 - push/server/play metrics 都包含 process tick gap 字段，用于定位业务线程或
   router event loop 卡顿。
+- push/server/play metrics 覆盖 RTP input/output gap，用于定位线程仍在跑但媒体
+  没流动的问题。
 - metrics 字段文档化，避免把 QoE harness 私有字段误当 public API。
 
 ### 4.4 P0：监控告警规则
@@ -592,11 +595,12 @@ role config 已追加 `RuntimeAlertConfig alerts`。当前 JSONL 覆盖统一身
 
 - push：low target bitrate、low encoder FPS、malformed H264、pacer enqueue
   failure、transport output failure、sender retransmission enqueue/drop、process
-  tick gap。
+  tick gap、sender RTP output gap。
 - server：malformed RTP/RTCP、unsupported RTCP、receiver/sender output failure、
-  high downlink loss、video drop、本地重传 hit/miss、router event loop tick gap。
+  high downlink loss、video drop、本地重传 hit/miss、router event loop tick gap、
+  sender RTP output gap。
 - play：malformed RTP、NACK/PLI、transport output failure、decode output failure、
-  jitter packet drop、process tick gap。
+  jitter packet drop、process tick gap、receiver RTP input gap。
 
 仓库内 UDP demo 已支持 `--alerts-dir`，文件名为：
 
@@ -613,7 +617,9 @@ scripts/verify_phase5_alerts.sh
 该脚本先用 UDP weak-network selftest 验证降码率/FPS、downlink loss、video drop、
 NACK 和重传告警，再用安装包外部 CMake fixture 验证 malformed RTP、transport
 output failure、decode output failure 和 push/server/play `process_tick_gap`
-availability alert，同时确认对应 warn/error 日志落盘。
+availability alert，以及 sender/server `sender_rtp_output_gap`、play
+`receiver_rtp_input_gap` media-flow availability alert，同时确认对应 warn/error
+日志落盘。
 
 #### 验收标准
 
@@ -621,6 +627,7 @@ availability alert，同时确认对应 warn/error 日志落盘。
 - decode error fixture 能触发 decode 告警。
 - transport output failure 能触发可用性告警。
 - process tick gap fixture 能触发 push/server/play 可用性告警。
+- media flow gap fixture 能触发 sender/server RTP 输出停滞和 play RTP 输入停滞告警。
 - malformed packet 能触发 warn/error 日志和告警。
 - 告警文件进入 evidence bundle。
 - alerts 文件超过阈值会轮转；demo 和 external sample 支持

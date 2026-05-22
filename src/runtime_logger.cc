@@ -169,6 +169,12 @@ std::string RuntimeConfigDumpFields(const SessionConfig& session,
          << ",\"alerts_low_encoder_fps\":" << alerts.low_encoder_fps
          << ",\"alerts_max_process_tick_gap_ms\":"
          << alerts.max_process_tick_gap_ms
+         << ",\"alerts_max_rtp_output_gap_ms\":"
+         << alerts.max_rtp_output_gap_ms
+         << ",\"alerts_max_rtp_input_gap_ms\":"
+         << alerts.max_rtp_input_gap_ms
+         << ",\"alerts_media_flow_gap_enabled\":"
+         << (alerts.alert_on_media_flow_gap ? "true" : "false")
          << ",\"redaction_media_bytes\":\"omitted\""
          << ",\"redaction_runtime_paths\":\"omitted\"";
   return fields.str();

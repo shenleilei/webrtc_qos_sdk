@@ -169,6 +169,9 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       }
       return relay_status;
     }
+    if (!padding) {
+      RecordRtpOutput(receive_time_us);
+    }
     MaybeWriteMetrics(receive_time_us);
     return MaybeSendUplinkTwcc(receive_time_us);
   }
@@ -356,6 +359,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
  private:
   void MaybeWriteMetrics(int64_t now_us) {
+    RefreshRtpOutputGap(now_us);
     MaybeWriteProcessTickAlert(now_us);
     if (!metrics_writer_.ShouldWrite(now_us)) {
       return;
@@ -365,6 +369,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
 
   void MaybeWriteProcessTickAlert(int64_t now_us) {
     const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    RefreshRtpOutputGap(now_us);
     if (!alert_config.alert_on_process_tick_gap) {
       return;
     }
@@ -377,6 +382,18 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       alert_writer_.Warn("process_tick_gap", "availability",
                          config_.session.ids, now_us,
                          snapshot_.process_tick_gap_us, threshold_us);
+    }
+    if (alert_config.alert_on_media_flow_gap) {
+      const uint64_t output_threshold_us =
+          static_cast<uint64_t>(alert_config.max_rtp_output_gap_ms) * 1000;
+      if (snapshot_.rtp_output_gap_us > output_threshold_us) {
+        logger_.Warn("sender_rtp_output_gap", config_.session.ids,
+                     Status::Error(StatusCode::kInternalError,
+                                   "server RTP output gap exceeded threshold"));
+        alert_writer_.Warn("sender_rtp_output_gap", "availability",
+                           config_.session.ids, now_us,
+                           snapshot_.rtp_output_gap_us, output_threshold_us);
+      }
     }
   }
 
@@ -417,6 +434,34 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
         std::max(snapshot_.max_process_tick_gap_us,
                  snapshot_.process_tick_gap_us);
     last_process_tick_time_us_ = now_us;
+  }
+
+  void RecordRtpOutput(int64_t now_us) {
+    if (last_rtp_output_time_us_ < 0) {
+      snapshot_.rtp_output_gap_us = 0;
+      last_rtp_output_time_us_ = now_us;
+      return;
+    }
+    if (now_us < last_rtp_output_time_us_) {
+      return;
+    }
+    snapshot_.rtp_output_gap_us =
+        static_cast<uint64_t>(now_us - last_rtp_output_time_us_);
+    snapshot_.max_rtp_output_gap_us =
+        std::max(snapshot_.max_rtp_output_gap_us,
+                 snapshot_.rtp_output_gap_us);
+    last_rtp_output_time_us_ = now_us;
+  }
+
+  void RefreshRtpOutputGap(int64_t now_us) {
+    if (last_rtp_output_time_us_ < 0 || now_us < last_rtp_output_time_us_) {
+      return;
+    }
+    snapshot_.rtp_output_gap_us =
+        static_cast<uint64_t>(now_us - last_rtp_output_time_us_);
+    snapshot_.max_rtp_output_gap_us =
+        std::max(snapshot_.max_rtp_output_gap_us,
+                 snapshot_.rtp_output_gap_us);
   }
 
   struct ReceiverState {
@@ -728,6 +773,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
   int64_t last_twcc_send_time_us_ = -1;
   int64_t last_rr_send_time_us_ = -1;
   int64_t last_process_tick_time_us_ = -1;
+  int64_t last_rtp_output_time_us_ = -1;
   uint32_t rate_cap_seq_ = 0;
   uint8_t next_twcc_feedback_sequence_ = 1;
   bool started_ = false;

@@ -97,6 +97,8 @@ required_rules = {
         "transport_output_failed",
         "decode_output_failed",
         "process_tick_gap",
+        "sender_rtp_output_gap",
+        "receiver_rtp_input_gap",
     },
 }[mode]
 
@@ -221,6 +223,8 @@ webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir,
   config.file.max_files = max_files;
   config.suppress_repeated_alerts_ms = 0;
   config.max_process_tick_gap_ms = 40;
+  config.max_rtp_output_gap_ms = 40;
+  config.max_rtp_input_gap_ms = 40;
   return config;
 }
 
@@ -363,6 +367,109 @@ int main(int argc, char** argv) {
   if (rtp_packets.empty()) {
     return Fail("producer emitted no RTP packets");
   }
+
+  webrtc_qos::VideoPushClientConfig push_gap_config;
+  push_gap_config.session = session;
+  push_gap_config.alerts = MakeAlerts(alerts_dir, "webrtc_qos_fault_alerts");
+  push_gap_config.logging = MakeLogs(log_dir);
+  push_gap_config.transport_output =
+      [](const webrtc_qos::TransportPacketView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  std::unique_ptr<webrtc_qos::VideoPushClient> push_gap =
+      webrtc_qos::CreateVideoPushClient(push_gap_config);
+  if (!push_gap || !push_gap->Start()) {
+    return Fail("failed to start push RTP output-gap fixture");
+  }
+  webrtc_qos::AnnexBAccessUnitView push_gap_view = push_view;
+  push_gap_view.capture_time_us = 3200000;
+  if (!push_gap->PushAnnexBAccessUnit(push_gap_view)) {
+    return Fail("failed to enqueue first output-gap AU");
+  }
+  for (int i = 0; i < 32; ++i) {
+    if (!push_gap->Process(3200000 + static_cast<int64_t>(i) * 10000)) {
+      return Fail("push output-gap first process failed");
+    }
+  }
+  push_gap_view.capture_time_us = 3400000;
+  if (!push_gap->PushAnnexBAccessUnit(push_gap_view)) {
+    return Fail("failed to enqueue second output-gap AU");
+  }
+  for (int i = 0; i < 32; ++i) {
+    if (!push_gap->Process(3400000 + static_cast<int64_t>(i) * 10000)) {
+      return Fail("push output-gap second process failed");
+    }
+  }
+  if (!push_gap->Process(3600000)) {
+    return Fail("push output-gap alert process failed");
+  }
+  push_gap->Stop();
+
+  webrtc_qos::ServerQosRouterConfig server_gap_config;
+  server_gap_config.session = session;
+  server_gap_config.alerts = MakeAlerts(alerts_dir, "webrtc_qos_fault_alerts");
+  server_gap_config.logging = MakeLogs(log_dir);
+  server_gap_config.sender_output =
+      [](const webrtc_qos::TransportPacketView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  server_gap_config.receiver_output =
+      [](const webrtc_qos::TransportPacketView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  std::unique_ptr<webrtc_qos::ServerQosRouter> server_gap =
+      webrtc_qos::CreateServerQosRouter(server_gap_config);
+  if (!server_gap || !server_gap->Start()) {
+    return Fail("failed to start server RTP output-gap fixture");
+  }
+  if (!server_gap->OnSenderRtp(rtp_packets.front().data(),
+                               rtp_packets.front().size(), 3300000)) {
+    return Fail("server output-gap first RTP failed");
+  }
+  if (!server_gap->OnSenderRtp(rtp_packets.front().data(),
+                               rtp_packets.front().size(), 3500000)) {
+    return Fail("server output-gap second RTP failed");
+  }
+  webrtc_qos::DownlinkQuality server_gap_tick;
+  server_gap_tick.ids = session.ids;
+  server_gap_tick.report_time_us = 3700000;
+  if (!server_gap->OnDownlinkQuality(server_gap_tick)) {
+    return Fail("server output-gap alert tick failed");
+  }
+  server_gap->Stop();
+
+  if (rtp_packets.size() < 2) {
+    return Fail("producer emitted too few RTP packets for input-gap fixture");
+  }
+  webrtc_qos::VideoPlayClientConfig play_gap_config;
+  play_gap_config.session = session;
+  play_gap_config.alerts = MakeAlerts(alerts_dir, "webrtc_qos_fault_alerts");
+  play_gap_config.logging = MakeLogs(log_dir);
+  play_gap_config.transport_output =
+      [](const webrtc_qos::TransportPacketView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  play_gap_config.decoded_access_unit_output =
+      [](const webrtc_qos::AnnexBAccessUnitView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  std::unique_ptr<webrtc_qos::VideoPlayClient> play_gap =
+      webrtc_qos::CreateVideoPlayClient(play_gap_config);
+  if (!play_gap || !play_gap->Start()) {
+    return Fail("failed to start play RTP input-gap fixture");
+  }
+  if (!play_gap->OnRtpPacket(rtp_packets[0].data(), rtp_packets[0].size(),
+                             3100000)) {
+    return Fail("play RTP input-gap first packet failed");
+  }
+  if (!play_gap->OnRtpPacket(rtp_packets[1].data(), rtp_packets[1].size(),
+                             3300000)) {
+    return Fail("play RTP input-gap second packet failed");
+  }
+  if (!play_gap->Process(3500000)) {
+    return Fail("play RTP input-gap alert process failed");
+  }
+  play_gap->Stop();
 
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
@@ -522,6 +629,9 @@ required_rules = {
     "malformed_rtp",
     "transport_output_failed",
     "decode_output_failed",
+    "process_tick_gap",
+    "sender_rtp_output_gap",
+    "receiver_rtp_input_gap",
 }
 records = []
 for path in alerts_dir.glob("webrtc_qos_fault_alerts.*.jsonl"):
@@ -549,6 +659,16 @@ gap_roles = {
 }
 if gap_roles != {"push", "server", "play"}:
     raise SystemExit(f"process_tick_gap missing roles: {sorted(gap_roles)}")
+output_gap_roles = {
+    record["role"] for record in records if record["rule"] == "sender_rtp_output_gap"
+}
+if output_gap_roles != {"push", "server"}:
+    raise SystemExit(f"sender_rtp_output_gap missing roles: {sorted(output_gap_roles)}")
+input_gap_roles = {
+    record["role"] for record in records if record["rule"] == "receiver_rtp_input_gap"
+}
+if input_gap_roles != {"play"}:
+    raise SystemExit(f"receiver_rtp_input_gap missing roles: {sorted(input_gap_roles)}")
 print(
     "validated_fault_alert_records=%d rules=%s"
     % (len(records), ",".join(sorted(rules)))
@@ -618,4 +738,5 @@ require_log '"event":"decode_au_output_failed"' \
   "fault fixture did not write decode output failure log"
 
 echo "validated_process_tick_gap_alert roles=play,push,server"
+echo "validated_media_flow_gap_alert output_roles=push,server input_roles=play"
 echo "phase5_alerts pass alerts_dir=${ALERTS_DIR} log_dir=${LOG_DIR}"

@@ -209,6 +209,8 @@ webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir) {
   config.low_target_bps = 700000;
   config.low_encoder_fps = 20;
   config.max_process_tick_gap_ms = 2000;
+  config.max_rtp_output_gap_ms = 2000;
+  config.max_rtp_input_gap_ms = 2000;
   return config;
 }
 
@@ -447,6 +449,10 @@ for record in metrics:
         "process_tick_count",
         "process_tick_gap_us",
         "max_process_tick_gap_us",
+        "rtp_output_gap_us",
+        "max_rtp_output_gap_us",
+        "rtp_input_gap_us",
+        "max_rtp_input_gap_us",
     ):
         if field not in record:
             raise SystemExit(f"{label}: metric missing {field}")

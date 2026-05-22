@@ -106,6 +106,9 @@ required_config_dump = {
     "alerts_low_target_bps",
     "alerts_low_encoder_fps",
     "alerts_max_process_tick_gap_ms",
+    "alerts_max_rtp_output_gap_ms",
+    "alerts_max_rtp_input_gap_ms",
+    "alerts_media_flow_gap_enabled",
     "redaction_media_bytes",
     "redaction_runtime_paths",
 }
@@ -207,6 +210,8 @@ if min(int(row["records"]) for row in rows) <= 0:
     raise SystemExit("metrics summary has empty role")
 summary_required_columns = {
     "max_process_tick_gap_us",
+    "max_rtp_output_gap_us",
+    "max_rtp_input_gap_us",
     "max_tick_gap_session_id",
     "max_tick_gap_track_id",
     "max_tick_gap_receiver_id",
@@ -299,6 +304,10 @@ metric_required_fields = {
     "process_tick_count",
     "process_tick_gap_us",
     "max_process_tick_gap_us",
+    "rtp_output_gap_us",
+    "max_rtp_output_gap_us",
+    "rtp_input_gap_us",
+    "max_rtp_input_gap_us",
 }
 for role in roles:
     for index, record in enumerate(read_jsonl(root / "metrics" / f"{role}_metrics.jsonl"), 1):

@@ -173,6 +173,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     if (HasRtpPadding(rtp_bytes, rtp_size)) {
       return Status::Ok();
     }
+    RecordRtpInput(receive_time_us);
 
     VideoJitterPacket jitter_packet;
     jitter_packet.payload_type = parsed.payload_type;
@@ -438,6 +439,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   }
 
   void MaybeWriteMetrics(int64_t now_us) {
+    RefreshRtpInputGap(now_us);
     if (!metrics_writer_.ShouldWrite(now_us)) {
       return;
     }
@@ -455,6 +457,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
 
   void MaybeWriteQosAlerts(int64_t now_us) {
     const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    RefreshRtpInputGap(now_us);
     if (alert_config.alert_on_process_tick_gap &&
         snapshot_.process_tick_gap_us >
             static_cast<uint64_t>(alert_config.max_process_tick_gap_ms) *
@@ -468,6 +471,18 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
                          static_cast<uint64_t>(
                              alert_config.max_process_tick_gap_ms) *
                              1000);
+    }
+    if (alert_config.alert_on_media_flow_gap) {
+      const uint64_t threshold_us =
+          static_cast<uint64_t>(alert_config.max_rtp_input_gap_ms) * 1000;
+      if (snapshot_.rtp_input_gap_us > threshold_us) {
+        logger_.Warn("receiver_rtp_input_gap", config_.session.ids,
+                     Status::Error(StatusCode::kInternalError,
+                                   "receiver RTP input gap exceeded threshold"));
+        alert_writer_.Warn("receiver_rtp_input_gap", "availability",
+                           config_.session.ids, now_us,
+                           snapshot_.rtp_input_gap_us, threshold_us);
+      }
     }
     if (!alert_config.alert_on_qos_degradation) {
       return;
@@ -504,6 +519,34 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     last_process_tick_time_us_ = now_us;
   }
 
+  void RecordRtpInput(int64_t now_us) {
+    if (last_rtp_input_time_us_ < 0) {
+      snapshot_.rtp_input_gap_us = 0;
+      last_rtp_input_time_us_ = now_us;
+      return;
+    }
+    if (now_us < last_rtp_input_time_us_) {
+      return;
+    }
+    snapshot_.rtp_input_gap_us =
+        static_cast<uint64_t>(now_us - last_rtp_input_time_us_);
+    snapshot_.max_rtp_input_gap_us =
+        std::max(snapshot_.max_rtp_input_gap_us,
+                 snapshot_.rtp_input_gap_us);
+    last_rtp_input_time_us_ = now_us;
+  }
+
+  void RefreshRtpInputGap(int64_t now_us) {
+    if (last_rtp_input_time_us_ < 0 || now_us < last_rtp_input_time_us_) {
+      return;
+    }
+    snapshot_.rtp_input_gap_us =
+        static_cast<uint64_t>(now_us - last_rtp_input_time_us_);
+    snapshot_.max_rtp_input_gap_us =
+        std::max(snapshot_.max_rtp_input_gap_us,
+                 snapshot_.rtp_input_gap_us);
+  }
+
   VideoPlayClientConfig config_;
   RuntimeLogger logger_;
   RuntimeMetricsWriter metrics_writer_;
@@ -516,6 +559,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   QosSnapshot snapshot_;
   bool started_ = false;
   int64_t last_process_tick_time_us_ = -1;
+  int64_t last_rtp_input_time_us_ = -1;
 };
 
 }  // namespace

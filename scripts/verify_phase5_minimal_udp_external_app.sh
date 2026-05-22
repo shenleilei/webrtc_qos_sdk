@@ -167,6 +167,10 @@ for record in metrics:
         "process_tick_count",
         "process_tick_gap_us",
         "max_process_tick_gap_us",
+        "rtp_output_gap_us",
+        "max_rtp_output_gap_us",
+        "rtp_input_gap_us",
+        "max_rtp_input_gap_us",
     ):
         if field not in record:
             raise SystemExit(f"metric missing {field}")
