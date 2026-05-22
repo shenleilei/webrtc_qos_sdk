@@ -413,6 +413,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       view.metadata.send_time_us = now_us;
       Status status = config_.transport_output(view);
       if (!status) {
+        RecordTransportFailure(track.config.ids, now_us);
         logger_.Error("transport_output_failed", track.config.ids, status);
         if (alert_writer_.config().alert_on_transport_failure) {
           alert_writer_.Error("transport_output_failed", "availability",
@@ -420,6 +421,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
         }
         return status;
       }
+      RecordTransportSuccess();
     }
     return Status::Ok();
   }
@@ -484,6 +486,15 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
                            snapshot_.rtp_input_gap_us, threshold_us);
       }
     }
+    if (alert_config.alert_on_transport_failure &&
+        alert_config.consecutive_transport_failures_threshold > 0 &&
+        snapshot_.consecutive_transport_failures >=
+            alert_config.consecutive_transport_failures_threshold) {
+      alert_writer_.Warn("consecutive_transport_failures", "availability",
+                         config_.session.ids, now_us,
+                         snapshot_.consecutive_transport_failures,
+                         alert_config.consecutive_transport_failures_threshold);
+    }
     if (!alert_config.alert_on_qos_degradation) {
       return;
     }
@@ -545,6 +556,27 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     snapshot_.max_rtp_input_gap_us =
         std::max(snapshot_.max_rtp_input_gap_us,
                  snapshot_.rtp_input_gap_us);
+  }
+
+  void RecordTransportSuccess() {
+    snapshot_.consecutive_transport_failures = 0;
+  }
+
+  void RecordTransportFailure(const TransportIds& ids, int64_t now_us) {
+    ++snapshot_.transport_failure_count;
+    ++snapshot_.consecutive_transport_failures;
+    snapshot_.max_consecutive_transport_failures =
+        std::max(snapshot_.max_consecutive_transport_failures,
+                 snapshot_.consecutive_transport_failures);
+    const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    if (alert_config.alert_on_transport_failure &&
+        alert_config.consecutive_transport_failures_threshold > 0 &&
+        snapshot_.consecutive_transport_failures >=
+            alert_config.consecutive_transport_failures_threshold) {
+      alert_writer_.Warn("consecutive_transport_failures", "availability", ids,
+                         now_us, snapshot_.consecutive_transport_failures,
+                         alert_config.consecutive_transport_failures_threshold);
+    }
   }
 
   VideoPlayClientConfig config_;

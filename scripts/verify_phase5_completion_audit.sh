@@ -129,10 +129,14 @@ require_doc_pattern scripts/verify_phase5_alerts.sh \
   'validated_process_tick_gap_alert' alerts_process_tick_gap_gate
 require_doc_pattern scripts/verify_phase5_alerts.sh \
   'validated_media_flow_gap_alert' alerts_media_flow_gap_gate
+require_doc_pattern scripts/verify_phase5_alerts.sh \
+  'validated_consecutive_transport_failure_alert' alerts_consecutive_transport_failure_gate
 require_doc_pattern scripts/verify_phase5_metrics.sh \
   'max_process_tick_gap_us' metrics_process_tick_gap_gate
 require_doc_pattern scripts/verify_phase5_metrics.sh \
   'max_rtp_output_gap_us' metrics_media_flow_gap_gate
+require_doc_pattern scripts/verify_phase5_metrics.sh \
+  'max_consecutive_transport_failures' metrics_transport_failure_gate
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'config_dump=pass' debug_bundle_config_dump_gate
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \

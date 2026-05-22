@@ -160,6 +160,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                        TransportPacketKind::kRtp, receive_time_us, false,
                        padding));
     if (!relay_status) {
+      RecordTransportFailure(TrackIdsForSsrc(parsed.ssrc), receive_time_us);
       logger_.Error("receiver_output_failed", TrackIdsForSsrc(parsed.ssrc),
                     relay_status);
       if (alert_writer_.config().alert_on_transport_failure) {
@@ -169,6 +170,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       }
       return relay_status;
     }
+    RecordTransportSuccess();
     if (!padding) {
       RecordRtpOutput(receive_time_us);
     }
@@ -208,11 +210,14 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
           Status status = config_.receiver_output(MakePacketView(
               copy, ids, TransportPacketKind::kRtcp, receive_time_us, false));
           if (!status) {
+            RecordTransportFailure(ids, receive_time_us);
             logger_.Error("receiver_output_failed", ids, status);
             if (alert_writer_.config().alert_on_transport_failure) {
               alert_writer_.Error("receiver_output_failed", "availability",
                                   ids, receive_time_us, status);
             }
+          } else {
+            RecordTransportSuccess();
           }
           return status;
         },
@@ -279,11 +284,14 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
           Status status = config_.sender_output(MakePacketView(
               copy, ids, TransportPacketKind::kRtcp, receive_time_us, false));
           if (!status) {
+            RecordTransportFailure(ids, receive_time_us);
             logger_.Error("sender_output_failed", ids, status);
             if (alert_writer_.config().alert_on_transport_failure) {
               alert_writer_.Error("sender_output_failed", "availability",
                                   ids, receive_time_us, status);
             }
+          } else {
+            RecordTransportSuccess();
           }
           return status;
         },
@@ -360,28 +368,26 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
  private:
   void MaybeWriteMetrics(int64_t now_us) {
     RefreshRtpOutputGap(now_us);
-    MaybeWriteProcessTickAlert(now_us);
+    MaybeWriteAvailabilityAlerts(now_us);
     if (!metrics_writer_.ShouldWrite(now_us)) {
       return;
     }
     metrics_writer_.WriteSession(GetQosSnapshot(now_us));
   }
 
-  void MaybeWriteProcessTickAlert(int64_t now_us) {
+  void MaybeWriteAvailabilityAlerts(int64_t now_us) {
     const RuntimeAlertConfig& alert_config = alert_writer_.config();
     RefreshRtpOutputGap(now_us);
-    if (!alert_config.alert_on_process_tick_gap) {
-      return;
-    }
-    const uint64_t threshold_us =
+    const uint64_t tick_threshold_us =
         static_cast<uint64_t>(alert_config.max_process_tick_gap_ms) * 1000;
-    if (snapshot_.process_tick_gap_us > threshold_us) {
+    if (alert_config.alert_on_process_tick_gap &&
+        snapshot_.process_tick_gap_us > tick_threshold_us) {
       logger_.Warn("process_tick_gap", config_.session.ids,
                    Status::Error(StatusCode::kInternalError,
                                  "server router event tick gap exceeded threshold"));
       alert_writer_.Warn("process_tick_gap", "availability",
                          config_.session.ids, now_us,
-                         snapshot_.process_tick_gap_us, threshold_us);
+                         snapshot_.process_tick_gap_us, tick_threshold_us);
     }
     if (alert_config.alert_on_media_flow_gap) {
       const uint64_t output_threshold_us =
@@ -394,6 +400,15 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                            config_.session.ids, now_us,
                            snapshot_.rtp_output_gap_us, output_threshold_us);
       }
+    }
+    if (alert_config.alert_on_transport_failure &&
+        alert_config.consecutive_transport_failures_threshold > 0 &&
+        snapshot_.consecutive_transport_failures >=
+            alert_config.consecutive_transport_failures_threshold) {
+      alert_writer_.Warn("consecutive_transport_failures", "availability",
+                         config_.session.ids, now_us,
+                         snapshot_.consecutive_transport_failures,
+                         alert_config.consecutive_transport_failures_threshold);
     }
   }
 
@@ -462,6 +477,27 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     snapshot_.max_rtp_output_gap_us =
         std::max(snapshot_.max_rtp_output_gap_us,
                  snapshot_.rtp_output_gap_us);
+  }
+
+  void RecordTransportSuccess() {
+    snapshot_.consecutive_transport_failures = 0;
+  }
+
+  void RecordTransportFailure(const TransportIds& ids, int64_t now_us) {
+    ++snapshot_.transport_failure_count;
+    ++snapshot_.consecutive_transport_failures;
+    snapshot_.max_consecutive_transport_failures =
+        std::max(snapshot_.max_consecutive_transport_failures,
+                 snapshot_.consecutive_transport_failures);
+    const RuntimeAlertConfig& alert_config = alert_writer_.config();
+    if (alert_config.alert_on_transport_failure &&
+        alert_config.consecutive_transport_failures_threshold > 0 &&
+        snapshot_.consecutive_transport_failures >=
+            alert_config.consecutive_transport_failures_threshold) {
+      alert_writer_.Warn("consecutive_transport_failures", "availability", ids,
+                         now_us, snapshot_.consecutive_transport_failures,
+                         alert_config.consecutive_transport_failures_threshold);
+    }
   }
 
   struct ReceiverState {
@@ -596,6 +632,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
           found->rtp_bytes, ids, TransportPacketKind::kRtp, receive_time_us,
           true));
       if (!status) {
+        RecordTransportFailure(ids, receive_time_us);
         logger_.Error("receiver_output_failed", ids, status);
         if (alert_writer_.config().alert_on_transport_failure) {
           alert_writer_.Error("receiver_output_failed", "availability", ids,
@@ -603,6 +640,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
         }
         return status;
       }
+      RecordTransportSuccess();
       logger_.Info("local_retransmission_hit", ids);
       if (alert_writer_.config().alert_on_recovery_events) {
         alert_writer_.Warn("local_retransmission_hit", "network_qos", ids,
@@ -634,11 +672,14 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
         MakePacketView(copy, ids, TransportPacketKind::kRtcp, receive_time_us,
                        false));
     if (!status) {
+      RecordTransportFailure(ids, receive_time_us);
       logger_.Error("sender_output_failed", ids, status);
       if (alert_writer_.config().alert_on_transport_failure) {
         alert_writer_.Error("sender_output_failed", "availability", ids,
                             receive_time_us, status);
       }
+    } else {
+      RecordTransportSuccess();
     }
     return status;
   }
@@ -691,11 +732,14 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
         MakePacketView(rtcp_bytes, config_.session.ids,
                        TransportPacketKind::kRtcp, now_us, false));
     if (!status) {
+      RecordTransportFailure(config_.session.ids, now_us);
       logger_.Error("sender_output_failed", config_.session.ids, status);
       if (alert_writer_.config().alert_on_transport_failure) {
         alert_writer_.Error("sender_output_failed", "availability",
                             config_.session.ids, now_us, status);
       }
+    } else {
+      RecordTransportSuccess();
     }
     return status;
   }
@@ -745,11 +789,14 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
         MakePacketView(rtcp_bytes, config_.session.ids,
                        TransportPacketKind::kRtcp, now_us, false));
     if (!status) {
+      RecordTransportFailure(config_.session.ids, now_us);
       logger_.Error("sender_output_failed", config_.session.ids, status);
       if (alert_writer_.config().alert_on_transport_failure) {
         alert_writer_.Error("sender_output_failed", "availability",
                             config_.session.ids, now_us, status);
       }
+    } else {
+      RecordTransportSuccess();
     }
     return status;
   }

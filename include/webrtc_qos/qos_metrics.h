@@ -42,6 +42,11 @@ struct QosSnapshot {
   uint64_t max_rtp_output_gap_us = 0;
   uint64_t rtp_input_gap_us = 0;
   uint64_t max_rtp_input_gap_us = 0;
+  // Transport callback health. Consecutive failures identify persistent
+  // business transport outages separately from transient packet-level errors.
+  uint32_t transport_failure_count = 0;
+  uint32_t consecutive_transport_failures = 0;
+  uint32_t max_consecutive_transport_failures = 0;
 };
 
 }  // namespace webrtc_qos

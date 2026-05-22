@@ -232,6 +232,7 @@ runtime_config = {
             "max_process_tick_gap_ms": 2000,
             "max_rtp_output_gap_ms": 2000,
             "max_rtp_input_gap_ms": 2000,
+            "consecutive_transport_failures_threshold": 3,
             "max_file_bytes": 1048576,
             "max_files": 4,
         },
@@ -360,6 +361,9 @@ for role in ("push", "server", "play"):
         "max_process_tick_gap_us": max_value("max_process_tick_gap_us"),
         "max_rtp_output_gap_us": max_value("max_rtp_output_gap_us"),
         "max_rtp_input_gap_us": max_value("max_rtp_input_gap_us"),
+        "max_consecutive_transport_failures": max_value(
+            "max_consecutive_transport_failures"
+        ),
         "max_tick_gap_session_id": max_tick_gap_record.get("session_id", 0),
         "max_tick_gap_track_id": max_tick_gap_record.get("track_id", 0),
         "max_tick_gap_receiver_id": max_tick_gap_record.get("receiver_id", 0),

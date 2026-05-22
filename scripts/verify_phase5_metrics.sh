@@ -83,6 +83,9 @@ required = {
     "max_rtp_output_gap_us",
     "rtp_input_gap_us",
     "max_rtp_input_gap_us",
+    "transport_failure_count",
+    "consecutive_transport_failures",
+    "max_consecutive_transport_failures",
 }
 records = []
 for path in metrics_dir.glob("*.jsonl"):

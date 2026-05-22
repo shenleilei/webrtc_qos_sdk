@@ -445,7 +445,9 @@ role config 已追加 `RuntimeMetricsConfig metrics`。当前 JSONL 覆盖
 loss、NACK、PLI、retransmission、drop、probe/padding，以及
 `process_tick_count / process_tick_gap_us / max_process_tick_gap_us` 等运行循环
 健康度字段，以及 `rtp_output_gap_us / max_rtp_output_gap_us`、
-`rtp_input_gap_us / max_rtp_input_gap_us` 等媒体流健康度字段。
+`rtp_input_gap_us / max_rtp_input_gap_us` 等媒体流健康度字段，以及
+`transport_failure_count / consecutive_transport_failures /
+max_consecutive_transport_failures` 等 transport callback 健康度字段。
 
 #### 指标分层
 
@@ -618,8 +620,8 @@ scripts/verify_phase5_alerts.sh
 NACK 和重传告警，再用安装包外部 CMake fixture 验证 malformed RTP、transport
 output failure、decode output failure 和 push/server/play `process_tick_gap`
 availability alert，以及 sender/server `sender_rtp_output_gap`、play
-`receiver_rtp_input_gap` media-flow availability alert，同时确认对应 warn/error
-日志落盘。
+`receiver_rtp_input_gap` media-flow availability alert、push
+`consecutive_transport_failures` availability alert，同时确认对应 warn/error 日志落盘。
 
 #### 验收标准
 
@@ -1093,6 +1095,7 @@ scripts/verify_phase5_metrics.sh
 - metrics 包含 session/track scope 和统一身份字段。
 - weak network 能看到 bitrate/FPS 下探和恢复。
 - server retransmission、play NACK、dual-track track_id 可定位。
+- transport failure 总数、当前连续失败次数、最大连续失败次数可定位。
 - 默认不输出 RTP/H264 payload bytes。
 
 ### 6.3 监控告警门禁
@@ -1106,6 +1109,7 @@ scripts/verify_phase5_alerts.sh
 - weak network 产生 QoS 下探指标。
 - decode error fixture 触发 media quality alert。
 - transport output failure 触发 availability alert。
+- consecutive transport output failure 触发 availability alert。
 - malformed packet 触发 warn/error 日志和 alert。
 
 ### 6.4 错误契约门禁

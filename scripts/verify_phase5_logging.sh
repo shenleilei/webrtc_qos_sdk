@@ -191,6 +191,7 @@ for role in sorted(roles):
             "alerts_max_process_tick_gap_ms",
             "alerts_max_rtp_output_gap_ms",
             "alerts_max_rtp_input_gap_ms",
+            "alerts_consecutive_transport_failures_threshold",
             "alerts_media_flow_gap_enabled",
             "redaction_media_bytes",
             "redaction_runtime_paths",

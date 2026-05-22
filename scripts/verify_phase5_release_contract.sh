@@ -211,6 +211,7 @@ webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir) {
   config.max_process_tick_gap_ms = 2000;
   config.max_rtp_output_gap_ms = 2000;
   config.max_rtp_input_gap_ms = 2000;
+  config.consecutive_transport_failures_threshold = 3;
   return config;
 }
 
@@ -453,6 +454,9 @@ for record in metrics:
         "max_rtp_output_gap_us",
         "rtp_input_gap_us",
         "max_rtp_input_gap_us",
+        "transport_failure_count",
+        "consecutive_transport_failures",
+        "max_consecutive_transport_failures",
     ):
         if field not in record:
             raise SystemExit(f"{label}: metric missing {field}")

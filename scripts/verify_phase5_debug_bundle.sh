@@ -108,6 +108,7 @@ required_config_dump = {
     "alerts_max_process_tick_gap_ms",
     "alerts_max_rtp_output_gap_ms",
     "alerts_max_rtp_input_gap_ms",
+    "alerts_consecutive_transport_failures_threshold",
     "alerts_media_flow_gap_enabled",
     "redaction_media_bytes",
     "redaction_runtime_paths",
@@ -212,6 +213,7 @@ summary_required_columns = {
     "max_process_tick_gap_us",
     "max_rtp_output_gap_us",
     "max_rtp_input_gap_us",
+    "max_consecutive_transport_failures",
     "max_tick_gap_session_id",
     "max_tick_gap_track_id",
     "max_tick_gap_receiver_id",
@@ -308,6 +310,9 @@ metric_required_fields = {
     "max_rtp_output_gap_us",
     "rtp_input_gap_us",
     "max_rtp_input_gap_us",
+    "transport_failure_count",
+    "consecutive_transport_failures",
+    "max_consecutive_transport_failures",
 }
 for role in roles:
     for index, record in enumerate(read_jsonl(root / "metrics" / f"{role}_metrics.jsonl"), 1):

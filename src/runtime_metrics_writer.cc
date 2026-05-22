@@ -174,6 +174,12 @@ void RuntimeMetricsWriter::Write(const char* scope,
        << ",\"max_rtp_output_gap_us\":" << snapshot.max_rtp_output_gap_us
        << ",\"rtp_input_gap_us\":" << snapshot.rtp_input_gap_us
        << ",\"max_rtp_input_gap_us\":" << snapshot.max_rtp_input_gap_us
+       << ",\"transport_failure_count\":"
+       << snapshot.transport_failure_count
+       << ",\"consecutive_transport_failures\":"
+       << snapshot.consecutive_transport_failures
+       << ",\"max_consecutive_transport_failures\":"
+       << snapshot.max_consecutive_transport_failures
        << "}\n";
 
   const std::string text = line.str();

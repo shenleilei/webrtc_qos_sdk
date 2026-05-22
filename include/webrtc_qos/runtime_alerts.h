@@ -38,6 +38,7 @@ struct RuntimeAlertConfig {
   uint32_t max_process_tick_gap_ms = 2000;
   uint32_t max_rtp_output_gap_ms = 2000;
   uint32_t max_rtp_input_gap_ms = 2000;
+  uint32_t consecutive_transport_failures_threshold = 3;
 };
 
 }  // namespace webrtc_qos

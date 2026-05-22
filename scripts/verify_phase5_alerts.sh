@@ -99,6 +99,7 @@ required_rules = {
         "process_tick_gap",
         "sender_rtp_output_gap",
         "receiver_rtp_input_gap",
+        "consecutive_transport_failures",
     },
 }[mode]
 
@@ -225,6 +226,7 @@ webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir,
   config.max_process_tick_gap_ms = 40;
   config.max_rtp_output_gap_ms = 40;
   config.max_rtp_input_gap_ms = 40;
+  config.consecutive_transport_failures_threshold = 2;
   return config;
 }
 
@@ -322,17 +324,19 @@ int main(int argc, char** argv) {
   if (!push_fail->PushAnnexBAccessUnit(push_view)) {
     return Fail("failed to enqueue transport-failure AU");
   }
-  bool transport_failed = false;
+  int transport_failures = 0;
   for (int i = 0; i < 32; ++i) {
     const webrtc_qos::Status status =
         push_fail->Process(2000000 + static_cast<int64_t>(i) * 10000);
     if (!status) {
-      transport_failed = true;
-      break;
+      ++transport_failures;
+      if (transport_failures >= 2) {
+        break;
+      }
     }
   }
   push_fail->Stop();
-  if (!transport_failed) {
+  if (transport_failures < 2) {
     return Fail("transport output failure did not trigger");
   }
 
@@ -632,6 +636,7 @@ required_rules = {
     "process_tick_gap",
     "sender_rtp_output_gap",
     "receiver_rtp_input_gap",
+    "consecutive_transport_failures",
 }
 records = []
 for path in alerts_dir.glob("webrtc_qos_fault_alerts.*.jsonl"):
@@ -669,6 +674,15 @@ input_gap_roles = {
 }
 if input_gap_roles != {"play"}:
     raise SystemExit(f"receiver_rtp_input_gap missing roles: {sorted(input_gap_roles)}")
+transport_failure_roles = {
+    record["role"] for record in records
+    if record["rule"] == "consecutive_transport_failures"
+}
+if "push" not in transport_failure_roles:
+    raise SystemExit(
+        "consecutive_transport_failures missing push role: "
+        f"{sorted(transport_failure_roles)}"
+    )
 print(
     "validated_fault_alert_records=%d rules=%s"
     % (len(records), ",".join(sorted(rules)))
@@ -739,4 +753,5 @@ require_log '"event":"decode_au_output_failed"' \
 
 echo "validated_process_tick_gap_alert roles=play,push,server"
 echo "validated_media_flow_gap_alert output_roles=push,server input_roles=play"
+echo "validated_consecutive_transport_failure_alert roles=push"
 echo "phase5_alerts pass alerts_dir=${ALERTS_DIR} log_dir=${LOG_DIR}"

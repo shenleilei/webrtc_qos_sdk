@@ -175,6 +175,8 @@ std::string RuntimeConfigDumpFields(const SessionConfig& session,
          << alerts.max_rtp_input_gap_ms
          << ",\"alerts_media_flow_gap_enabled\":"
          << (alerts.alert_on_media_flow_gap ? "true" : "false")
+         << ",\"alerts_consecutive_transport_failures_threshold\":"
+         << alerts.consecutive_transport_failures_threshold
          << ",\"redaction_media_bytes\":\"omitted\""
          << ",\"redaction_runtime_paths\":\"omitted\"";
   return fields.str();
