@@ -70,6 +70,35 @@ require_success_debug_bundle() {
     "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" >/dev/null
 }
 
+require_success_readiness() {
+  summary_has '^phase5_production_readiness=' ||
+    fail "passed gate summary missing phase5 production readiness directory"
+  local readiness_dir="${GATE_DIR}/phase5_production_readiness"
+  local readiness_summary="${readiness_dir}/phase5_production_readiness_summary.txt"
+  require_file "${readiness_summary}"
+  require_file "${readiness_dir}/files.txt"
+  require_file "${readiness_dir}/manifest.sha256"
+  require_file "${readiness_dir}/logs/webrtc_modules.log"
+  require_file "${readiness_dir}/logs/capture_manifest.log"
+  require_file "${readiness_dir}/logs/real_renderer.log"
+  (
+    cd "${readiness_dir}"
+    sha256sum -c manifest.sha256 >/dev/null
+  )
+  rg -q '^phase5_production_readiness_status=ready$' "${readiness_summary}" ||
+    fail "phase5 production readiness was not ready"
+  rg -q '^failure_count=0$' "${readiness_summary}" ||
+    fail "phase5 production readiness recorded failures"
+  rg -q '^skipped_count=0$' "${readiness_summary}" ||
+    fail "phase5 production readiness recorded skipped checks"
+  rg -q '^check=webrtc_modules status=pass ' "${readiness_summary}" ||
+    fail "phase5 production readiness missing WebRTC modules pass"
+  rg -q '^check=capture_manifest status=pass ' "${readiness_summary}" ||
+    fail "phase5 production readiness missing capture manifest pass"
+  rg -q '^check=real_renderer status=pass ' "${readiness_summary}" ||
+    fail "phase5 production readiness missing real renderer pass"
+}
+
 require_phase2_completion_evidence() {
   local phase2_dir="${GATE_DIR}/webrtc_first_production_gate"
   local phase2_summary="${phase2_dir}/phase2_production_gate_summary.txt"
@@ -110,9 +139,14 @@ summary_has '^phase5_production_gate=running$' ||
   fail "summary missing gate start marker"
 summary_has '^step=phase5_release_contract status=(planned|pass|fail|skipped)( |$)' ||
   fail "summary missing release contract step"
+summary_has '^step=phase5_production_readiness status=(planned|pass|fail|skipped)( |$)' ||
+  fail "summary missing production readiness step"
 
 if summary_has '^step=phase5_release_contract status=(planned|pass|fail)( |$)'; then
   require_file "${GATE_DIR}/logs/phase5_release_contract.log"
+fi
+if summary_has '^step=phase5_production_readiness status=(planned|pass|fail)( |$)'; then
+  require_file "${GATE_DIR}/logs/phase5_production_readiness.log"
 fi
 if summary_has '^step=collect_phase5_debug_bundle status=(planned|pass|fail)( |$)'; then
   require_file "${GATE_DIR}/logs/collect_phase5_debug_bundle.log"
@@ -140,6 +174,8 @@ if [[ "${REQUIRE_PASS}" == "1" ]]; then
     fail "phase5 production gate did not pass"
   summary_has '^step=phase5_release_contract status=pass ' ||
     fail "release contract step did not pass"
+  summary_has '^step=phase5_production_readiness status=pass ' ||
+    fail "production readiness step did not pass"
   summary_has '^step=collect_phase5_debug_bundle status=pass ' ||
     fail "debug bundle collect step did not pass"
   summary_has '^step=verify_phase5_debug_bundle status=pass ' ||
@@ -147,6 +183,7 @@ if [[ "${REQUIRE_PASS}" == "1" ]]; then
   summary_has '^step=webrtc_first_production_gate status=pass ' ||
     fail "production gate step did not pass"
   require_success_debug_bundle
+  require_success_readiness
   require_phase2_completion_evidence
 else
   summary_has '^phase5_production_gate_status=(dry_run|pass|fail)$' ||
@@ -156,6 +193,7 @@ else
       fail "failed gate summary missing failed step"
     require_failed_gate_debug_bundle
   elif summary_has '^phase5_production_gate_status=pass$'; then
+    require_success_readiness
     require_success_debug_bundle
     require_phase2_completion_evidence
   fi

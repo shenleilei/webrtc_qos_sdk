@@ -164,7 +164,7 @@ soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture m
 readiness 报告。默认本地缺正式素材或真实 renderer 时只生成 not-ready 报告；
 正式 CI 可设置 `REQUIRE_READY=1` 作为硬门禁。
 
-wrapper 会先跑 Phase-5 release contract 和 debug bundle 门禁，再调用底层
+wrapper 会先跑 Phase-5 release contract、production readiness 和 debug bundle 门禁，再调用底层
 `run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
 正式 capture library、evidence bundle 和 completion audit。默认输出目录为
 `artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
@@ -172,7 +172,8 @@ wrapper 会先跑 Phase-5 release contract 和 debug bundle 门禁，再调用�
 `failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和
 runtime config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包
 存在且 manifest 可离线校验；在 gate 成功时也会离线复验 `phase5_debug_bundle/`
-的日志、metrics、alerts、timeline 和 runtime config，并直接复验底层 Phase-2
+的日志、metrics、alerts、timeline 和 runtime config，离线复验
+`phase5_production_readiness/` 的 ready 状态，并直接复验底层 Phase-2
 evidence bundle manifest、`phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`，避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。

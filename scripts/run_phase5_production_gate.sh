@@ -8,6 +8,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-${SDK_ROOT}/artifacts/phase5_production_gate/${PHASE
 PHASE2_OUTPUT_ROOT="${PHASE2_OUTPUT_ROOT:-${OUTPUT_ROOT}/webrtc_first_production_gate}"
 PHASE5_DEBUG_BUNDLE_DIR="${PHASE5_DEBUG_BUNDLE_DIR:-${OUTPUT_ROOT}/phase5_debug_bundle}"
 FAILURE_DEBUG_BUNDLE_DIR="${FAILURE_DEBUG_BUNDLE_DIR:-${OUTPUT_ROOT}/failure_debug_bundle}"
+PHASE5_READINESS_DIR="${PHASE5_READINESS_DIR:-${OUTPUT_ROOT}/phase5_production_readiness}"
 LOG_DIR="${LOG_DIR:-${OUTPUT_ROOT}/logs}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_ROOT}/phase5_production_gate_summary.txt}"
 METADATA_FILE="${METADATA_FILE:-${OUTPUT_ROOT}/metadata.txt}"
@@ -20,6 +21,7 @@ SOAK_CYCLES="${SOAK_CYCLES:-1}"
 PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 PHASE5_DRY_RUN="${PHASE5_DRY_RUN:-0}"
 RUN_PHASE5_RELEASE_CONTRACT="${RUN_PHASE5_RELEASE_CONTRACT:-1}"
+RUN_PHASE5_READINESS="${RUN_PHASE5_READINESS:-1}"
 RUN_PHASE5_DEBUG_BUNDLE="${RUN_PHASE5_DEBUG_BUNDLE:-1}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB:-$([[ "${ALLOW_XVFB_RENDERER}" == "1" ]] && echo auto || echo 0)}"
@@ -122,6 +124,7 @@ run_step() {
 }
 
 require_script "${SDK_ROOT}/scripts/verify_phase5_release_contract.sh"
+require_script "${SDK_ROOT}/scripts/verify_phase5_production_readiness.sh"
 require_script "${SDK_ROOT}/scripts/collect_phase5_debug_bundle.sh"
 require_script "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh"
 require_script "${SDK_ROOT}/scripts/run_webrtc_first_phase2_production_gate.sh"
@@ -135,12 +138,14 @@ require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.
   printf 'PHASE2_OUTPUT_ROOT=%s\n' "${PHASE2_OUTPUT_ROOT}"
   printf 'PHASE5_DEBUG_BUNDLE_DIR=%s\n' "${PHASE5_DEBUG_BUNDLE_DIR}"
   printf 'FAILURE_DEBUG_BUNDLE_DIR=%s\n' "${FAILURE_DEBUG_BUNDLE_DIR}"
+  printf 'PHASE5_READINESS_DIR=%s\n' "${PHASE5_READINESS_DIR}"
   printf 'SOAK_MINUTES=%s\n' "${SOAK_MINUTES}"
   printf 'MIN_PRODUCTION_SOAK_MINUTES=%s\n' "${MIN_PRODUCTION_SOAK_MINUTES}"
   printf 'SOAK_CYCLES=%s\n' "${SOAK_CYCLES}"
   printf 'PREFLIGHT_ONLY=%s\n' "${PREFLIGHT_ONLY}"
   printf 'PHASE5_DRY_RUN=%s\n' "${PHASE5_DRY_RUN}"
   printf 'RUN_PHASE5_RELEASE_CONTRACT=%s\n' "${RUN_PHASE5_RELEASE_CONTRACT}"
+  printf 'RUN_PHASE5_READINESS=%s\n' "${RUN_PHASE5_READINESS}"
   printf 'RUN_PHASE5_DEBUG_BUNDLE=%s\n' "${RUN_PHASE5_DEBUG_BUNDLE}"
   printf 'ALLOW_XVFB_RENDERER=%s\n' "${ALLOW_XVFB_RENDERER}"
   printf 'REAL_RENDERER_USE_XVFB=%s\n' "${REAL_RENDERER_USE_XVFB}"
@@ -158,6 +163,7 @@ write_summary "sdk_root=${SDK_ROOT}"
 write_summary "webrtc_prefix=${WEBRTC_PREFIX}"
 write_summary "output_root=${OUTPUT_ROOT}"
 write_summary "phase2_output_root=${PHASE2_OUTPUT_ROOT}"
+write_summary "phase5_readiness_dir=${PHASE5_READINESS_DIR}"
 write_summary "soak_minutes=${SOAK_MINUTES}"
 write_summary "min_production_soak_minutes=${MIN_PRODUCTION_SOAK_MINUTES}"
 write_summary "preflight_only=${PREFLIGHT_ONLY}"
@@ -170,6 +176,26 @@ if [[ "${RUN_PHASE5_RELEASE_CONTRACT}" == "1" ]]; then
       "${SDK_ROOT}/scripts/verify_phase5_release_contract.sh"
 else
   write_summary "step=phase5_release_contract status=skipped RUN_PHASE5_RELEASE_CONTRACT=${RUN_PHASE5_RELEASE_CONTRACT}"
+fi
+
+if [[ "${RUN_PHASE5_READINESS}" == "1" ]]; then
+  run_step phase5_production_readiness \
+    env SDK_ROOT="${SDK_ROOT}" PREFIX="${WEBRTC_PREFIX}" \
+      OUTPUT_DIR="${PHASE5_READINESS_DIR}" \
+      SOAK_MINUTES="${SOAK_MINUTES}" \
+      MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
+      ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
+      REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB}" \
+      CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR}" \
+      CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST}" \
+      CAPTURE_WIDTH="${CAPTURE_WIDTH}" \
+      CAPTURE_HEIGHT="${CAPTURE_HEIGHT}" \
+      CAPTURE_FRAMES="${CAPTURE_FRAMES}" \
+      REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
+      REQUIRE_READY=1 \
+      "${SDK_ROOT}/scripts/verify_phase5_production_readiness.sh"
+else
+  write_summary "step=phase5_production_readiness status=skipped RUN_PHASE5_READINESS=${RUN_PHASE5_READINESS}"
 fi
 
 if [[ "${RUN_PHASE5_DEBUG_BUNDLE}" == "1" ]]; then
@@ -212,6 +238,7 @@ else
   write_summary "phase5_production_gate_status=pass"
 fi
 write_summary "phase5_metadata=${METADATA_FILE}"
+write_summary "phase5_production_readiness=${PHASE5_READINESS_DIR}"
 write_summary "phase5_debug_bundle=${PHASE5_DEBUG_BUNDLE_DIR}"
 write_summary "webrtc_first_production_gate=${PHASE2_OUTPUT_ROOT}"
 write_summary "manifest=${MANIFEST_FILE}"
