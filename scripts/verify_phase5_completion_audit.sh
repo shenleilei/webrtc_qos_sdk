@@ -437,6 +437,18 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'production_soak_archive' production_gate_release_soak_archive_index
 require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'MIN_PRODUCTION_SOAK_MINUTES="\$\{MIN_PRODUCTION_SOAK_MINUTES:-120\}"' production_gate_min_soak_default
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'SOAK_MINUTES=%g<%g' production_gate_soak_minutes_preflight
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'SOAK_MINUTES=%g<MIN_PRODUCTION_SOAK_MINUTES=%g' production_gate_soak_minutes_vs_min_preflight
+require_doc_pattern scripts/run_webrtc_first_phase2_production_gate.sh \
+  'MIN_PRODUCTION_SOAK_MINUTES="\$\{MIN_PRODUCTION_SOAK_MINUTES:-120\}"' phase2_production_gate_min_soak_default
+require_doc_pattern scripts/run_webrtc_first_phase2_production_gate.sh \
+  'SOAK_MINUTES=%g<%g' phase2_production_gate_soak_minutes_preflight
+require_doc_pattern scripts/run_webrtc_first_phase2_production_gate.sh \
+  'SOAK_MINUTES=%g<MIN_PRODUCTION_SOAK_MINUTES=%g' phase2_production_gate_soak_minutes_vs_min_preflight
+require_doc_pattern scripts/run_phase5_production_gate.sh \
   'real_renderer_metrics' production_gate_release_renderer_metrics_index
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_webrtc_first_qoe_production_soak_archive.sh' production_gate_release_soak_reverify

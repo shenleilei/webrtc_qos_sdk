@@ -23,7 +23,7 @@ RELEASE_EVIDENCE_SUMMARY="${RELEASE_EVIDENCE_SUMMARY:-${OUTPUT_ROOT}/phase5_rele
 PHASE5_GATE_METRICS_PROM="${PHASE5_GATE_METRICS_PROM:-${OUTPUT_ROOT}/phase5_production_gate_metrics.prom}"
 
 SOAK_MINUTES="${SOAK_MINUTES:-120}"
-MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-${SOAK_MINUTES}}"
+MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
 SOAK_CYCLES="${SOAK_CYCLES:-1}"
 PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 PHASE5_DRY_RUN="${PHASE5_DRY_RUN:-0}"
@@ -54,6 +54,32 @@ if [[ "${PHASE5_IMPLEMENTATION_GATE_DIR}" != "${DEFAULT_PHASE5_IMPLEMENTATION_GA
   echo "phase5 production gate failed: PHASE5_IMPLEMENTATION_GATE_DIR must be ${DEFAULT_PHASE5_IMPLEMENTATION_GATE_DIR} for self-contained evidence" >&2
   exit 1
 fi
+
+python3 - "${SOAK_MINUTES}" "${MIN_PRODUCTION_SOAK_MINUTES}" <<'PY'
+import sys
+
+soak_minutes = float(sys.argv[1])
+min_soak_minutes = float(sys.argv[2])
+phase5_minimum = 120.0
+errors = []
+if min_soak_minutes < phase5_minimum:
+    errors.append(
+        "MIN_PRODUCTION_SOAK_MINUTES=%g<%g"
+        % (min_soak_minutes, phase5_minimum)
+    )
+if soak_minutes < phase5_minimum:
+    errors.append("SOAK_MINUTES=%g<%g" % (soak_minutes, phase5_minimum))
+if soak_minutes < min_soak_minutes:
+    errors.append(
+        "SOAK_MINUTES=%g<MIN_PRODUCTION_SOAK_MINUTES=%g"
+        % (soak_minutes, min_soak_minutes)
+    )
+if errors:
+    raise SystemExit(
+        "phase5 production gate failed: invalid production soak configuration: "
+        + ", ".join(errors)
+    )
+PY
 
 mkdir -p "${OUTPUT_ROOT}" "${LOG_DIR}"
 rm -f "${SUMMARY_FILE}" "${METADATA_FILE}" "${GIT_TRACKED_STATUS_FILE}" \

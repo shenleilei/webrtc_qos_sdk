@@ -12,7 +12,7 @@ LOG_DIR="${LOG_DIR:-${OUTPUT_ROOT}/logs}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_ROOT}/phase2_production_gate_summary.txt}"
 
 SOAK_MINUTES="${SOAK_MINUTES:-120}"
-MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-${SOAK_MINUTES}}"
+MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
 SOAK_CYCLES="${SOAK_CYCLES:-1}"
 PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
@@ -32,6 +32,32 @@ CAPTURE_FRAMES="${CAPTURE_FRAMES:-120}"
 CAPTURE_SCENARIOS="${CAPTURE_SCENARIOS:-baseline weak_network_low_rps_low_bitrate walking_dead_zone_recover oscillating_edge_recover}"
 CAPTURE_SEEDS="${CAPTURE_SEEDS:-1}"
 REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
+
+python3 - "${SOAK_MINUTES}" "${MIN_PRODUCTION_SOAK_MINUTES}" <<'PY'
+import sys
+
+soak_minutes = float(sys.argv[1])
+min_soak_minutes = float(sys.argv[2])
+phase5_minimum = 120.0
+errors = []
+if min_soak_minutes < phase5_minimum:
+    errors.append(
+        "MIN_PRODUCTION_SOAK_MINUTES=%g<%g"
+        % (min_soak_minutes, phase5_minimum)
+    )
+if soak_minutes < phase5_minimum:
+    errors.append("SOAK_MINUTES=%g<%g" % (soak_minutes, phase5_minimum))
+if soak_minutes < min_soak_minutes:
+    errors.append(
+        "SOAK_MINUTES=%g<MIN_PRODUCTION_SOAK_MINUTES=%g"
+        % (soak_minutes, min_soak_minutes)
+    )
+if errors:
+    raise SystemExit(
+        "phase2 production gate failed: invalid production soak configuration: "
+        + ", ".join(errors)
+    )
+PY
 
 mkdir -p "${OUTPUT_ROOT}" "${PREFLIGHT_DIR}" "${LOG_DIR}"
 rm -f "${SUMMARY_FILE}"
