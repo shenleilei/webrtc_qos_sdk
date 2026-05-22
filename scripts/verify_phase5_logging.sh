@@ -5,11 +5,12 @@ SDK_ROOT="${SDK_ROOT:-/root/webrtc_qos_sdk}"
 PREFIX="${PREFIX:-${SDK_ROOT}/dist/linux-x86_64}"
 BUILD_DIR="${BUILD_DIR:-/tmp/webrtc_qos_phase5_logging_build.$$}"
 LOG_DIR="${LOG_DIR:-/tmp/webrtc_qos_phase5_logs.$$}"
+ROTATION_LOG_DIR="${ROTATION_LOG_DIR:-/tmp/webrtc_qos_phase5_rotation_logs.$$}"
 FRAMES="${FRAMES:-36}"
 
 cleanup() {
   if [[ "${KEEP_WORK_DIR:-0}" != "1" ]]; then
-    rm -rf "${BUILD_DIR}" "${LOG_DIR}"
+    rm -rf "${BUILD_DIR}" "${LOG_DIR}" "${ROTATION_LOG_DIR}"
   fi
 }
 trap cleanup EXIT
@@ -48,8 +49,8 @@ run_demo() {
   printf '%s\n' "${output}"
 }
 
-rm -rf "${BUILD_DIR}" "${LOG_DIR}"
-mkdir -p "${LOG_DIR}"
+rm -rf "${BUILD_DIR}" "${LOG_DIR}" "${ROTATION_LOG_DIR}"
+mkdir -p "${LOG_DIR}" "${ROTATION_LOG_DIR}"
 
 cmake -S "${SDK_ROOT}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -144,6 +145,67 @@ for path in log_dir.glob("*.log"):
 if lines == 0:
     raise SystemExit("no JSON log lines found")
 print(f"validated_json_lines={lines}")
+PY
+
+rotation_output="$(run_demo "rotating UDP selftest" selftest 90 \
+  --log-dir "${ROTATION_LOG_DIR}" \
+  --log-max-file-bytes 512 \
+  --log-max-files 3)"
+printf '%s\n' "${rotation_output}"
+require_output "udp_selftest .*pass=true" "${rotation_output}" \
+  "UDP selftest with rotating file logging did not pass"
+if grep -q '"ts_us"' <<<"${rotation_output}"; then
+  fail "rotating file logging leaked JSON lines to stdout/stderr"
+fi
+
+python3 - "${ROTATION_LOG_DIR}" <<'PY'
+import json
+import pathlib
+import sys
+
+log_dir = pathlib.Path(sys.argv[1])
+roles = {"push", "server", "play"}
+files_by_role = {role: sorted(log_dir.glob(f"webrtc_qos_udp.{role}.*.log")) for role in roles}
+for role, paths in files_by_role.items():
+    grouped = {}
+    for path in paths:
+        prefix, index, suffix = path.name.rsplit(".", 2)
+        if suffix != "log":
+            raise SystemExit(f"{path}: unexpected suffix {suffix}")
+        grouped.setdefault(prefix, []).append((int(index), path))
+    if not grouped:
+        raise SystemExit(f"{role}: missing rotated log files")
+    saw_rotation = False
+    for prefix, indexed_paths in grouped.items():
+        if len(indexed_paths) > 3:
+            raise SystemExit(
+                f"{role}:{prefix}: max_files=3 exceeded, got {len(indexed_paths)}"
+            )
+        indexes = sorted(index for index, _ in indexed_paths)
+        if indexes != list(range(len(indexes))):
+            raise SystemExit(f"{role}:{prefix}: non-contiguous rotation indexes {indexes}")
+        saw_rotation = saw_rotation or len(indexed_paths) >= 2
+        for _, path in indexed_paths:
+            if path.stat().st_size <= 0:
+                raise SystemExit(f"{path}: empty rotated log file")
+            with path.open("r", encoding="utf-8") as handle:
+                for line_no, line in enumerate(handle, 1):
+                    if not line.strip():
+                        continue
+                    record = json.loads(line)
+                    if record.get("role") != role:
+                        raise SystemExit(
+                            f"{path}:{line_no}: role mismatch {record.get('role')} != {role}"
+                        )
+                    break
+                else:
+                    raise SystemExit(f"{path}: no JSON records")
+    if not saw_rotation:
+        raise SystemExit(f"{role}: no logger instance produced multiple rotated files")
+print(
+    "validated_log_rotation "
+    + " ".join(f"{role}_files={len(paths)}" for role, paths in sorted(files_by_role.items()))
+)
 PY
 
 echo "phase5_logging pass log_dir=${LOG_DIR}"

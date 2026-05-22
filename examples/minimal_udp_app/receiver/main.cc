@@ -9,8 +9,9 @@ int main(int argc, char** argv) {
   if (argc < 3) {
     std::cerr << "usage: " << argv[0]
               << " <local_port> <server_ip:port> [--frames N]"
-              << " [--tracks 1|2] [--log-dir DIR] [--metrics-dir DIR]"
-              << " [--alerts-dir DIR]\n";
+              << " [--tracks 1|2] [--log-dir DIR]"
+              << " [--log-max-file-bytes N] [--log-max-files N]"
+              << " [--metrics-dir DIR] [--alerts-dir DIR]\n";
     return 2;
   }
   sockaddr_in server_addr {};

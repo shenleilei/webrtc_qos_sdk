@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -16,6 +18,8 @@ struct CommonOptions {
   std::string log_dir;
   std::string metrics_dir;
   std::string alerts_dir;
+  uint64_t log_max_file_bytes = 1024 * 1024;
+  uint32_t log_max_files = 4;
 };
 
 inline bool ParseOptionalArgs(int argc,
@@ -48,6 +52,24 @@ inline bool ParseOptionalArgs(int argc,
       options->log_dir = argv[++i];
       continue;
     }
+    if (arg == "--log-max-file-bytes") {
+      if (i + 1 >= argc) {
+        std::cerr << "--log-max-file-bytes requires a value\n";
+        return false;
+      }
+      options->log_max_file_bytes =
+          static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
+      continue;
+    }
+    if (arg == "--log-max-files") {
+      if (i + 1 >= argc) {
+        std::cerr << "--log-max-files requires a value\n";
+        return false;
+      }
+      options->log_max_files =
+          static_cast<uint32_t>(std::max(1, std::atoi(argv[++i])));
+      continue;
+    }
     if (arg == "--metrics-dir") {
       if (i + 1 >= argc) {
         std::cerr << "--metrics-dir requires a directory\n";
@@ -77,16 +99,16 @@ inline bool ParseOptionalArgs(int argc,
 }
 
 inline webrtc_qos::RuntimeLogConfig MakeLogConfig(
-    const std::string& log_dir) {
+    const CommonOptions& options) {
   webrtc_qos::RuntimeLogConfig config;
-  if (!log_dir.empty()) {
+  if (!options.log_dir.empty()) {
     config.file.enabled = true;
-    config.file.directory = log_dir;
+    config.file.directory = options.log_dir;
     config.file.basename = "minimal_udp";
     config.file.json_lines = true;
     config.file.also_stderr = false;
-    config.file.max_file_bytes = 1024 * 1024;
-    config.file.max_files = 4;
+    config.file.max_file_bytes = options.log_max_file_bytes;
+    config.file.max_files = options.log_max_files;
   }
   return config;
 }

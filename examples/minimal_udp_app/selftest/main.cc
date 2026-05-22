@@ -10,6 +10,7 @@ int main(int argc, char** argv) {
   if (!minimal_udp::ParseOptionalArgs(argc, argv, 1, &options)) {
     std::cerr << "usage: " << argv[0]
               << " [--frames N] [--tracks 1|2] [--log-dir DIR]"
+              << " [--log-max-file-bytes N] [--log-max-files N]"
               << " [--metrics-dir DIR] [--alerts-dir DIR]\n";
     return 2;
   }

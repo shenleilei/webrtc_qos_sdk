@@ -362,7 +362,9 @@ transport/output：
 - demo 和 external sample 支持 `--log-dir`。
 - 默认运行会生成角色日志文件。
 - `std::cout` 只保留最终 summary 和人工 demo 提示，不作为 SDK 运行日志。
-- 日志文件超过阈值会轮转。
+- 日志文件超过阈值会轮转；demo 和 external sample 支持
+  `--log-max-file-bytes / --log-max-files`，`verify_phase5_logging.sh` 会用低阈值
+  强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
 - CI artifact 收集日志文件。
 - 故障 case 能在日志中定位到角色、track、receiver、packet 或 status code。
 

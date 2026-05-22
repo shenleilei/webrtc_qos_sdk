@@ -73,6 +73,8 @@ struct CommonOptions {
   std::string log_dir;
   std::string metrics_dir;
   std::string alerts_dir;
+  uint64_t log_max_file_bytes = 1024 * 1024;
+  uint32_t log_max_files = 4;
 };
 
 void PutU16(uint16_t value, std::vector<uint8_t>* out) {
@@ -449,16 +451,16 @@ void RequireStatus(const webrtc_qos::Status& status, const char* operation) {
   std::exit(2);
 }
 
-webrtc_qos::RuntimeLogConfig MakeLogConfig(const std::string& log_dir) {
+webrtc_qos::RuntimeLogConfig MakeLogConfig(const CommonOptions& options) {
   webrtc_qos::RuntimeLogConfig config;
-  if (!log_dir.empty()) {
+  if (!options.log_dir.empty()) {
     config.file.enabled = true;
-    config.file.directory = log_dir;
+    config.file.directory = options.log_dir;
     config.file.basename = "webrtc_qos_udp";
     config.file.json_lines = true;
     config.file.also_stderr = false;
-    config.file.max_file_bytes = 1024 * 1024;
-    config.file.max_files = 4;
+    config.file.max_file_bytes = options.log_max_file_bytes;
+    config.file.max_files = options.log_max_files;
   }
   return config;
 }
@@ -508,6 +510,24 @@ bool ParseOptionalArgs(int argc,
         return false;
       }
       options->log_dir = argv[++i];
+      continue;
+    }
+    if (arg == "--log-max-file-bytes") {
+      if (i + 1 >= argc) {
+        std::cerr << "--log-max-file-bytes requires a value\n";
+        return false;
+      }
+      options->log_max_file_bytes =
+          static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
+      continue;
+    }
+    if (arg == "--log-max-files") {
+      if (i + 1 >= argc) {
+        std::cerr << "--log-max-files requires a value\n";
+        return false;
+      }
+      options->log_max_files =
+          static_cast<uint32_t>(std::max(1, std::atoi(argv[++i])));
       continue;
     }
     if (arg == "--metrics-dir") {
@@ -616,7 +636,7 @@ int RunUdpSender(uint16_t local_port,
       MakeDualTrackSession("webrtc_first_udp_sender");
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
-  push_config.logging = MakeLogConfig(options.log_dir);
+  push_config.logging = MakeLogConfig(options);
   push_config.metrics = MakeMetricsConfig(options.metrics_dir);
   push_config.alerts = MakeAlertConfig(options.alerts_dir);
   push_config.transport_output =
@@ -744,7 +764,7 @@ int RunUdpServer(uint16_t local_port,
       MakeDualTrackSession("webrtc_first_udp_server");
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
-  server_config.logging = MakeLogConfig(options.log_dir);
+  server_config.logging = MakeLogConfig(options);
   server_config.metrics = MakeMetricsConfig(options.metrics_dir);
   server_config.alerts = MakeAlertConfig(options.alerts_dir);
   server_config.sender_output =
@@ -850,7 +870,7 @@ int RunUdpReceiver(uint16_t local_port,
       MakeDualTrackSession("webrtc_first_udp_receiver");
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
-  play_config.logging = MakeLogConfig(options.log_dir);
+  play_config.logging = MakeLogConfig(options);
   play_config.metrics = MakeMetricsConfig(options.metrics_dir);
   play_config.alerts = MakeAlertConfig(options.alerts_dir);
   play_config.transport_output =
@@ -955,7 +975,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
 
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
-  push_config.logging = MakeLogConfig(options.log_dir);
+  push_config.logging = MakeLogConfig(options);
   push_config.metrics = MakeMetricsConfig(options.metrics_dir);
   push_config.alerts = MakeAlertConfig(options.alerts_dir);
   push_config.transport_output =
@@ -975,7 +995,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
 
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
-  play_config.logging = MakeLogConfig(options.log_dir);
+  play_config.logging = MakeLogConfig(options);
   play_config.metrics = MakeMetricsConfig(options.metrics_dir);
   play_config.alerts = MakeAlertConfig(options.alerts_dir);
   play_config.transport_output =
@@ -1001,7 +1021,7 @@ int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
 
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
-  server_config.logging = MakeLogConfig(options.log_dir);
+  server_config.logging = MakeLogConfig(options);
   server_config.metrics = MakeMetricsConfig(options.metrics_dir);
   server_config.alerts = MakeAlertConfig(options.alerts_dir);
   server_config.sender_output =
@@ -1337,7 +1357,8 @@ int main(int argc, char** argv) {
     if (argc < 4) {
       std::cerr << "usage: " << argv[0]
                 << " sender <local_port> <server_ip:port> [frames]"
-                << " [--log-dir DIR] [--metrics-dir DIR]"
+                << " [--log-dir DIR] [--log-max-file-bytes N]"
+                << " [--log-max-files N] [--metrics-dir DIR]"
                 << " [--alerts-dir DIR]\n";
       return 2;
     }
@@ -1361,6 +1382,7 @@ int main(int argc, char** argv) {
       std::cerr << "usage: " << argv[0]
                 << " server <local_port> <sender_ip:port>"
                 << " <receiver_ip:port> [frames] [--log-dir DIR]"
+                << " [--log-max-file-bytes N] [--log-max-files N]"
                 << " [--metrics-dir DIR] [--alerts-dir DIR]\n";
       return 2;
     }
@@ -1388,7 +1410,8 @@ int main(int argc, char** argv) {
     if (argc < 4) {
       std::cerr << "usage: " << argv[0]
                 << " receiver <local_port> <server_ip:port> [frames]"
-                << " [--log-dir DIR] [--metrics-dir DIR]"
+                << " [--log-dir DIR] [--log-max-file-bytes N]"
+                << " [--log-max-files N] [--metrics-dir DIR]"
                 << " [--alerts-dir DIR]\n";
       return 2;
     }
@@ -1409,18 +1432,22 @@ int main(int argc, char** argv) {
 
   std::cerr << "usage:\n"
             << "  " << argv[0] << " selftest [frames] [--log-dir DIR]"
+            << " [--log-max-file-bytes N] [--log-max-files N]"
             << " [--metrics-dir DIR] [--alerts-dir DIR]\n"
             << "  " << argv[0]
             << " sender <local_port> <server_ip:port> [frames]"
-            << " [--log-dir DIR] [--metrics-dir DIR]"
+            << " [--log-dir DIR] [--log-max-file-bytes N]"
+            << " [--log-max-files N] [--metrics-dir DIR]"
             << " [--alerts-dir DIR]\n"
             << "  " << argv[0]
             << " server <local_port> <sender_ip:port> <receiver_ip:port>"
-            << " [frames] [--log-dir DIR] [--metrics-dir DIR]"
+            << " [frames] [--log-dir DIR] [--log-max-file-bytes N]"
+            << " [--log-max-files N] [--metrics-dir DIR]"
             << " [--alerts-dir DIR]\n"
             << "  " << argv[0]
             << " receiver <local_port> <server_ip:port> [frames]"
-            << " [--log-dir DIR] [--metrics-dir DIR]"
+            << " [--log-dir DIR] [--log-max-file-bytes N]"
+            << " [--log-max-files N] [--metrics-dir DIR]"
             << " [--alerts-dir DIR]\n";
   return 2;
 }

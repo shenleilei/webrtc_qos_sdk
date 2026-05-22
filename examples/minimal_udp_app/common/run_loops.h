@@ -133,7 +133,7 @@ inline int RunSender(uint16_t local_port,
       MakeSession("minimal_udp_sender", options.tracks);
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
-  push_config.logging = MakeLogConfig(options.log_dir);
+  push_config.logging = MakeLogConfig(options);
   push_config.metrics = MakeMetricsConfig(options.metrics_dir);
   push_config.alerts = MakeAlertConfig(options.alerts_dir);
   push_config.transport_output =
@@ -262,7 +262,7 @@ inline int RunServer(uint16_t local_port,
       MakeSession("minimal_udp_server", options.tracks);
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
-  server_config.logging = MakeLogConfig(options.log_dir);
+  server_config.logging = MakeLogConfig(options);
   server_config.metrics = MakeMetricsConfig(options.metrics_dir);
   server_config.alerts = MakeAlertConfig(options.alerts_dir);
   server_config.sender_output =
@@ -368,7 +368,7 @@ inline int RunReceiver(uint16_t local_port,
       MakeSession("minimal_udp_receiver", options.tracks);
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
-  play_config.logging = MakeLogConfig(options.log_dir);
+  play_config.logging = MakeLogConfig(options);
   play_config.metrics = MakeMetricsConfig(options.metrics_dir);
   play_config.alerts = MakeAlertConfig(options.alerts_dir);
   play_config.transport_output =
@@ -473,7 +473,7 @@ inline int RunSelftest(const CommonOptions& options) {
 
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
-  push_config.logging = MakeLogConfig(options.log_dir);
+  push_config.logging = MakeLogConfig(options);
   push_config.metrics = MakeMetricsConfig(options.metrics_dir);
   push_config.alerts = MakeAlertConfig(options.alerts_dir);
   push_config.transport_output =
@@ -493,7 +493,7 @@ inline int RunSelftest(const CommonOptions& options) {
 
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
-  play_config.logging = MakeLogConfig(options.log_dir);
+  play_config.logging = MakeLogConfig(options);
   play_config.metrics = MakeMetricsConfig(options.metrics_dir);
   play_config.alerts = MakeAlertConfig(options.alerts_dir);
   play_config.transport_output =
@@ -519,7 +519,7 @@ inline int RunSelftest(const CommonOptions& options) {
 
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
-  server_config.logging = MakeLogConfig(options.log_dir);
+  server_config.logging = MakeLogConfig(options);
   server_config.metrics = MakeMetricsConfig(options.metrics_dir);
   server_config.alerts = MakeAlertConfig(options.alerts_dir);
   server_config.sender_output =

@@ -10,6 +10,7 @@ int main(int argc, char** argv) {
     std::cerr << "usage: " << argv[0]
               << " <local_port> <sender_ip:port> <receiver_ip:port>"
               << " [--frames N] [--tracks 1|2] [--log-dir DIR]"
+              << " [--log-max-file-bytes N] [--log-max-files N]"
               << " [--metrics-dir DIR] [--alerts-dir DIR]\n";
     return 2;
   }
