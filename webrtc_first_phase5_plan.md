@@ -152,11 +152,23 @@ Phase-5 第一阶段先把生产证据链跑实并制度化：
 当前已新增 Phase-5 production gate wrapper：
 
 ```bash
+scripts/run_phase5_implementation_gate.sh
+scripts/verify_phase5_implementation_gate.sh
 scripts/verify_phase5_production_readiness.sh
 scripts/run_phase5_production_gate.sh
 scripts/verify_phase5_production_gate.sh
 scripts/verify_phase5_completion_audit.sh
 ```
+
+`run_phase5_implementation_gate.sh` 是 Phase-5 非生产实现证据 wrapper。它不替代正式
+production evidence，而是把 no-selfmade、logging、metrics、alerts、error
+contract、minimal UDP external app、release contract 和 debug bundle 门禁串成一份
+可离线复验的实现证据，默认输出到
+`artifacts/phase5_implementation_gate/<utc_build_id>/`，包含 summary、logs、关键
+runtime artifacts、`files.txt` 和 `manifest.sha256`。
+`verify_phase5_implementation_gate.sh` 会复验所有子门禁 pass、三角色日志/metrics/
+alerts 产物、debug bundle manifest 和运行 JSON 统一身份字段，避免 completion audit
+只靠脚本存在和文档 pattern。
 
 `verify_phase5_production_readiness.sh` 是正式验收前的轻量 preflight。它不跑长时
 soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture manifest、
@@ -180,12 +192,15 @@ evidence bundle manifest、`phase2_completion_audit=pass` 和
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
+`PHASE5_IMPLEMENTATION_GATE_DIR` 指向已通过的 Phase-5 implementation gate，同时要求
 `PHASE5_GATE_DIR` 指向已经 `REQUIRE_PASS=1` 验证通过的 Phase-5 production gate；
-如果显式设置 `REQUIRE_PRODUCTION_EVIDENCE=0`，只审计 P5 实现项和文档入口是否齐全，
-并返回 `implemented_without_required_production_evidence`，不能用来宣布生产完成。
+如果显式设置 `REQUIRE_PRODUCTION_EVIDENCE=0`，仍必须提供 implementation gate 证据，
+但只返回 `implemented_without_required_production_evidence`，不能用来宣布生产完成。
 
 #### 验收标准
 
+- implementation gate 可离线 verify 通过，证明日志、metrics、alerts、debug bundle、
+  external sample、错误契约和发布契约都有运行证据。
 - `SOAK_MINUTES>=120` production soak 通过。
 - 真实 renderer summary 为 `pass`，不是 skipped。
 - 正式 capture library 覆盖所需类别，manifest 校验通过，QoE 通过。
@@ -1183,6 +1198,8 @@ scripts/verify_phase5_release_contract.sh
 Phase-5 顶层入口：
 
 ```bash
+scripts/run_phase5_implementation_gate.sh
+scripts/verify_phase5_implementation_gate.sh
 scripts/verify_phase5_production_readiness.sh
 scripts/run_phase5_production_gate.sh
 scripts/verify_phase5_production_gate.sh
@@ -1198,6 +1215,9 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 
 覆盖：
 
+- Phase-5 implementation gate：no-selfmade、logging、metrics、alerts、error
+  contract、minimal UDP external app、release contract 和 debug bundle 的可离线
+  实现证据。
 - Phase-5 production readiness preflight。
 - Phase-5 release contract gate。
 - Phase-5 debug bundle collect/verify。
@@ -1210,7 +1230,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 非 dry-run 失败时自动输出 verified `failure_debug_bundle/`，并由顶层 verifier
   强制校验。
 - readiness 失败时必须保留并校验 readiness summary、logs 和 manifest。
-- completion audit 对“实现项齐全但正式生产证据缺失”和“正式完成”做硬区分。
+- completion audit 对“implementation gate 已通过但正式生产证据缺失”和“正式完成”
+  做硬区分。
 
 ## 7. 里程碑
 
@@ -1313,6 +1334,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 
 Phase-5 基础完成必须同时满足：
 
+- `GATE_DIR=<implementation_gate> scripts/verify_phase5_implementation_gate.sh` 通过。
 - `PHASE5_GATE_DIR=<passed_gate> scripts/verify_phase5_completion_audit.sh` 通过。
 - 正式 production evidence bundle audit 通过。
 - push/server/play 正式日志文件化，支持轮转和 artifact 收集。

@@ -6,6 +6,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-${SDK_ROOT}/artifacts/phase5_completion_audit}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_DIR}/phase5_completion_audit_summary.txt}"
 PHASE5_GATE_DIR="${PHASE5_GATE_DIR:-}"
 PHASE5_DEBUG_BUNDLE_DIR="${PHASE5_DEBUG_BUNDLE_DIR:-${SDK_ROOT}/artifacts/phase5_debug_bundle}"
+PHASE5_IMPLEMENTATION_GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR:-${SDK_ROOT}/artifacts/phase5_implementation_gate/latest}"
 REQUIRE_PRODUCTION_EVIDENCE="${REQUIRE_PRODUCTION_EVIDENCE:-1}"
 ALLOW_DRY_RUN_GATE="${ALLOW_DRY_RUN_GATE:-0}"
 
@@ -76,6 +77,7 @@ write_summary "sdk_root=${SDK_ROOT}"
 write_summary "output_dir=${OUTPUT_DIR}"
 write_summary "phase5_gate_dir=${PHASE5_GATE_DIR}"
 write_summary "phase5_debug_bundle_dir=${PHASE5_DEBUG_BUNDLE_DIR}"
+write_summary "phase5_implementation_gate_dir=${PHASE5_IMPLEMENTATION_GATE_DIR}"
 write_summary "require_production_evidence=${REQUIRE_PRODUCTION_EVIDENCE}"
 if git -C "${SDK_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
   write_summary "git_head=$(git -C "${SDK_ROOT}" rev-parse HEAD)"
@@ -90,6 +92,8 @@ require_script verify_phase5_debug_bundle.sh debug_bundle_verifier
 require_script verify_phase5_minimal_udp_external_app.sh external_minimal_udp_gate
 require_script verify_phase5_error_contract.sh error_contract_gate
 require_script verify_phase5_release_contract.sh release_contract_gate
+require_script run_phase5_implementation_gate.sh implementation_gate_wrapper
+require_script verify_phase5_implementation_gate.sh implementation_gate_verifier
 require_script verify_phase5_production_readiness.sh production_readiness_gate
 require_script run_phase5_production_gate.sh production_gate_wrapper
 require_script verify_phase5_production_gate.sh production_gate_verifier
@@ -103,6 +107,7 @@ require_doc_pattern README.md 'verify_phase5_alerts.sh' readme_alerts
 require_doc_pattern README.md 'alerts-max-file-bytes' readme_alerts_rotation
 require_doc_pattern README.md 'verify_phase5_error_contract.sh' readme_error_contract
 require_doc_pattern README.md 'verify_phase5_release_contract.sh' readme_release_contract
+require_doc_pattern README.md 'run_phase5_implementation_gate.sh' readme_implementation_gate
 require_doc_pattern README.md 'run_phase5_production_gate.sh' readme_production_gate
 require_doc_pattern README.md 'verify_phase5_production_readiness.sh' readme_production_readiness
 require_doc_pattern docs/minimal_udp_integration_best_practice.md \
@@ -145,6 +150,14 @@ require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'first_alert=' debug_bundle_alert_summary_gate
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'first_problem=' debug_bundle_timeline_summary_gate
+require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
+  'validated_phase5_implementation_records' implementation_gate_runtime_records
+require_doc_pattern scripts/run_phase5_implementation_gate.sh \
+  'phase5_minimal_udp_external_app' implementation_gate_runs_external_sample
+require_doc_pattern scripts/run_phase5_implementation_gate.sh \
+  'phase5_error_contract' implementation_gate_runs_error_contract
+require_doc_pattern scripts/run_phase5_implementation_gate.sh \
+  "! -path './manifest.sha256'" implementation_gate_top_manifest_scope
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_phase5_debug_bundle.sh' production_gate_debug_bundle_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
@@ -161,6 +174,8 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'phase5_production_readiness_status=ready' production_readiness_status_gate
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  "! -path './manifest.sha256'" production_gate_top_manifest_scope
 
 if has_file "${PHASE5_DEBUG_BUNDLE_DIR}/manifest.sha256" &&
     has_file "${PHASE5_DEBUG_BUNDLE_DIR}/runtime_config.json"; then
@@ -173,6 +188,20 @@ if has_file "${PHASE5_DEBUG_BUNDLE_DIR}/manifest.sha256" &&
 else
   audit_warn debug_bundle_evidence \
     "missing_or_not_collected bundle=${PHASE5_DEBUG_BUNDLE_DIR}"
+fi
+
+if has_file "${PHASE5_IMPLEMENTATION_GATE_DIR}/manifest.sha256" &&
+    has_file "${PHASE5_IMPLEMENTATION_GATE_DIR}/phase5_implementation_gate_summary.txt"; then
+  if GATE_DIR="${PHASE5_IMPLEMENTATION_GATE_DIR}" REQUIRE_PASS=1 \
+      "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh" >/dev/null 2>&1; then
+    audit_pass implementation_evidence "gate=${PHASE5_IMPLEMENTATION_GATE_DIR}"
+  else
+    audit_fail implementation_evidence \
+      "phase5_implementation_gate_verify_failed gate=${PHASE5_IMPLEMENTATION_GATE_DIR}"
+  fi
+else
+  audit_fail implementation_evidence \
+    "missing_or_not_collected gate=${PHASE5_IMPLEMENTATION_GATE_DIR}"
 fi
 
 if [[ -n "${PHASE5_GATE_DIR}" ]]; then
@@ -229,5 +258,5 @@ write_summary "phase5_completion_audit=fail"
 write_summary "pass_count=${pass_count}"
 write_summary "warning_count=${warnings}"
 write_summary "failure_count=${failures}"
-write_summary "next_required_actions=run_phase5_production_gate_with_SOAK_MINUTES_ge_120_real_renderer_pass_formal_capture_library"
+write_summary "next_required_actions=run_phase5_implementation_gate_then_run_phase5_production_gate_with_SOAK_MINUTES_ge_120_real_renderer_pass_formal_capture_library"
 exit 1
