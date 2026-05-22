@@ -255,7 +255,6 @@ struct FileLogConfig {
   uint64_t max_file_bytes = 64 * 1024 * 1024;
   uint32_t max_files = 5;
   bool json_lines = true;
-  bool also_stderr = false;
 };
 
 struct RuntimeLogConfig {
@@ -402,6 +401,8 @@ transport/output：
 - demo 和 external sample 支持 `--log-dir`。
 - 默认运行会生成角色日志文件。
 - `std::cout` 只保留最终 summary 和人工 demo 提示，不作为 SDK 运行日志。
+- SDK runtime logger 不提供 stderr fallback；文件日志不可用时不能把结构化运行日志
+  退回 stdout/stderr。
 - 日志文件超过阈值会轮转；demo 和 external sample 支持
   `--log-max-file-bytes / --log-max-files`，`verify_phase5_logging.sh` 会用低阈值
   强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
@@ -1097,7 +1098,6 @@ struct FileLogConfig {
   uint64_t max_file_bytes = 64 * 1024 * 1024;
   uint32_t max_files = 5;
   bool json_lines = true;
-  bool also_stderr = false;
 };
 
 struct RuntimeLogConfig {
@@ -1164,7 +1164,9 @@ scripts/verify_phase5_logging.sh
 - 异步日志队列满时记录 `dropped_log_count`，并保留 warn/error/stop。
 - 日志文件轮转生效。
 - 默认不输出 RTP/H264 payload bytes。
-- stdout 只保留 summary，不承载 SDK 运行日志。
+- stdout/stderr 只保留 summary、usage 或退出原因，不承载 SDK 运行日志。
+- SDK runtime logger 源码和 public `RuntimeLogConfig` 不允许出现 `std::cout`、
+  `std::cerr` 或 stderr fallback 开关。
 
 ### 6.2 Metrics 门禁
 

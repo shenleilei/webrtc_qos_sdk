@@ -466,6 +466,11 @@ server_config.logging = logging;
 play_config.logging = logging;
 ```
 
+`RuntimeLogConfig` 只负责文件日志；SDK runtime logger 不提供 stderr fallback，也不会
+在文件打开失败时把结构化运行日志退回 stdout/stderr。业务进程可以继续用
+stdout/stderr 打人工 usage、启动 summary 或退出原因，但生产排障上下文必须来自角色
+JSONL 日志、metrics、alerts 和 debug bundle。
+
 默认不配置日志时 SDK 不会输出运行日志。demo 可用 `--log-dir` 快速验证：
 
 ```bash

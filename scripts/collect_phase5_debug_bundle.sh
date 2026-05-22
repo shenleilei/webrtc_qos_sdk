@@ -209,7 +209,6 @@ runtime_config = {
             "min_level": "INFO",
             "basename": "webrtc_qos_udp",
             "json_lines": True,
-            "also_stderr": False,
             "max_file_bytes": 1048576,
             "max_files": 4,
             "max_queue_records": 4096,

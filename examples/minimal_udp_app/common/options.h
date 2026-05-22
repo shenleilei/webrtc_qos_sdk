@@ -156,7 +156,6 @@ inline webrtc_qos::RuntimeLogConfig MakeLogConfig(
     config.file.directory = options.log_dir;
     config.file.basename = "minimal_udp";
     config.file.json_lines = true;
-    config.file.also_stderr = false;
     config.file.max_file_bytes = options.log_max_file_bytes;
     config.file.max_files = options.log_max_files;
     config.max_queue_records = options.log_max_queue_records;

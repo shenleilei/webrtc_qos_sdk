@@ -21,7 +21,6 @@ struct FileLogConfig {
   uint64_t max_file_bytes = 64 * 1024 * 1024;
   uint32_t max_files = 5;
   bool json_lines = true;
-  bool also_stderr = false;
 };
 
 struct RuntimeLogConfig {

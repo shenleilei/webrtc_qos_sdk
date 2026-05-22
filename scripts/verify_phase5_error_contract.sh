@@ -158,7 +158,6 @@ webrtc_qos::RuntimeLogConfig MakeLogs(const std::string& dir) {
   config.file.max_file_bytes = 1024 * 1024;
   config.file.max_files = 16;
   config.file.json_lines = true;
-  config.file.also_stderr = false;
   return config;
 }
 

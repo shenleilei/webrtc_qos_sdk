@@ -236,7 +236,6 @@ webrtc_qos::RuntimeLogConfig MakeLogs(const std::string& dir) {
   config.file.directory = dir;
   config.file.basename = "webrtc_qos_fault_logs";
   config.file.json_lines = true;
-  config.file.also_stderr = false;
   config.file.max_file_bytes = 1024 * 1024;
   config.file.max_files = 4;
   return config;

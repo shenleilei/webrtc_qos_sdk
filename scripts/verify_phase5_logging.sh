@@ -39,6 +39,21 @@ require_log() {
   fi
 }
 
+verify_runtime_logging_contract() {
+  local paths=(
+    "${SDK_ROOT}/include/webrtc_qos/runtime_logging.h"
+    "${SDK_ROOT}/src/runtime_logger.h"
+    "${SDK_ROOT}/src/runtime_logger.cc"
+  )
+  if rg -n 'std::cout|std::cerr|printf\(|fprintf\(|puts\(' "${paths[@]}"; then
+    fail "SDK runtime logger must not write runtime logs to stdout/stderr"
+  fi
+  if rg -n 'also_stderr' "${paths[@]}"; then
+    fail "SDK runtime logger must not expose stderr fallback logging"
+  fi
+  echo "validated_no_runtime_stdout_stderr_logging"
+}
+
 run_demo() {
   local label="$1"
   shift
@@ -61,6 +76,7 @@ cmake --build "${BUILD_DIR}" \
   --target webrtc_qos_webrtc_first_udp_demo -j2 >/dev/null
 
 demo="${BUILD_DIR}/webrtc_qos_webrtc_first_udp_demo"
+verify_runtime_logging_contract
 
 plain_output="$(run_demo "plain UDP selftest" selftest "${FRAMES}")"
 printf '%s\n' "${plain_output}"

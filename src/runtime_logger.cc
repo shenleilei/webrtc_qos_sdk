@@ -7,7 +7,6 @@
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
-#include <iostream>
 #include <sstream>
 #include <string>
 
@@ -337,9 +336,6 @@ void RuntimeLogger::Log(LogLevel level,
   } else {
     WriteRecordLocked(record);
   }
-  if (config_.file.also_stderr) {
-    std::cerr << text;
-  }
 }
 
 void RuntimeLogger::WorkerLoop() {
@@ -402,7 +398,7 @@ void RuntimeLogger::RotateIfNeededLocked() {
 
 bool RuntimeLogger::ShouldLog(LogLevel level) const {
   const bool can_write_file = config_.file.enabled && !path_prefix_.empty();
-  if (!can_write_file && !config_.file.also_stderr) {
+  if (!can_write_file) {
     return false;
   }
   return level >= config_.min_level && config_.min_level != LogLevel::kOff;
