@@ -495,6 +495,9 @@ logger 实例保留的文件数；`verify_phase5_logging.sh` 会用低阈值把�
 `source_id`、`track_id`、`sender_ssrc`、`receiver_id`，warn/error 还会带
 `status_code` 和 `reason`。不要记录 H264 payload、RTP payload、鉴权 token
 或用户隐私字段。
+三角色 `Start()` 成功后会写 `config_dump` 事件，只记录 UDP 边界、track 数、
+码率边界和日志/metrics/alerts 开关这类脱敏摘要，并带 `redaction_media_bytes`
+和 `redaction_runtime_paths` 标记；不要把运行机绝对路径或鉴权材料放进日志字段。
 
 同一套 facade 也支持 metrics snapshot 文件化。生产集成建议显式配置
 `RuntimeMetricsConfig`，把 session/track 级 QoS 快照按固定 interval 写入

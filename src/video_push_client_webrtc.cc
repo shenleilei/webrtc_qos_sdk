@@ -101,6 +101,10 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     pacer_->Process(0);
     ApplyProbeClusters();
     ApplyGoogCcRates(0);
+    logger_.Info("config_dump", config_.session.ids,
+                 RuntimeConfigDumpFields(config_.session, config_.logging,
+                                         config_.metrics, config_.alerts,
+                                         track_configs_.size()));
     logger_.Info("start", config_.session.ids);
     return Status::Ok();
   }

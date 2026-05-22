@@ -369,6 +369,9 @@ transport/output：
 - 日志文件写入走内部异步队列；demo 和 external sample 支持
   `--log-max-queue-records`，`verify_phase5_logging.sh` 会用极小队列验证
   `dropped_log_count`，且 warn/error/stop 不丢。
+- push/server/play `Start()` 成功后会写脱敏 `config_dump`，记录 UDP 边界、
+  track 数、码率边界和日志/metrics/alerts 开关，不记录运行机路径、媒体 payload
+  或鉴权材料。
 - `verify_phase5_logging.sh` 会检查 push/server/play 的 `stop` 事件已写入 JSONL
   文件，作为正常 `Stop()` 后 flush 的回归门禁。
 - CI artifact 收集日志文件。
@@ -1049,6 +1052,7 @@ scripts/verify_phase5_logging.sh
 
 - push/server/play 都生成日志文件。
 - 日志包含 start/stop/config/error 事件。
+- `config_dump` 包含脱敏运行配置摘要和 redaction 标记。
 - 正常 `Stop()` 后 stop 事件已 flush 到日志文件。
 - 异步日志队列满时记录 `dropped_log_count`，并保留 warn/error/stop。
 - 日志文件轮转生效。

@@ -96,6 +96,10 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       return track_config_status_;
     }
     started_ = true;
+    logger_.Info("config_dump", config_.session.ids,
+                 RuntimeConfigDumpFields(config_.session, config_.logging,
+                                         config_.metrics, config_.alerts,
+                                         track_configs_.size()));
     logger_.Info("start", config_.session.ids);
     return Status::Ok();
   }

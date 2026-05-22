@@ -116,6 +116,8 @@ require_doc_pattern scripts/verify_phase5_logging.sh \
 require_doc_pattern scripts/verify_phase5_logging.sh \
   'validated_stop_flush' logging_stop_flush_gate
 require_doc_pattern scripts/verify_phase5_logging.sh \
+  'validated_config_dump' logging_config_dump_gate
+require_doc_pattern scripts/verify_phase5_logging.sh \
   'validated_async_log_queue' logging_async_queue_gate
 require_doc_pattern scripts/verify_phase5_logging.sh \
   'dropped_log_count' logging_dropped_count_gate

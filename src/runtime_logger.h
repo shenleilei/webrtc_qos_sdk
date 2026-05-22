@@ -10,6 +10,9 @@
 #include <thread>
 
 #include "webrtc_qos/runtime_logging.h"
+#include "webrtc_qos/runtime_alerts.h"
+#include "webrtc_qos/runtime_metrics.h"
+#include "webrtc_qos/session_config.h"
 #include "webrtc_qos/status.h"
 #include "webrtc_qos/types.h"
 
@@ -25,6 +28,9 @@ class RuntimeLogger {
   RuntimeLogger& operator=(const RuntimeLogger&) = delete;
 
   void Info(const char* event, const TransportIds& ids);
+  void Info(const char* event,
+            const TransportIds& ids,
+            const std::string& extra_json_fields);
   void Warn(const char* event, const TransportIds& ids, const Status& status);
   void Error(const char* event, const TransportIds& ids, const Status& status);
   void Flush();
@@ -39,7 +45,8 @@ class RuntimeLogger {
   void Log(LogLevel level,
            const char* event,
            const TransportIds& ids,
-           const Status* status);
+           const Status* status,
+           const std::string* extra_json_fields = nullptr);
   void WorkerLoop();
   void WriteRecordLocked(const QueuedLogRecord& record);
   void RotateIfNeededLocked();
@@ -64,5 +71,10 @@ class RuntimeLogger {
 };
 
 std::string StatusCodeName(StatusCode code);
+std::string RuntimeConfigDumpFields(const SessionConfig& session,
+                                    const RuntimeLogConfig& logging,
+                                    const RuntimeMetricsConfig& metrics,
+                                    const RuntimeAlertConfig& alerts,
+                                    size_t resolved_track_count);
 
 }  // namespace webrtc_qos

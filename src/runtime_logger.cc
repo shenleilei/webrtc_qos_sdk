@@ -131,6 +131,47 @@ std::string StatusCodeName(StatusCode code) {
   return "unknown";
 }
 
+std::string RuntimeConfigDumpFields(const SessionConfig& session,
+                                    const RuntimeLogConfig& logging,
+                                    const RuntimeMetricsConfig& metrics,
+                                    const RuntimeAlertConfig& alerts,
+                                    size_t resolved_track_count) {
+  std::ostringstream fields;
+  fields << "\"schema_version\":1"
+         << ",\"transport\":\"udp\""
+         << ",\"peer_connection\":false"
+         << ",\"resolved_track_count\":" << resolved_track_count
+         << ",\"start_bitrate_bps\":" << session.start_bitrate_bps
+         << ",\"min_bitrate_bps\":" << session.min_bitrate_bps
+         << ",\"max_bitrate_bps\":" << session.max_bitrate_bps
+         << ",\"twcc_extension_id\":"
+         << static_cast<uint32_t>(session.twcc.extension_id)
+         << ",\"rtcp_sr_rr_interval_ms\":"
+         << session.rtcp.sr_rr_interval_ms
+         << ",\"logging_enabled\":"
+         << (logging.file.enabled ? "true" : "false")
+         << ",\"log_json_lines\":"
+         << (logging.file.json_lines ? "true" : "false")
+         << ",\"log_max_file_bytes\":" << logging.file.max_file_bytes
+         << ",\"log_max_files\":" << logging.file.max_files
+         << ",\"log_max_queue_records\":"
+         << logging.max_queue_records
+         << ",\"metrics_enabled\":"
+         << (metrics.file.enabled ? "true" : "false")
+         << ",\"metrics_interval_ms\":" << metrics.interval_ms
+         << ",\"metrics_include_track_snapshots\":"
+         << (metrics.include_track_snapshots ? "true" : "false")
+         << ",\"alerts_enabled\":"
+         << (alerts.file.enabled ? "true" : "false")
+         << ",\"alerts_high_loss_fraction_q8\":"
+         << alerts.high_loss_fraction_q8
+         << ",\"alerts_low_target_bps\":" << alerts.low_target_bps
+         << ",\"alerts_low_encoder_fps\":" << alerts.low_encoder_fps
+         << ",\"redaction_media_bytes\":\"omitted\""
+         << ",\"redaction_runtime_paths\":\"omitted\"";
+  return fields.str();
+}
+
 RuntimeLogger::RuntimeLogger(RuntimeLogConfig config, std::string role)
     : config_(config), role_(std::move(role)) {
   if (!config_.file.enabled || config_.file.directory.empty()) {
@@ -171,6 +212,12 @@ void RuntimeLogger::Info(const char* event, const TransportIds& ids) {
   Log(LogLevel::kInfo, event, ids, nullptr);
 }
 
+void RuntimeLogger::Info(const char* event,
+                         const TransportIds& ids,
+                         const std::string& extra_json_fields) {
+  Log(LogLevel::kInfo, event, ids, nullptr, &extra_json_fields);
+}
+
 void RuntimeLogger::Warn(const char* event,
                          const TransportIds& ids,
                          const Status& status) {
@@ -196,7 +243,8 @@ void RuntimeLogger::Flush() {
 void RuntimeLogger::Log(LogLevel level,
                         const char* event,
                         const TransportIds& ids,
-                        const Status* status) {
+                        const Status* status,
+                        const std::string* extra_json_fields) {
   if (!ShouldLog(level)) {
     return;
   }
@@ -216,6 +264,9 @@ void RuntimeLogger::Log(LogLevel level,
       line << ",\"status_code\":\"" << StatusCodeName(status->code)
            << "\",\"reason\":\"" << EscapeJson(status->message) << "\"";
     }
+    if (extra_json_fields != nullptr && !extra_json_fields->empty()) {
+      line << "," << *extra_json_fields;
+    }
     line << "}\n";
   } else {
     line << WallClockNowUs() << " " << LogLevelName(level) << " " << role_
@@ -228,6 +279,9 @@ void RuntimeLogger::Log(LogLevel level,
     if (status != nullptr) {
       line << " status_code=" << StatusCodeName(status->code)
            << " reason=" << status->message;
+    }
+    if (extra_json_fields != nullptr && !extra_json_fields->empty()) {
+      line << " extra_json_fields={" << *extra_json_fields << "}";
     }
     line << "\n";
   }
