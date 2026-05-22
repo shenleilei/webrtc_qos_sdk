@@ -51,6 +51,8 @@ required_files=(
   monitoring/health_summary.txt
   monitoring/alert_policy.json
   monitoring/alert_policy_summary.txt
+  monitoring/incident_report.json
+  monitoring/incident_runbook.txt
   evidence/udp_selftest_output.txt
 )
 
@@ -338,6 +340,8 @@ for key in (
     "first_problem",
     "alert_policy",
     "alert_policy_summary",
+    "incident_report",
+    "incident_runbook",
 ):
     rel = artifacts.get(key)
     if not rel or not (root / rel).exists():
@@ -453,6 +457,80 @@ for required_text in (
     if required_text not in policy_summary:
         raise SystemExit(f"alert policy summary missing {required_text}")
 
+incident_report = json.loads(
+    (root / "monitoring" / "incident_report.json").read_text()
+)
+if incident_report.get("schema_version") != 1:
+    raise SystemExit("incident_report.json missing schema_version=1")
+if incident_report.get("source") != "phase5_debug_bundle":
+    raise SystemExit("incident_report.json has unexpected source")
+if incident_report.get("incident_status") != health_report.get("health_status"):
+    raise SystemExit("incident report status does not match health report")
+incident_first_problem = incident_report.get("first_problem", {})
+if incident_first_problem.get("status") != "found":
+    raise SystemExit("incident report missing first problem")
+if incident_first_problem.get("name") != first_problem.get("name"):
+    raise SystemExit("incident report first problem does not match timeline")
+if incident_report.get("affected_role") not in roles:
+    raise SystemExit("incident report affected role is not a runtime role")
+if not incident_report.get("top_alert_rules"):
+    raise SystemExit("incident report missing top alert rules")
+if not incident_report.get("recommended_actions"):
+    raise SystemExit("incident report missing recommended actions")
+runbook_steps = incident_report.get("runbook_steps", [])
+expected_step_names = [
+    "open_first_problem",
+    "check_health_report",
+    "confirm_alert_policy",
+    "inspect_role_artifacts",
+    "correlate_timeline",
+    "check_runtime_context",
+    "verify_bundle_integrity",
+]
+if [step.get("name") for step in runbook_steps] != expected_step_names:
+    raise SystemExit("incident report runbook steps are incomplete or out of order")
+for index, step in enumerate(runbook_steps, 1):
+    if step.get("step") != index:
+        raise SystemExit("incident report has non-sequential runbook step")
+    if not step.get("required_action"):
+        raise SystemExit(f"incident report runbook step {index} missing action")
+    artifacts = step.get("artifacts", [])
+    if not artifacts:
+        raise SystemExit(f"incident report runbook step {index} missing artifacts")
+    for rel in artifacts:
+        if "{" in rel:
+            continue
+        if not (root / rel).exists():
+            raise SystemExit(
+                f"incident report runbook step {index} bad artifact {rel}"
+            )
+evidence_index = incident_report.get("evidence_index", {})
+for key in (
+    "health_report",
+    "alert_policy",
+    "timeline",
+    "first_problem",
+    "metrics_summary",
+    "alerts_summary",
+    "runtime_config",
+):
+    rel = evidence_index.get(key)
+    if not rel or not (root / rel).exists():
+        raise SystemExit(f"incident report bad evidence pointer {key}")
+incident_runbook = (root / "monitoring" / "incident_runbook.txt").read_text(
+    encoding="utf-8"
+)
+for required_text in (
+    "incident_runbook=phase5_debug_bundle",
+    "first_problem=",
+    "step=1 name=open_first_problem",
+    "step=3 name=confirm_alert_policy",
+    "step=7 name=verify_bundle_integrity",
+    "recommended_action=",
+):
+    if required_text not in incident_runbook:
+        raise SystemExit(f"incident runbook missing {required_text}")
+
 session = json.loads((root / "session_config.json").read_text())
 profiles = session.get("profiles", [])
 if len(profiles) < 2:
@@ -513,6 +591,8 @@ for artifact_kind in (
     "health_summary",
     "alert_policy",
     "alert_policy_summary",
+    "incident_report",
+    "incident_runbook",
 ):
     rel = runtime_artifacts.get(artifact_kind)
     if not rel or not (root / rel).exists():

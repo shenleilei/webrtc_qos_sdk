@@ -252,6 +252,8 @@ runtime_config = {
         "health_summary": "monitoring/health_summary.txt",
         "alert_policy": "monitoring/alert_policy.json",
         "alert_policy_summary": "monitoring/alert_policy_summary.txt",
+        "incident_report": "monitoring/incident_report.json",
+        "incident_runbook": "monitoring/incident_runbook.txt",
     },
     "redaction": {
         "media_bytes": "omitted",
@@ -896,6 +898,8 @@ health_report = {
         "first_problem": "timeline/first_problem.json",
         "alert_policy": "monitoring/alert_policy.json",
         "alert_policy_summary": "monitoring/alert_policy_summary.txt",
+        "incident_report": "monitoring/incident_report.json",
+        "incident_runbook": "monitoring/incident_runbook.txt",
     },
 }
 with (root / "monitoring" / "health_report.json").open(
@@ -936,6 +940,124 @@ with (root / "monitoring" / "health_summary.txt").open(
             f"category={action['category']} count={action['count']} "
             f"required={action['required']}\n"
         )
+
+first_problem_role = problem.get("role", "")
+incident_steps = []
+incident_steps.append({
+    "step": 1,
+    "name": "open_first_problem",
+    "required_action": "start from timeline/first_problem.json and confirm role, rule, track_id, receiver_id, and timestamp",
+    "artifacts": ["timeline/first_problem.json", "timeline/summary.txt"],
+})
+incident_steps.append({
+    "step": 2,
+    "name": "check_health_report",
+    "required_action": "inspect role health, top alert rules, and recommended actions",
+    "artifacts": [
+        "monitoring/health_report.json",
+        "monitoring/health_summary.txt",
+    ],
+})
+incident_steps.append({
+    "step": 3,
+    "name": "confirm_alert_policy",
+    "required_action": "confirm the triggered alert rule, threshold source, default threshold, role scope, and policy action",
+    "artifacts": [
+        "monitoring/alert_policy.json",
+        "monitoring/alert_policy_summary.txt",
+    ],
+})
+incident_steps.append({
+    "step": 4,
+    "name": "inspect_role_artifacts",
+    "required_action": "open the affected role log, metrics, and alert stream around the first problem timestamp",
+    "artifacts": [
+        f"log/{first_problem_role}.log" if first_problem_role else "log/{role}.log",
+        f"metrics/{first_problem_role}_metrics.jsonl"
+        if first_problem_role
+        else "metrics/{role}_metrics.jsonl",
+        f"alerts/{first_problem_role}_alerts.jsonl"
+        if first_problem_role
+        else "alerts/{role}_alerts.jsonl",
+    ],
+})
+incident_steps.append({
+    "step": 5,
+    "name": "correlate_timeline",
+    "required_action": "correlate log, metric, and alert events before and after the first problem",
+    "artifacts": ["timeline/events.jsonl", "metrics/summary.csv", "alerts/alerts_summary.txt"],
+})
+incident_steps.append({
+    "step": 6,
+    "name": "check_runtime_context",
+    "required_action": "confirm build, git, runtime config, redaction markers, and transport boundary",
+    "artifacts": [
+        "metadata.txt",
+        "build_config.txt",
+        "git_status.txt",
+        "runtime_config.json",
+        "session_config.json",
+    ],
+})
+incident_steps.append({
+    "step": 7,
+    "name": "verify_bundle_integrity",
+    "required_action": "run sha256 manifest verification before trusting the incident bundle",
+    "artifacts": ["manifest.sha256", "files.txt"],
+})
+
+incident_report = {
+    "schema_version": 1,
+    "source": "phase5_debug_bundle",
+    "incident_status": health_status,
+    "first_problem": problem,
+    "affected_role": first_problem_role,
+    "top_alert_rules": top_alert_rules[:5],
+    "recommended_actions": recommended_actions,
+    "runbook_steps": incident_steps,
+    "evidence_index": {
+        "health_report": "monitoring/health_report.json",
+        "alert_policy": "monitoring/alert_policy.json",
+        "timeline": "timeline/events.jsonl",
+        "first_problem": "timeline/first_problem.json",
+        "metrics_summary": "metrics/summary.csv",
+        "alerts_summary": "alerts/alerts_summary.txt",
+        "runtime_config": "runtime_config.json",
+    },
+}
+with (root / "monitoring" / "incident_report.json").open(
+    "w", encoding="utf-8"
+) as handle:
+    json.dump(incident_report, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+
+with (root / "monitoring" / "incident_runbook.txt").open(
+    "w", encoding="utf-8"
+) as handle:
+    handle.write("incident_runbook=phase5_debug_bundle\n")
+    handle.write(f"incident_status={health_status}\n")
+    if problem.get("status") == "found":
+        handle.write(
+            "first_problem="
+            f"type={problem.get('type', '')} "
+            f"level={problem.get('level', '')} "
+            f"role={problem.get('role', '')} "
+            f"name={problem.get('name', '')} "
+            f"track_id={problem.get('track_id', 0)} "
+            f"receiver_id={problem.get('receiver_id', 0)}\n"
+        )
+    for item in incident_steps:
+        handle.write(
+            f"step={item['step']} name={item['name']} "
+            f"action={item['required_action']} "
+            f"artifacts={','.join(item['artifacts'])}\n"
+        )
+    for action in recommended_actions:
+        handle.write(
+            f"recommended_action=role={action['role']} "
+            f"category={action['category']} count={action['count']} "
+            f"required={action['required']}\n"
+        )
 PY
 
 {
@@ -952,6 +1074,8 @@ PY
   write_summary "health_summary=${OUTPUT_DIR}/monitoring/health_summary.txt"
   write_summary "alert_policy=${OUTPUT_DIR}/monitoring/alert_policy.json"
   write_summary "alert_policy_summary=${OUTPUT_DIR}/monitoring/alert_policy_summary.txt"
+  write_summary "incident_report=${OUTPUT_DIR}/monitoring/incident_report.json"
+  write_summary "incident_runbook=${OUTPUT_DIR}/monitoring/incident_runbook.txt"
   write_summary "files=${FILES_FILE}"
   write_summary "manifest=${MANIFEST_FILE}"
   write_summary "phase5_debug_bundle_status=collected"
