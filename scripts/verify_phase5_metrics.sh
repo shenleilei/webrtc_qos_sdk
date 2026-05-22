@@ -5,11 +5,12 @@ SDK_ROOT="${SDK_ROOT:-/root/webrtc_qos_sdk}"
 PREFIX="${PREFIX:-${SDK_ROOT}/dist/linux-x86_64}"
 BUILD_DIR="${BUILD_DIR:-/tmp/webrtc_qos_phase5_metrics_build.$$}"
 METRICS_DIR="${METRICS_DIR:-/tmp/webrtc_qos_phase5_metrics.$$}"
+ROTATION_METRICS_DIR="${ROTATION_METRICS_DIR:-/tmp/webrtc_qos_phase5_rotation_metrics.$$}"
 FRAMES="${FRAMES:-36}"
 
 cleanup() {
   if [[ "${KEEP_WORK_DIR:-0}" != "1" ]]; then
-    rm -rf "${BUILD_DIR}" "${METRICS_DIR}"
+    rm -rf "${BUILD_DIR}" "${METRICS_DIR}" "${ROTATION_METRICS_DIR}"
   fi
 }
 trap cleanup EXIT
@@ -19,8 +20,8 @@ fail() {
   exit 1
 }
 
-rm -rf "${BUILD_DIR}" "${METRICS_DIR}"
-mkdir -p "${METRICS_DIR}"
+rm -rf "${BUILD_DIR}" "${METRICS_DIR}" "${ROTATION_METRICS_DIR}"
+mkdir -p "${METRICS_DIR}" "${ROTATION_METRICS_DIR}"
 
 cmake -S "${SDK_ROOT}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -137,6 +138,70 @@ if len(track_ids) < 2:
 print(
     "validated_metrics_records=%d roles=%s track_ids=%s"
     % (len(records), ",".join(sorted(roles)), ",".join(map(str, sorted(track_ids))))
+)
+PY
+
+if ! rotation_output="$("${demo}" selftest 90 \
+  --metrics-dir "${ROTATION_METRICS_DIR}" \
+  --metrics-max-file-bytes 1024 \
+  --metrics-max-files 3 2>&1)"; then
+  echo "${rotation_output}" >&2
+  fail "UDP selftest with rotating metrics exited with non-zero status"
+fi
+printf '%s\n' "${rotation_output}"
+grep -q "udp_selftest .*pass=true" <<<"${rotation_output}" ||
+  fail "UDP selftest with rotating metrics did not pass"
+
+python3 - "${ROTATION_METRICS_DIR}" <<'PY'
+import json
+import pathlib
+import sys
+
+metrics_dir = pathlib.Path(sys.argv[1])
+roles = {"push", "server", "play"}
+files_by_role = {
+    role: sorted(metrics_dir.glob(f"webrtc_qos_udp_metrics.{role}.*.jsonl"))
+    for role in roles
+}
+for role, paths in files_by_role.items():
+    grouped = {}
+    for path in paths:
+        prefix, index, suffix = path.name.rsplit(".", 2)
+        if suffix != "jsonl":
+            raise SystemExit(f"{path}: unexpected suffix {suffix}")
+        grouped.setdefault(prefix, []).append((int(index), path))
+    if not grouped:
+        raise SystemExit(f"{role}: missing rotated metrics files")
+    saw_rotation = False
+    for prefix, indexed_paths in grouped.items():
+        if len(indexed_paths) > 3:
+            raise SystemExit(
+                f"{role}:{prefix}: max_files=3 exceeded, got {len(indexed_paths)}"
+            )
+        indexes = sorted(index for index, _ in indexed_paths)
+        if indexes != list(range(len(indexes))):
+            raise SystemExit(f"{role}:{prefix}: non-contiguous rotation indexes {indexes}")
+        saw_rotation = saw_rotation or len(indexed_paths) >= 2
+        for _, path in indexed_paths:
+            if path.stat().st_size <= 0:
+                raise SystemExit(f"{path}: empty rotated metrics file")
+            with path.open("r", encoding="utf-8") as handle:
+                for line_no, line in enumerate(handle, 1):
+                    if not line.strip():
+                        continue
+                    record = json.loads(line)
+                    if record.get("role") != role:
+                        raise SystemExit(
+                            f"{path}:{line_no}: role mismatch {record.get('role')} != {role}"
+                        )
+                    break
+                else:
+                    raise SystemExit(f"{path}: no JSON records")
+    if not saw_rotation:
+        raise SystemExit(f"{role}: no metrics writer instance produced multiple rotated files")
+print(
+    "validated_metrics_rotation "
+    + " ".join(f"{role}_files={len(paths)}" for role, paths in sorted(files_by_role.items()))
 )
 PY
 

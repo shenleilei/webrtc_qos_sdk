@@ -7,13 +7,14 @@ BUILD_DIR="${BUILD_DIR:-/tmp/webrtc_qos_phase5_alerts_build.$$}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-/tmp/webrtc_qos_phase5_alerts_install.$$}"
 WORK_DIR="${WORK_DIR:-/tmp/webrtc_qos_phase5_alerts_fixture.$$}"
 ALERTS_DIR="${ALERTS_DIR:-/tmp/webrtc_qos_phase5_alerts.$$}"
+ROTATION_ALERTS_DIR="${ROTATION_ALERTS_DIR:-/tmp/webrtc_qos_phase5_rotation_alerts.$$}"
 LOG_DIR="${LOG_DIR:-/tmp/webrtc_qos_phase5_alert_logs.$$}"
 FRAMES="${FRAMES:-36}"
 
 cleanup() {
   if [[ "${KEEP_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "${BUILD_DIR}" "${INSTALL_PREFIX}" "${WORK_DIR}" \
-      "${ALERTS_DIR}" "${LOG_DIR}"
+      "${ALERTS_DIR}" "${ROTATION_ALERTS_DIR}" "${LOG_DIR}"
   fi
 }
 trap cleanup EXIT
@@ -33,8 +34,8 @@ require_log() {
 }
 
 rm -rf "${BUILD_DIR}" "${INSTALL_PREFIX}" "${WORK_DIR}" \
-  "${ALERTS_DIR}" "${LOG_DIR}"
-mkdir -p "${ALERTS_DIR}" "${LOG_DIR}" "${WORK_DIR}"
+  "${ALERTS_DIR}" "${ROTATION_ALERTS_DIR}" "${LOG_DIR}"
+mkdir -p "${ALERTS_DIR}" "${ROTATION_ALERTS_DIR}" "${LOG_DIR}" "${WORK_DIR}"
 
 cmake -S "${SDK_ROOT}" -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -207,13 +208,16 @@ webrtc_qos::SessionConfig MakeSession() {
   return session;
 }
 
-webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir) {
+webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir,
+                                          const std::string& basename,
+                                          uint64_t max_file_bytes = 1024 * 1024,
+                                          uint32_t max_files = 4) {
   webrtc_qos::RuntimeAlertConfig config;
   config.file.enabled = true;
   config.file.directory = dir;
-  config.file.basename = "webrtc_qos_fault_alerts";
-  config.file.max_file_bytes = 1024 * 1024;
-  config.file.max_files = 4;
+  config.file.basename = basename;
+  config.file.max_file_bytes = max_file_bytes;
+  config.file.max_files = max_files;
   config.suppress_repeated_alerts_ms = 0;
   return config;
 }
@@ -238,18 +242,19 @@ int Fail(const char* message) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 3) {
-    return Fail("usage: phase5_alert_fault_fixture <alerts_dir> <log_dir>");
+  if (argc < 4) {
+    return Fail("usage: phase5_alert_fault_fixture <alerts_dir> <log_dir> <rotation_alerts_dir>");
   }
 
   const std::string alerts_dir = argv[1];
   const std::string log_dir = argv[2];
+  const std::string rotation_alerts_dir = argv[3];
   const webrtc_qos::SessionConfig session = MakeSession();
   const std::vector<uint8_t> au = MakeIdrAccessUnit(42);
 
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
-  server_config.alerts = MakeAlerts(alerts_dir);
+  server_config.alerts = MakeAlerts(alerts_dir, "webrtc_qos_fault_alerts");
   server_config.logging = MakeLogs(log_dir);
   server_config.sender_output =
       [](const webrtc_qos::TransportPacketView&) {
@@ -272,7 +277,7 @@ int main(int argc, char** argv) {
 
   webrtc_qos::VideoPushClientConfig push_fail_config;
   push_fail_config.session = session;
-  push_fail_config.alerts = MakeAlerts(alerts_dir);
+  push_fail_config.alerts = MakeAlerts(alerts_dir, "webrtc_qos_fault_alerts");
   push_fail_config.logging = MakeLogs(log_dir);
   push_fail_config.transport_output =
       [](const webrtc_qos::TransportPacketView&) {
@@ -342,7 +347,7 @@ int main(int argc, char** argv) {
 
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
-  play_config.alerts = MakeAlerts(alerts_dir);
+  play_config.alerts = MakeAlerts(alerts_dir, "webrtc_qos_fault_alerts");
   play_config.logging = MakeLogs(log_dir);
   play_config.transport_output =
       [](const webrtc_qos::TransportPacketView&) {
@@ -373,6 +378,78 @@ int main(int argc, char** argv) {
     return Fail("decode output failure did not trigger");
   }
 
+  webrtc_qos::VideoPushClientConfig push_rotation_config;
+  push_rotation_config.session = session;
+  push_rotation_config.alerts =
+      MakeAlerts(rotation_alerts_dir, "webrtc_qos_rotation_alerts", 256, 3);
+  push_rotation_config.transport_output =
+      [](const webrtc_qos::TransportPacketView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  std::unique_ptr<webrtc_qos::VideoPushClient> push_rotation =
+      webrtc_qos::CreateVideoPushClient(push_rotation_config);
+  if (!push_rotation || !push_rotation->Start()) {
+    return Fail("failed to start push rotation fixture");
+  }
+  const uint8_t bad_rtcp[] = {0x80, 0xce, 0x00};
+  for (int i = 0; i < 12; ++i) {
+    if (push_rotation->OnTransportFeedback(bad_rtcp, sizeof(bad_rtcp),
+                                           4000000 + i * 1000)) {
+      return Fail("malformed push RTCP was unexpectedly accepted");
+    }
+  }
+  push_rotation->Stop();
+
+  webrtc_qos::ServerQosRouterConfig server_rotation_config;
+  server_rotation_config.session = session;
+  server_rotation_config.alerts =
+      MakeAlerts(rotation_alerts_dir, "webrtc_qos_rotation_alerts", 256, 3);
+  server_rotation_config.sender_output =
+      [](const webrtc_qos::TransportPacketView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  server_rotation_config.receiver_output =
+      [](const webrtc_qos::TransportPacketView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  std::unique_ptr<webrtc_qos::ServerQosRouter> server_rotation =
+      webrtc_qos::CreateServerQosRouter(server_rotation_config);
+  if (!server_rotation || !server_rotation->Start()) {
+    return Fail("failed to start server rotation fixture");
+  }
+  for (int i = 0; i < 12; ++i) {
+    if (server_rotation->OnSenderRtp(bad_rtp, sizeof(bad_rtp),
+                                     5000000 + i * 1000)) {
+      return Fail("malformed rotation RTP was unexpectedly accepted");
+    }
+  }
+  server_rotation->Stop();
+
+  webrtc_qos::VideoPlayClientConfig play_rotation_config;
+  play_rotation_config.session = session;
+  play_rotation_config.alerts =
+      MakeAlerts(rotation_alerts_dir, "webrtc_qos_rotation_alerts", 256, 3);
+  play_rotation_config.transport_output =
+      [](const webrtc_qos::TransportPacketView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  play_rotation_config.decoded_access_unit_output =
+      [](const webrtc_qos::AnnexBAccessUnitView&) {
+        return webrtc_qos::Status::Ok();
+      };
+  std::unique_ptr<webrtc_qos::VideoPlayClient> play_rotation =
+      webrtc_qos::CreateVideoPlayClient(play_rotation_config);
+  if (!play_rotation || !play_rotation->Start()) {
+    return Fail("failed to start play rotation fixture");
+  }
+  for (int i = 0; i < 12; ++i) {
+    if (play_rotation->OnRtpPacket(bad_rtp, sizeof(bad_rtp),
+                                   6000000 + i * 1000)) {
+      return Fail("malformed play RTP was unexpectedly accepted");
+    }
+  }
+  play_rotation->Stop();
+
   std::cout << "phase5_alert_fault_fixture pass\n";
   return 0;
 }
@@ -384,7 +461,7 @@ cmake -S "${WORK_DIR}" -B "${WORK_DIR}/build" \
 cmake --build "${WORK_DIR}/build" -j2 >/dev/null
 
 if ! fixture_output="$("${WORK_DIR}/build/phase5_alert_fault_fixture" \
-  "${ALERTS_DIR}" "${LOG_DIR}" 2>&1)"; then
+  "${ALERTS_DIR}" "${LOG_DIR}" "${ROTATION_ALERTS_DIR}" 2>&1)"; then
   echo "${fixture_output}" >&2
   fail "alert fault fixture exited with non-zero status"
 fi
@@ -445,6 +522,61 @@ if missing_rules:
 print(
     "validated_fault_alert_records=%d rules=%s"
     % (len(records), ",".join(sorted(rules)))
+)
+PY
+
+python3 - "${ROTATION_ALERTS_DIR}" <<'PY'
+import json
+import pathlib
+import sys
+
+alerts_dir = pathlib.Path(sys.argv[1])
+roles = {"push", "server", "play"}
+files_by_role = {
+    role: sorted(alerts_dir.glob(f"webrtc_qos_rotation_alerts.{role}.*.jsonl"))
+    for role in roles
+}
+for role, paths in files_by_role.items():
+    grouped = {}
+    for path in paths:
+        prefix, index, suffix = path.name.rsplit(".", 2)
+        if suffix != "jsonl":
+            raise SystemExit(f"{path}: unexpected suffix {suffix}")
+        grouped.setdefault(prefix, []).append((int(index), path))
+    if not grouped:
+        raise SystemExit(f"{role}: missing rotated alert files")
+    saw_rotation = False
+    for prefix, indexed_paths in grouped.items():
+        if len(indexed_paths) > 3:
+            raise SystemExit(
+                f"{role}:{prefix}: max_files=3 exceeded, got {len(indexed_paths)}"
+            )
+        indexes = sorted(index for index, _ in indexed_paths)
+        if indexes != list(range(len(indexes))):
+            raise SystemExit(f"{role}:{prefix}: non-contiguous rotation indexes {indexes}")
+        saw_rotation = saw_rotation or len(indexed_paths) >= 2
+        for _, path in indexed_paths:
+            if path.stat().st_size <= 0:
+                raise SystemExit(f"{path}: empty rotated alert file")
+            with path.open("r", encoding="utf-8") as handle:
+                for line_no, line in enumerate(handle, 1):
+                    if not line.strip():
+                        continue
+                    record = json.loads(line)
+                    if record.get("role") != role:
+                        raise SystemExit(
+                            f"{path}:{line_no}: role mismatch {record.get('role')} != {role}"
+                        )
+                    if any(key in record for key in ("payload", "annexb_bytes", "rtp_bytes")):
+                        raise SystemExit(f"{path}:{line_no}: media payload-like field found")
+                    break
+                else:
+                    raise SystemExit(f"{path}: no JSON records")
+    if not saw_rotation:
+        raise SystemExit(f"{role}: no alert writer instance produced multiple rotated files")
+print(
+    "validated_alert_rotation "
+    + " ".join(f"{role}_files={len(paths)}" for role, paths in sorted(files_by_role.items()))
 )
 PY
 

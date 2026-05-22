@@ -244,7 +244,7 @@ walking_dead_zone_recover_dual_track ... decoded_tracks=2 ... pass=true
 
 业务外围只实现 UDP socket、packet envelope 和编解码/渲染时，推荐按 [最小 UDP 集成最佳实践](docs/minimal_udp_integration_best_practice.md) 接入 `VideoPushClient / ServerQosRouter / VideoPlayClient`，track 通过 `SessionConfig.video_tracks` 声明，不直接依赖 WebRTC `PeerConnection` 或内部 `AddTrack` API。
 
-如果要看安装包外部工程形态，参考 [Minimal UDP App](examples/minimal_udp_app/README.md)。它只通过 `find_package(WebRtcQosSdk)` 链接 `role_*` 或 `role_*_bundle` target，提供 `minimal_udp_sender / minimal_udp_server / minimal_udp_receiver / minimal_udp_selftest` 四个入口，并支持 `--log-dir / --log-max-file-bytes / --log-max-files / --metrics-dir / --alerts-dir`。
+如果要看安装包外部工程形态，参考 [Minimal UDP App](examples/minimal_udp_app/README.md)。它只通过 `find_package(WebRtcQosSdk)` 链接 `role_*` 或 `role_*_bundle` target，提供 `minimal_udp_sender / minimal_udp_server / minimal_udp_receiver / minimal_udp_selftest` 四个入口，并支持 `--log-dir / --log-max-file-bytes / --log-max-files / --metrics-dir / --metrics-max-file-bytes / --metrics-max-files / --alerts-dir / --alerts-max-file-bytes / --alerts-max-files`。
 
 ```bash
 cmake --build build-webrtc-first \
@@ -266,9 +266,19 @@ cmake --build build-webrtc-first \
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 36 --metrics-dir /tmp/webrtc_qos_udp_metrics
 
+# 用低阈值验证 metrics 轮转和 max_files 保留策略。
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 90 --metrics-dir /tmp/webrtc_qos_udp_metrics \
+  --metrics-max-file-bytes 1024 --metrics-max-files 3
+
 # 显式启用 Phase-5 alerts：生成 webrtc_qos_udp_alerts.{push,server,play}.*.jsonl。
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 36 --alerts-dir /tmp/webrtc_qos_udp_alerts
+
+# 用低阈值验证 alerts 轮转和 max_files 保留策略。
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 90 --alerts-dir /tmp/webrtc_qos_udp_alerts \
+  --alerts-max-file-bytes 256 --alerts-max-files 3
 
 # 三进程手工模式示例，端口可自行调整。
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \

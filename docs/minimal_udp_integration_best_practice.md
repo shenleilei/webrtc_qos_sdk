@@ -509,12 +509,17 @@ demo 可用 `--metrics-dir` 验证 metrics 文件：
 ```bash
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 36 --metrics-dir /tmp/webrtc_qos_udp_metrics
+
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 90 --metrics-dir /tmp/webrtc_qos_udp_metrics \
+  --metrics-max-file-bytes 1024 --metrics-max-files 3
 ```
 
 metrics 文件包含 `final_target_bps`、`adaptation_target_bps`、
 `adaptation_max_fps`、`downlink_fraction_lost_q8`、`nack_count`、
 `pli_count`、`retransmission_count` 等字段，用于区分网络/QoS 恢复问题和
-上层 codec/render 问题。
+上层 codec/render 问题。`verify_phase5_metrics.sh` 会用低阈值把 metrics 轮转
+和保留文件数上限作为硬门禁。
 
 生产集成还应启用 alerts，并把 logs、metrics、alerts 一起纳入排障包：
 
@@ -539,7 +544,13 @@ demo 可用 `--alerts-dir` 验证 alerts 文件：
 ```bash
 ./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
   selftest 36 --alerts-dir /tmp/webrtc_qos_udp_alerts
+
+./build-webrtc-first/webrtc_qos_webrtc_first_udp_demo \
+  selftest 90 --alerts-dir /tmp/webrtc_qos_udp_alerts \
+  --alerts-max-file-bytes 256 --alerts-max-files 3
 ```
+
+`verify_phase5_alerts.sh` 会用低阈值把 alerts 轮转和保留文件数上限作为硬门禁。
 
 仓库内排障包 collector 会跑一次最小 UDP selftest 并同时打开日志、metrics 和
 alerts，然后生成可离线校验的 bundle：

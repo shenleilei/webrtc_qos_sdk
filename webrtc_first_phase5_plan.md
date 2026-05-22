@@ -486,6 +486,9 @@ codec/render 级：
 - weak network case 能从 metrics 看出 target bitrate/FPS/RPS 下探和恢复。
 - NACK/retransmission 能按 track 维度定位。
 - decode/render 问题能与 transport 问题区分。
+- metrics 文件超过阈值会轮转；demo 和 external sample 支持
+  `--metrics-max-file-bytes / --metrics-max-files`，`verify_phase5_metrics.sh` 会用
+  低阈值强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
 - metrics 字段文档化，避免把 QoE harness 私有字段误当 public API。
 
 ### 4.4 P0：监控告警规则
@@ -604,6 +607,9 @@ output failure、decode output failure，同时确认对应 warn/error 日志落
 - transport output failure 能触发可用性告警。
 - malformed packet 能触发 warn/error 日志和告警。
 - 告警文件进入 evidence bundle。
+- alerts 文件超过阈值会轮转；demo 和 external sample 支持
+  `--alerts-max-file-bytes / --alerts-max-files`，`verify_phase5_alerts.sh` 会用低阈值
+  强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
 
 ### 4.5 P1：问题排查 Bundle
 
@@ -1171,6 +1177,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 
 - metrics snapshot 文件化。
 - alerts 规则落地。
+- metrics/alerts 轮转、保留文件数和 artifact 收集通过。
 - debug bundle 收集和校验脚本落地。
 - weak network、decode error、transport failure 三类问题可定位。
 

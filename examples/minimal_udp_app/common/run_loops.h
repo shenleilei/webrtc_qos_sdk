@@ -134,8 +134,8 @@ inline int RunSender(uint16_t local_port,
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
   push_config.logging = MakeLogConfig(options);
-  push_config.metrics = MakeMetricsConfig(options.metrics_dir);
-  push_config.alerts = MakeAlertConfig(options.alerts_dir);
+  push_config.metrics = MakeMetricsConfig(options);
+  push_config.alerts = MakeAlertConfig(options);
   push_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         if (packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp) {
@@ -263,8 +263,8 @@ inline int RunServer(uint16_t local_port,
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
   server_config.logging = MakeLogConfig(options);
-  server_config.metrics = MakeMetricsConfig(options.metrics_dir);
-  server_config.alerts = MakeAlertConfig(options.alerts_dir);
+  server_config.metrics = MakeMetricsConfig(options);
+  server_config.alerts = MakeAlertConfig(options);
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         return udp.SendTo(sender_addr, EncodeTransportPacket(packet))
@@ -369,8 +369,8 @@ inline int RunReceiver(uint16_t local_port,
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
   play_config.logging = MakeLogConfig(options);
-  play_config.metrics = MakeMetricsConfig(options.metrics_dir);
-  play_config.alerts = MakeAlertConfig(options.alerts_dir);
+  play_config.metrics = MakeMetricsConfig(options);
+  play_config.alerts = MakeAlertConfig(options);
   play_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         ++metrics.receiver_rtcp;
@@ -474,8 +474,8 @@ inline int RunSelftest(const CommonOptions& options) {
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
   push_config.logging = MakeLogConfig(options);
-  push_config.metrics = MakeMetricsConfig(options.metrics_dir);
-  push_config.alerts = MakeAlertConfig(options.alerts_dir);
+  push_config.metrics = MakeMetricsConfig(options);
+  push_config.alerts = MakeAlertConfig(options);
   push_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         if (packet.metadata.kind == webrtc_qos::TransportPacketKind::kRtp) {
@@ -494,8 +494,8 @@ inline int RunSelftest(const CommonOptions& options) {
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
   play_config.logging = MakeLogConfig(options);
-  play_config.metrics = MakeMetricsConfig(options.metrics_dir);
-  play_config.alerts = MakeAlertConfig(options.alerts_dir);
+  play_config.metrics = MakeMetricsConfig(options);
+  play_config.alerts = MakeAlertConfig(options);
   play_config.transport_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         ++metrics.receiver_rtcp;
@@ -520,8 +520,8 @@ inline int RunSelftest(const CommonOptions& options) {
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
   server_config.logging = MakeLogConfig(options);
-  server_config.metrics = MakeMetricsConfig(options.metrics_dir);
-  server_config.alerts = MakeAlertConfig(options.alerts_dir);
+  server_config.metrics = MakeMetricsConfig(options);
+  server_config.alerts = MakeAlertConfig(options);
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
         return server_udp.SendTo(sender_udp.local_addr(),

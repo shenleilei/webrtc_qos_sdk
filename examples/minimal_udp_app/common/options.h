@@ -20,6 +20,10 @@ struct CommonOptions {
   std::string alerts_dir;
   uint64_t log_max_file_bytes = 1024 * 1024;
   uint32_t log_max_files = 4;
+  uint64_t metrics_max_file_bytes = 1024 * 1024;
+  uint32_t metrics_max_files = 4;
+  uint64_t alerts_max_file_bytes = 1024 * 1024;
+  uint32_t alerts_max_files = 4;
 };
 
 inline bool ParseOptionalArgs(int argc,
@@ -78,12 +82,48 @@ inline bool ParseOptionalArgs(int argc,
       options->metrics_dir = argv[++i];
       continue;
     }
+    if (arg == "--metrics-max-file-bytes") {
+      if (i + 1 >= argc) {
+        std::cerr << "--metrics-max-file-bytes requires a value\n";
+        return false;
+      }
+      options->metrics_max_file_bytes =
+          static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
+      continue;
+    }
+    if (arg == "--metrics-max-files") {
+      if (i + 1 >= argc) {
+        std::cerr << "--metrics-max-files requires a value\n";
+        return false;
+      }
+      options->metrics_max_files =
+          static_cast<uint32_t>(std::max(1, std::atoi(argv[++i])));
+      continue;
+    }
     if (arg == "--alerts-dir") {
       if (i + 1 >= argc) {
         std::cerr << "--alerts-dir requires a directory\n";
         return false;
       }
       options->alerts_dir = argv[++i];
+      continue;
+    }
+    if (arg == "--alerts-max-file-bytes") {
+      if (i + 1 >= argc) {
+        std::cerr << "--alerts-max-file-bytes requires a value\n";
+        return false;
+      }
+      options->alerts_max_file_bytes =
+          static_cast<uint64_t>(std::strtoull(argv[++i], nullptr, 10));
+      continue;
+    }
+    if (arg == "--alerts-max-files") {
+      if (i + 1 >= argc) {
+        std::cerr << "--alerts-max-files requires a value\n";
+        return false;
+      }
+      options->alerts_max_files =
+          static_cast<uint32_t>(std::max(1, std::atoi(argv[++i])));
       continue;
     }
     char* end = nullptr;
@@ -114,14 +154,14 @@ inline webrtc_qos::RuntimeLogConfig MakeLogConfig(
 }
 
 inline webrtc_qos::RuntimeMetricsConfig MakeMetricsConfig(
-    const std::string& metrics_dir) {
+    const CommonOptions& options) {
   webrtc_qos::RuntimeMetricsConfig config;
-  if (!metrics_dir.empty()) {
+  if (!options.metrics_dir.empty()) {
     config.file.enabled = true;
-    config.file.directory = metrics_dir;
+    config.file.directory = options.metrics_dir;
     config.file.basename = "minimal_udp_metrics";
-    config.file.max_file_bytes = 1024 * 1024;
-    config.file.max_files = 4;
+    config.file.max_file_bytes = options.metrics_max_file_bytes;
+    config.file.max_files = options.metrics_max_files;
     config.interval_ms = 100;
     config.include_track_snapshots = true;
   }
@@ -129,14 +169,14 @@ inline webrtc_qos::RuntimeMetricsConfig MakeMetricsConfig(
 }
 
 inline webrtc_qos::RuntimeAlertConfig MakeAlertConfig(
-    const std::string& alerts_dir) {
+    const CommonOptions& options) {
   webrtc_qos::RuntimeAlertConfig config;
-  if (!alerts_dir.empty()) {
+  if (!options.alerts_dir.empty()) {
     config.file.enabled = true;
-    config.file.directory = alerts_dir;
+    config.file.directory = options.alerts_dir;
     config.file.basename = "minimal_udp_alerts";
-    config.file.max_file_bytes = 1024 * 1024;
-    config.file.max_files = 4;
+    config.file.max_file_bytes = options.alerts_max_file_bytes;
+    config.file.max_files = options.alerts_max_files;
     config.suppress_repeated_alerts_ms = 0;
     config.high_loss_fraction_q8 = 128;
     config.video_drop_frames_threshold = 1;
