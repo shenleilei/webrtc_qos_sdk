@@ -152,10 +152,17 @@ Phase-5 第一阶段先把生产证据链跑实并制度化：
 当前已新增 Phase-5 production gate wrapper：
 
 ```bash
+scripts/verify_phase5_production_readiness.sh
 scripts/run_phase5_production_gate.sh
 scripts/verify_phase5_production_gate.sh
 scripts/verify_phase5_completion_audit.sh
 ```
+
+`verify_phase5_production_readiness.sh` 是正式验收前的轻量 preflight。它不跑长时
+soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture manifest、
+真实 renderer 可用性和 Phase-5 gate/audit 脚本是否齐全，并输出带 manifest 的
+readiness 报告。默认本地缺正式素材或真实 renderer 时只生成 not-ready 报告；
+正式 CI 可设置 `REQUIRE_READY=1` 作为硬门禁。
 
 wrapper 会先跑 Phase-5 release contract 和 debug bundle 门禁，再调用底层
 `run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
@@ -1174,6 +1181,7 @@ scripts/verify_phase5_release_contract.sh
 Phase-5 顶层入口：
 
 ```bash
+scripts/verify_phase5_production_readiness.sh
 scripts/run_phase5_production_gate.sh
 scripts/verify_phase5_production_gate.sh
 scripts/verify_phase5_completion_audit.sh
@@ -1188,6 +1196,7 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 
 覆盖：
 
+- Phase-5 production readiness preflight。
 - Phase-5 release contract gate。
 - Phase-5 debug bundle collect/verify。
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。

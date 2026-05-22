@@ -90,6 +90,7 @@ require_script verify_phase5_debug_bundle.sh debug_bundle_verifier
 require_script verify_phase5_minimal_udp_external_app.sh external_minimal_udp_gate
 require_script verify_phase5_error_contract.sh error_contract_gate
 require_script verify_phase5_release_contract.sh release_contract_gate
+require_script verify_phase5_production_readiness.sh production_readiness_gate
 require_script run_phase5_production_gate.sh production_gate_wrapper
 require_script verify_phase5_production_gate.sh production_gate_verifier
 require_script verify_no_selfmade_media_stack.sh no_selfmade_media_stack_gate
@@ -103,6 +104,7 @@ require_doc_pattern README.md 'alerts-max-file-bytes' readme_alerts_rotation
 require_doc_pattern README.md 'verify_phase5_error_contract.sh' readme_error_contract
 require_doc_pattern README.md 'verify_phase5_release_contract.sh' readme_release_contract
 require_doc_pattern README.md 'run_phase5_production_gate.sh' readme_production_gate
+require_doc_pattern README.md 'verify_phase5_production_readiness.sh' readme_production_readiness
 require_doc_pattern docs/minimal_udp_integration_best_practice.md \
   'runtime_config.json' minimal_udp_runtime_config
 require_doc_pattern docs/minimal_udp_integration_best_practice.md \
@@ -151,6 +153,8 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'require_failed_gate_debug_bundle' production_gate_failure_bundle_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
+require_doc_pattern scripts/verify_phase5_production_readiness.sh \
+  'phase5_production_readiness_status=ready' production_readiness_status_gate
 
 if has_file "${PHASE5_DEBUG_BUNDLE_DIR}/manifest.sha256" &&
     has_file "${PHASE5_DEBUG_BUNDLE_DIR}/runtime_config.json"; then
