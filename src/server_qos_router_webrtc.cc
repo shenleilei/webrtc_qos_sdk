@@ -45,6 +45,21 @@ bool HasRtpPadding(const uint8_t* rtp_bytes, size_t rtp_size) {
   return rtp_bytes != nullptr && rtp_size > 0 && (rtp_bytes[0] & 0x20) != 0;
 }
 
+uint32_t ResolveServerFeedbackSsrc(const SessionConfig& session) {
+  if (session.rtcp.server_feedback_ssrc != 0) {
+    return session.rtcp.server_feedback_ssrc;
+  }
+  uint32_t candidate = session.ids.sender_ssrc ^ 0x5a5a5a5au;
+  if (candidate == 0 || candidate == session.ids.receiver_id ||
+      candidate == session.ids.sender_ssrc) {
+    candidate = 0x7f000001u;
+  }
+  if (candidate == session.ids.receiver_id || candidate == session.ids.sender_ssrc) {
+    candidate ^= 0x01010101u;
+  }
+  return candidate != 0 ? candidate : 1u;
+}
+
 TransportIds IdsForReceiver(const TransportIds& base_ids, uint32_t receiver_id) {
   TransportIds ids = base_ids;
   ids.receiver_id = receiver_id;
@@ -116,6 +131,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     if (rtcp_bytes == nullptr || rtcp_size == 0) {
       return InvalidArgument("empty sender RTCP");
     }
+    RtcpPacketIterationStats iteration_stats;
     Status parse_status = ForEachSupportedRtcpPacket(
         rtcp_bytes, rtcp_size,
         [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed) {
@@ -123,10 +139,13 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
             RecordSenderReport(parsed.sender_report, receive_time_us);
           }
           return Status::Ok();
-        });
+        },
+        &iteration_stats);
     if (!parse_status) {
       return parse_status;
     }
+    snapshot_.unsupported_rtcp_packet_count +=
+        static_cast<uint32_t>(iteration_stats.unsupported_packets);
     std::vector<uint8_t> copy(rtcp_bytes, rtcp_bytes + rtcp_size);
     Status relay_status = config_.receiver_output(
         MakePacketView(copy, config_.session.ids, TransportPacketKind::kRtcp,
@@ -149,7 +168,8 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
       return InvalidArgument("empty receiver RTCP");
     }
 
-    return ForEachSupportedRtcpPacket(
+    RtcpPacketIterationStats iteration_stats;
+    Status status = ForEachSupportedRtcpPacket(
         rtcp_bytes, rtcp_size,
         [&](const uint8_t* packet_bytes, size_t packet_size,
             const RtcpAdapterParsedPacket& parsed) -> Status {
@@ -165,7 +185,13 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                              IdsForReceiver(config_.session.ids, receiver_id),
                              TransportPacketKind::kRtcp, receive_time_us,
                              false));
-        });
+        },
+        &iteration_stats);
+    if (status) {
+      snapshot_.unsupported_rtcp_packet_count +=
+          static_cast<uint32_t>(iteration_stats.unsupported_packets);
+    }
+    return status;
   }
 
   Status OnDownlinkQuality(const DownlinkQuality& quality) override {
@@ -342,7 +368,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
     }
 
     RtcpAdapterTransportFeedback feedback;
-    feedback.sender_ssrc = config_.session.ids.receiver_id;
+    feedback.sender_ssrc = ResolveServerFeedbackSsrc(config_.session);
     feedback.media_ssrc = config_.session.ids.sender_ssrc;
     feedback.base_sequence = *twcc_base_sequence_;
     feedback.base_time_us = twcc_base_time_us_;
@@ -395,7 +421,7 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
                               1000000);
 
     RtcpAdapterReceiverReport rr;
-    rr.sender_ssrc = config_.session.ids.receiver_id;
+    rr.sender_ssrc = ResolveServerFeedbackSsrc(config_.session);
     rr.report_blocks.push_back(block);
 
     std::vector<uint8_t> rtcp_bytes;

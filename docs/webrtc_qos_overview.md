@@ -140,6 +140,7 @@ WebRTC 在这些问题上已经积累了成熟能力：
 - `profile-level-id=42e01f`
 - `90000 Hz` RTP clock
 - `TWCC + RTCP SR/RR + NACK + PLI`
+- `NACK + 原 RTP 包重传`
 - sender `GoogCC`
 - WebRTC `PacingController`
 - WebRTC `NackRequester`
@@ -156,6 +157,9 @@ WebRTC 在这些问题上已经积累了成熟能力：
 - H264 之外的 codec
 - `STAP-A`
 - `B` 帧
+- `RFC4588 RTX`
+- `FEC / ULPFEC / FlexFEC / RED`
+- 任意 RTCP block 的透明 relay
 - 业务侧直接操作 WebRTC 内部对象
 
 ### 4.3 为什么这么取舍
@@ -180,7 +184,7 @@ Encoded H264 Annex-B AU
   -> business transport bytes
   -> ServerQosRouter
       -> uplink TWCC / RR / NACK / PLI route
-      -> local packet history / local RTX
+      -> local packet history / local retransmission
       -> sender rate cap
   -> business transport bytes
   -> VideoPlayClient
@@ -249,7 +253,7 @@ sender RTP
   -> uplink TWCC
 
 receiver RTCP / downlink quality
-  -> local RTX or forward NACK/PLI
+  -> local retransmission or forward NACK/PLI
   -> worst receiver selection
   -> SenderRateCap
 ```
@@ -305,7 +309,7 @@ receiver RTCP / downlink quality
 
 为什么 facade 更宽：
 
-- facade 还要承接 sender 侧 probe、padding 和 sender 侧 RTX
+- facade 还要承接 sender 侧 probe、padding 和 sender 侧重传
 - 弱网/恢复切换时，过紧的队列上限会更容易触发 `QueueFull`
 - 当前上层 harness 里已经明确把 `push_queue_full` 当成失败指标，所以更宽的 queue 限制是为了减少“测试假阳性”，不是放弃实时性
 
@@ -359,7 +363,17 @@ server 侧：
 - server 优先处理短 RTT、本地快速重传，所以保留窗口可以更短
 - sender 侧要兜住 server history miss，因此窗口要更长
 
-## 7. 适用场景
+## 7. 当前仍未闭合的事项
+
+这套 SDK 当前已经能证明主方向成立，但下面这些点还不能写成“已经正式完成”：
+
+- 当前恢复链路支持的是 `NACK + 原 RTP 包重传`，不是 `RFC4588 RTX`。
+- compound RTCP 当前只承诺 `SR / RR / TWCC / NACK / PLI`；遇到其它 block 时，server 会显式累计 unsupported RTCP packet 计数并默认 drop。
+- 正式验收闭环还缺 `SOAK_MINUTES>=120` 的 production soak、真实 renderer `pass` 和正式 `capture_library/manifest.csv`。
+
+上面这些未完成项的收敛计划，见 [Phase-3 逻辑正确性收敛计划](../webrtc_first_phase3_plan.md) 和 [Phase-2 主实施文档](../webrtc_first_phase2_master_plan.md)。
+
+## 8. 适用场景
 
 这套 SDK 当前最适合：
 
@@ -376,7 +390,7 @@ server 侧：
 - 想把 PeerConnection 全家桶一起交付
 - 需要立即上线完整音视频 + 浏览器信令体系
 
-## 8. 当前文档导航
+## 9. 当前文档导航
 
 建议按这个顺序读：
 
@@ -384,5 +398,6 @@ server 侧：
 2. [推拉客户端 SDK 集成说明](sdk_push_play_integration.md)
 3. [WebRTC 子模块拆分编译说明](webrtc_module_split_build.md)
 4. [Phase-2 主实施文档](../webrtc_first_phase2_master_plan.md)
+5. [Phase-3 逻辑正确性收敛计划](../webrtc_first_phase3_plan.md)
 
 如果你关心“为什么可信、怎么验证”，继续看后续的 `QoS 测试与验证方法` 文档。

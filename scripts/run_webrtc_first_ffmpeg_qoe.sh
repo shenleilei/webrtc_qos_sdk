@@ -1031,11 +1031,15 @@ int main(int argc, char** argv) {
       const Packet& packet = push_output[push_i++];
       if (packet.kind == webrtc_qos::TransportPacketKind::kRtp) {
         ++metrics.rtp_sent;
-        if (InBadWindow(scenario, frame_index)) {
-          ++metrics.bad_rtp_sent;
-        }
-        if (InRecoveryWindow(scenario, frame_index)) {
-          ++metrics.recovery_rtp_sent;
+        // Weak-network send-rate gates should measure original media emission,
+        // not sender-side retransmission or padding traffic.
+        if (!packet.retransmission && !packet.padding) {
+          if (InBadWindow(scenario, frame_index)) {
+            ++metrics.bad_rtp_sent;
+          }
+          if (InRecoveryWindow(scenario, frame_index)) {
+            ++metrics.recovery_rtp_sent;
+          }
         }
         (void)server->OnSenderRtp(packet.bytes.data(), packet.bytes.size(),
                                   now_us);
@@ -1410,7 +1414,7 @@ int main(int argc, char** argv) {
             << " playable_ratio=" << metrics.playable_ratio
             << " dropped=" << metrics.rtp_dropped_downlink
             << " nack=" << metrics.nacks
-            << " rtx=" << metrics.retransmissions
+            << " retransmission=" << metrics.retransmissions
             << " decode_errors=" << metrics.decode_errors
             << " avg_psnr_y=" << metrics.avg_psnr_y
             << " min_psnr_y=" << metrics.min_psnr_y

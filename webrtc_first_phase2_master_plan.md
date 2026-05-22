@@ -34,11 +34,15 @@ Phase-2 的核心不是继续扩展功能，而是做一次架构归位：把 We
 - `verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口；`verify_no_selfmade_media_stack.sh`、`verify_webrtc_modules.sh`、`verify_cmake_package.sh`、`verify_webrtc_first_loopback.sh`、`verify_webrtc_first_roles.sh` 是它在 smoke 档串起的主门禁脚本。
 - `verify_webrtc_first_loopback.sh` 已能作为外部 CMake consumer 跑通 H264 Annex-B AU -> WebRTC H264 RTP payload -> WebRTC RTP packet bytes -> WebRTC pacing adapter -> WebRTC video jitter -> Annex-B AU 的基础 media bytes 闭环。
 
-当前真正仍未闭合的仅有 3 项：
+如果只按 Phase-2 正式验收闭环口径看，当前真正仍未闭合的仅有 3 项：
 
-- 生产级多小时 soak 实际运行和归档：必须在正式验收环境跑出 `SOAK_MINUTES>=120` 的 production soak 证据，不能只用短时 smoke 代替。当前本机只有 `artifacts/webrtc_first_phase2_verify_production_smoke/`，只能证明 runner/archive/verifier 链路可用。
+- 生产级多小时 soak 实际运行和归档：必须在正式验收环境跑出 `SOAK_MINUTES>=120` 的 production soak 证据，不能只用短时 smoke 代替。当前本机只有 `artifacts/webrtc_first_phase2_verify/production_soak/` 这类短时 smoke 证据，只能证明 runner/archive/verifier 链路可用。
 - 真实 renderer 验收：必须拿到 `real_renderer_status=pass` 的正式结果。当前本机没有 `DISPLAY`，也没有 `Xvfb`，因此 production gate preflight 失败。
 - 正式业务采集素材库：必须提供正式 `capture_library/manifest.csv` 和六类业务素材覆盖，不能继续使用 deterministic fixture 作为完成证据。当前本机默认路径下不存在正式 manifest。
+
+这里要额外明确两点：
+
+- 上面这 3 项只表示 Phase-2 正式验收闭环的剩余项，不等于“整体逻辑正确性已经完全收敛”。sender 重传入 pacer、多 receiver RTCP 身份拆分和 compound RTCP unsupported 可观测性等后续问题，见 [Phase-3 逻辑正确性收敛计划](webrtc_first_phase3_plan.md)。
 
 除上述 3 项外，下面这些都属于“已完成并已有 smoke/qoe/runtime 证据的实现或门禁”，不再视为未完成功能项：
 
@@ -50,14 +54,14 @@ Phase-2 的核心不是继续扩展功能，而是做一次架构归位：把 We
 - WebRTC-first facade 弱网矩阵已新增，直接驱动 `VideoPushClient / ServerQosRouter / VideoPlayClient`，覆盖好网、burst loss recover、bandwidth cliff low-RPS recover、weak-network low-RPS low-bitrate、multi-receiver worst-cap recover、sustained low-bandwidth low-RPS、weak-start low-bandwidth low-RPS、walking dead-zone recover，并验证弱网阶段低码率、低 AU 发送 RPS、低 RTP pps、低 encoder FPS；可恢复场景要求恢复后全部回升，持续弱网和弱网起步场景要求最终仍保持低 RPS/低码率/低 FPS；多 receiver 场景要求健康 receiver 的上报不能清掉坏 receiver 的 sender cap。
 - 可选 FFmpeg QoE smoke 已新增，临时叠加 FFmpeg H264 encoder/decoder 可选库和 WebRTC-first dist，覆盖真实 H264 encode -> push/server/play facade -> 真实 H264 decode，并输出 playable ratio、decode error、Y-PSNR 和 SSIM-Y；SSIM-Y 已作为 VMAF 的轻量替代指标进入 CSV 和 pass/fail。
 - Phase-2 `VERIFY_LEVEL=qoe` 聚合门禁已在本机通过：no-selfmade、WebRTC module smoke、外部 CMake package、loopback、pacing probe、role facade、synthetic 弱网矩阵、真实 H264 low-RPS/low-bitrate QoE 和恢复时间分布全部通过；真实 H264 low-RPS/low-bitrate case 为 `10.9091 AU RPS / 92.7273 RTP pps / 400000bps / 10fps`，恢复到 `30 RPS / 840944bps / 30fps`，`playable_ratio=0.923077`、`avg_psnr_y=45.9423`、`avg_ssim_y=0.999833`，`target/fps/full_recovery_time_ms_p95=0`。
-- Phase-2 `VERIFY_LEVEL=production` 短时 smoke 已在本机通过：`SOAK_CYCLES=1 / FRAMES_PER_CYCLE=12 / RUN_REAL_RENDERER=0 / RUN_CAPTURE_LIBRARY=0`，用于验证 production runner、CSV 聚合、archive metadata、sha256 manifest、tarball 和离线 archive verifier 链路；短时结果 `cycles=1`、`rows=1`、`pass_rows=1`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`、`weak_low_bad_send_rps_max=12.8571`、`weak_low_bad_rtp_pps_max=184.286`、`weak_low_target_bps_max=750000`、`weak_low_encoder_fps_max=10`，archive verifier 和恢复时间分布 verifier 均通过。它不是 production 级多小时结论。
+- Phase-2 `VERIFY_LEVEL=production` 短时 smoke 已在本机通过：`SOAK_CYCLES=1 / SOAK_MINUTES=0 / FRAMES_PER_CYCLE=12 / CONTENT_MODES=block_motion / SCENARIOS=weak_network_low_rps_low_bitrate / RUN_REAL_RENDERER=0 / RUN_CAPTURE_LIBRARY=0`，用于验证 production runner、CSV 聚合、archive metadata、sha256 manifest、tarball 和离线 archive verifier 链路；短时结果 `cycles=1`、`rows=1`、`pass_rows=1`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`、`weak_low_bad_send_rps_max=12.8571`、`weak_low_bad_rtp_pps_max=150`、`weak_low_target_bps_max=750000`、`weak_low_encoder_fps_max=10`，archive verifier 和恢复时间分布 verifier 均通过。它不是 production 级多小时结论。
 - 720p QoE 稳定性脚本已新增，基于真实 FFmpeg H264 encode/decode 和 WebRTC-first facade，覆盖 baseline、bandwidth cliff recover、weak-network low-RPS low-bitrate、sustained low-bandwidth low-RPS、weak-start low-bandwidth low-RPS、walking dead-zone recover，并验证真实编码器在弱网段持续降码率/降 FPS/降 RPS；可恢复场景恢复段回升并输出恢复耗时，持续弱网和弱网起步场景最终保持低发送速率；已输出 renderer 前置 freeze proxy。
 - 720p 多 seed QoE 脚本已新增，基于真实 FFmpeg H264 encode/decode 和 WebRTC-first facade，覆盖 3 个 deterministic seed、baseline、bandwidth cliff recover、weak-network low-RPS low-bitrate、sustained low-bandwidth low-RPS、weak-start low-bandwidth low-RPS、walking dead-zone recover，验证内容运动相位和丢包相位变化下的稳定性，并要求 freeze proxy 为 0。
 - 720p 长流动态 QoE 脚本已新增，基于真实 FFmpeg H264 encode/decode 和 WebRTC-first facade，覆盖 60 tick baseline、bandwidth cliff recover、weak-network low-RPS low-bitrate、sustained low-bandwidth low-RPS、weak-start low-bandwidth low-RPS、walking dead-zone recover、oscillating edge recover，验证反复弱网/恢复切换下真实编码器多次降码率/降 FPS 并回升，并验证持续弱网或开局弱网不恢复时保持低发送速率；已输出 freeze proxy。
 - 720p extended soak QoE 脚本已新增，基于真实 FFmpeg H264 encode/decode 和 WebRTC-first facade，覆盖 120 tick baseline、bandwidth cliff recover、weak-network low-RPS low-bitrate、sustained low-bandwidth low-RPS、weak-start low-bandwidth low-RPS、walking dead-zone recover、oscillating edge recover，并把弱网阶段低 RPS/低 RTP pps/低码率/低 FPS 作为 pass/fail 门禁。
 - production soak runner 已新增，支持按 `SOAK_CYCLES` 或 `SOAK_MINUTES` 重复运行真实 H264 QoE 矩阵，聚合跨 cycle CSV，并把 decode error、freeze、renderer proxy late/drop/gap/jitter、push queue、弱网低发送和恢复时间作为总门禁；当前已完成短时 smoke，真正多小时 soak 仍需在稳定机器上实际执行并归档。
-- 720p 高复杂内容 stress QoE 脚本已新增，基于真实 FFmpeg H264 encode/decode 和 WebRTC-first facade，使用移动高频棋盘、斜向细节和确定性噪声，覆盖 2 个 seed、baseline、bandwidth cliff recover、walking dead-zone recover、oscillating edge recover，并把高复杂内容下的可播放、弱网窗口最大 RPS/pps/码率/FPS、恢复回升时间、NACK/RTX 和 freeze proxy 作为 pass/fail 门禁。
-- 720p 内容库 QoE 脚本已新增，基于真实 FFmpeg H264 encode/decode 和 WebRTC-first facade，覆盖 `block_motion / camera_pan / scene_cut / low_light_noise` 四类 deterministic 内容，并在 baseline、weak-network low-RPS low-bitrate、walking dead-zone recover、oscillating edge recover 下验证不同画面类型的弱网低发送、恢复回升、NACK/RTX、画质和 freeze proxy。
+- 720p 高复杂内容 stress QoE 脚本已新增，基于真实 FFmpeg H264 encode/decode 和 WebRTC-first facade，使用移动高频棋盘、斜向细节和确定性噪声，覆盖 2 个 seed、baseline、bandwidth cliff recover、walking dead-zone recover、oscillating edge recover，并把高复杂内容下的可播放、弱网窗口最大 RPS/pps/码率/FPS、恢复回升时间、`NACK / retransmission` 和 freeze proxy 作为 pass/fail 门禁。
+- 720p 内容库 QoE 脚本已新增，基于真实 FFmpeg H264 encode/decode 和 WebRTC-first facade，覆盖 `block_motion / camera_pan / scene_cut / low_light_noise` 四类 deterministic 内容，并在 baseline、weak-network low-RPS low-bitrate、walking dead-zone recover、oscillating edge recover 下验证不同画面类型的弱网低发送、恢复回升、`NACK / retransmission`、画质和 freeze proxy。
 - 真实采集内容库 QoE 入口脚本已新增，支持把 `CAPTURE_LIBRARY_DIR` 下的 `.mp4 / .mov / .mkv / .webm / .yuv / .i420` 素材转换/读取为 raw I420，并进入同一套真实 H264 encode/decode、WebRTC-first facade、QoE/renderer proxy 门禁；当前已新增 deterministic fixture 生成器，并通过 Phase-2 聚合门禁跑通 6 类 manifest + baseline QoE smoke：`entries=6`、类别覆盖 `high_motion,indoor_face,low_light_noise,outdoor_walking,scene_cut,screen_text`、QoE `rows=6/6 pass`、`playable_ratio_min=0.833333`、`avg_psnr_y_min=42.6753`、`avg_ssim_y_min=0.998468`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`。正式业务真实采集素材库仍需业务侧提供或录制。
 - 仓库内 WebRTC-first loopback demo 已新增，直接驱动 `VideoPushClient / ServerQosRouter / VideoPlayClient` role facade，不直接 include WebRTC adapter，不使用旧自研 RTP/RTCP/pacer/video jitter，并输出 WebRTC backend、custom bytes transport 和 `peer_connection=false`。
 - 仓库内 WebRTC-first UDP sender/server/receiver demo 已新增，保留 `selftest` 自动门禁，并提供独立 `sender/server/receiver` 三进程手工模式；所有入口都直接驱动 role facade，输出 `backend=webrtc_first_facade transport=udp peer_connection=false`，不引入 PeerConnection，不让 WebRTC 持有 socket。
@@ -582,7 +586,7 @@ pacer 删除门禁：
 - `webrtc_pacing_adapter` 独立 smoke 通过。
 - 弱网矩阵通过。
 - probe cluster 发送节奏正确；当前 `webrtc_qos_pacing_adapter_smoke` 验证 `probe_emitted=2 / probe_bytes=800 / padding_emitted=5 / padding_bytes=600`，`verify_webrtc_first_pacing_probe.sh` 验证 push facade 主路径 `rtp_packets=6 / probe_packets=6 / probe_bytes=745 / probe_cluster=1`。
-- NACK/RTX 重传优先级正确；当前 pacing smoke 验证 retransmission 在 probe/media 前发送。
+- `NACK / retransmission` 重传优先级正确；当前 pacing smoke 验证 retransmission 在 probe/media 前发送。
 - IDR/关键帧进入 `PacingController` 队列，metadata 必须保留；当前 pacing smoke 验证 keyframe metadata 保留，发送节奏由 WebRTC `PacingController` 决定。
 - pacer queue 不在弱网下无限增长。
 - 外部 CMake consumer 能只通过 facade 使用 pacer，不接触 WebRTC 内部对象。
@@ -729,8 +733,8 @@ PREFIX=/root/output SDK_ROOT=/root/webrtc_qos_sdk \
 
 ```text
 backend=webrtc_first_facade transport=custom_bytes peer_connection=false
-good_static pushed=36 decoded=36 playable_ratio=1 dropped=0 receiver_rtcp=0 rtx=0 bad_send_rps=0 recovery_send_rps=0 min_bad_target=0 max_recovery_target=0 min_bad_fps=0 max_recovery_fps=0 final_target=1207178 final_fps=30 pass=true
-walking_dead_zone_recover pushed=30 decoded=30 playable_ratio=1 dropped=12 receiver_rtcp=1 rtx=12 bad_send_rps=12 recovery_send_rps=30 min_bad_target=600000 max_recovery_target=1207178 min_bad_fps=10 max_recovery_fps=30 final_target=1207178 final_fps=30 pass=true
+good_static pushed=36 decoded=36 playable_ratio=1 dropped=0 receiver_rtcp=0 retransmission=0 bad_send_rps=0 recovery_send_rps=0 min_bad_target=0 max_recovery_target=0 min_bad_fps=0 max_recovery_fps=0 final_target=1207178 final_fps=30 pass=true
+walking_dead_zone_recover pushed=30 decoded=30 playable_ratio=1 dropped=12 receiver_rtcp=1 retransmission=12 bad_send_rps=12 recovery_send_rps=30 min_bad_target=600000 max_recovery_target=1207178 min_bad_fps=10 max_recovery_fps=30 final_target=1207178 final_fps=30 pass=true
 ```
 
 ### Step 8：删除旧模块和发布包重建
@@ -892,10 +896,10 @@ preflight 全部通过后，才会继续执行：
 
 当前本机 `VERIFY_LEVEL=production` 短时 smoke 结果：
 
-- `phase2_verify_status=pass`，summary：`artifacts/webrtc_first_phase2_verify_production_smoke/phase2_verify_summary.txt`。
-- 配置：`SOAK_CYCLES=1`、`FRAMES_PER_CYCLE=12`、`SCENARIOS=weak_network_low_rps_low_bitrate`、`CONTENT_MODES=block_motion`、`RUN_REAL_RENDERER=0`、`RUN_CAPTURE_LIBRARY=0`。
-- production soak summary：`cycles=1`、`rows=1`、`pass_rows=1`、`playable_ratio_min=1`、`avg_psnr_y_min=54.2687`、`avg_ssim_y_min=0.999968`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`。
-- 弱网低发送：`weak_low_bad_send_rps_max=12.8571`、`weak_low_bad_rtp_pps_max=184.286`、`weak_low_target_bps_max=750000`、`weak_low_encoder_fps_max=10`。
+- `phase2_verify_status=pass`，summary：`artifacts/webrtc_first_phase2_verify/phase2_verify_summary.txt`。
+- 配置：`SOAK_CYCLES=1`、`SOAK_MINUTES=0`、`FRAMES_PER_CYCLE=12`、`SCENARIOS=weak_network_low_rps_low_bitrate`、`CONTENT_MODES=block_motion`、`RUN_REAL_RENDERER=0`、`RUN_CAPTURE_LIBRARY=0`。
+- production soak summary：`cycles=1`、`rows=1`、`pass_rows=1`、`playable_ratio_min=0.875`、`avg_psnr_y_min=54.0927`、`avg_ssim_y_min=0.999966`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`。
+- 弱网低发送：`weak_low_bad_send_rps_max=12.8571`、`weak_low_bad_rtp_pps_max=150`、`weak_low_target_bps_max=750000`、`weak_low_encoder_fps_max=10`。
 - 归档：已生成 `webrtc_first_qoe_production_soak_archive.tar.gz`、`archive/metadata.txt`、`archive/manifest.sha256`、`archive/recovery_distribution_summary.txt`；离线 `verify_webrtc_first_qoe_production_soak_archive.sh` 通过。
 - 约束：该结果只证明 production runner 和归档/验签链路可执行，不能替代 `SOAK_MINUTES=120` 或更长时间的 production 级多小时 soak，也没有覆盖真实 renderer 和正式业务采集素材库。
 
@@ -992,7 +996,7 @@ WEBRTC_PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 - bandwidth cliff recover / weak-network low-RPS low-bitrate / walking dead-zone recover：弱网段必须降码率、降 FPS、降 RPS，恢复段必须回升。
 - sustained low-bandwidth low-RPS：弱网持续到结束时必须保持低码率、低 FPS、低 RPS，不允许在网络没有恢复时自行回升。
 - weak-start low-bandwidth low-RPS：第 0 帧开始就是弱网时必须保持低码率、低 FPS、低 RPS，不允许先按好网码率发送。
-- oscillating edge recover：弱网和恢复反复切换，必须多次下探和回升，同时保持 playable ratio、decode errors、NACK/RTX、Y-PSNR 和 SSIM-Y 门槛。
+- oscillating edge recover：弱网和恢复反复切换，必须多次下探和回升，同时保持 playable ratio、decode errors、`NACK / retransmission`、Y-PSNR 和 SSIM-Y 门槛。
 - freeze proxy：所有 case 必须满足 `freeze_count=0`、`freeze_duration_ms=0`。
 - 当前本地结果 7/7 通过，新增 low-RPS low-bitrate case 弱网段为 `10.6452 RPS / 103.548 RTP pps / 600000bps / 10fps`，恢复到 `1327376bps / 30fps`；`sustained_low_bandwidth_low_rps` 和 `weak_start_low_bandwidth_low_rps` 在 60 tick 下最终保持 `600000bps / 10fps / 10RPS`，`playable_ratio_min=0.975`；所有 case 最大 decoded frame 间隔不超过 `100ms`，`push_queue_full=0`。
 - 如果 pacer 队列被主动清空或某个 AU 没有完整进入链路，下一帧必须强制 IDR，避免 P 帧继续引用丢失参考帧造成长参考链污染；测试必须记录 `push_queue_full` 和 sender requested keyframe 行为。
@@ -1028,7 +1032,7 @@ WEBRTC_PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 - bandwidth cliff / walking dead-zone / oscillating edge：弱网段必须降到不高于 `15 AU RPS / 240 RTP pps / 900000bps / 10fps`，恢复段必须回到 `30 AU RPS / 2Mbps+ / 30fps` 级别。
 - 高复杂内容也必须使用弱网窗口最大值验收：`max_bad_target_bps<=900000`、`max_bad_encoder_fps<=10`，不能只证明曾经降到低码率。
 - 可恢复场景必须满足 `full_recovery_time_ms<=1000ms`。
-- walking dead-zone 和 oscillating edge 必须触发 NACK/RTX，且不能出现 decode error 或 freeze。
+- walking dead-zone 和 oscillating edge 必须触发 `NACK / retransmission`，且不能出现 decode error 或 freeze。
 - 当前本地结果 8/8 通过，`playable_ratio_min=0.851064`、`avg_psnr_y_min=15.5423`、`min_psnr_y_min=12.7144`、`decode_errors=0`、`freeze_count=0`、`push_queue_full=0`；弱网最坏 `11.25 RPS / 220.5 RTP pps / 900000bps / 10fps`，恢复到 `2.07..2.09Mbps / 30fps`，`full_recovery_time_ms=0`。
 - 该门槛独立于普通 720p 稳定性门槛；高复杂内容一帧会拆出更多 RTP 包，且 1.8Mbps 起始码率下当前 server 半码率 rate cap 会落到 `900000bps`。
 
@@ -1038,7 +1042,7 @@ WEBRTC_PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 - 场景：baseline、weak-network low-RPS low-bitrate、walking dead-zone recover、oscillating edge recover。
 - baseline：每种内容都必须满足 playable ratio、decode errors、Y-PSNR、SSIM-Y、freeze proxy 和 renderer proxy 门槛。
 - weak-network low-RPS low-bitrate：弱网段必须降到不高于 `15 AU RPS / 210 RTP pps / 750000bps / 10fps`，恢复段必须回到 `30 AU RPS / 1.5Mbps+ / 30fps` 级别。
-- walking dead-zone recover / oscillating edge recover：必须触发 NACK/RTX，弱网段必须低发送，恢复段必须回升，并且不能出现 decode error 或 freeze。
+- walking dead-zone recover / oscillating edge recover：必须触发 `NACK / retransmission`，弱网段必须低发送，恢复段必须回升，并且不能出现 decode error 或 freeze。
 - 当前本地结果 16/16 通过，`playable_ratio_min=0.942857`、`avg_psnr_y_min=31.384`、`min_psnr_y_min=19.4395`、`decode_errors=0`、`freeze_count=0`、`push_queue_full=0`、`renderer_proxy_late_frames=0`、`renderer_proxy_drop_frames=0`、`renderer_proxy_max_latency_ms=468`；弱网最坏 `11.25 RPS / 191.25 RTP pps / 750000bps / 10fps`，恢复到 `1.5Mbps+ / 30fps`，`full_recovery_time_ms=0`，最大 decoded frame 间隔 `100ms`。
 - `weak_network_low_rps_low_bitrate` 在四类内容下分别保持 `10.4348 AU RPS`，RTP pps 为 `108.261..117.391`，码率上限为 `750000bps`，encoder FPS 上限为 `10fps`；恢复段回到 `30 AU RPS / 1.55..1.63Mbps / 30fps`，renderer proxy 在 `500ms` 播放预算内 `late=0/drop=0`。
 - 该门槛独立于普通 720p 稳定性和 high-complexity stress：`210 RTP pps` 是根据内容库中 `low_light_noise + oscillating_edge_recover` 的真实 RTP 分片结果校准的，仍低于 high-complexity stress 的 `240 RTP pps` 门槛。

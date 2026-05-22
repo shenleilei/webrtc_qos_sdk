@@ -36,6 +36,10 @@ Status InternalError(const char* message) {
   return Status::Error(StatusCode::kInternalError, message);
 }
 
+bool SequenceNumberAtOrAfter(uint16_t lhs, uint16_t rhs) {
+  return static_cast<int16_t>(lhs - rhs) >= 0;
+}
+
 class WebRtcVideoPushClient final : public VideoPushClient {
  public:
   explicit WebRtcVideoPushClient(VideoPushClientConfig config)
@@ -155,15 +159,12 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     }
 
     for (auto& pending : pending_packets) {
-      const size_t packet_size = pending.packet.bytes.size();
       if (!pacer_->EnqueuePacket(pending.packet)) {
         ResetPacerQueue(pending.capture_time_us);
         ++snapshot_.dropped_frames;
         return Status::Error(StatusCode::kQueueFull,
                              "WebRTC pacing adapter rejected RTP packet");
       }
-      (void)packet_size;
-      ++queued_packets_;
     }
     next_rtp_sequence_number_ = rtp_sequence_number;
     next_transport_sequence_number_ = transport_sequence_number;
@@ -321,7 +322,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
 
   Status DrainPacer(int64_t now_us) {
     std::vector<PacingAdapterPacket> emitted;
-    for (int i = 0; i < 200 && emitted_packets_ < queued_packets_; ++i) {
+    for (int i = 0; i < 200; ++i) {
       auto batch = pacer_->Process(now_us);
       if (batch.empty()) {
         break;
@@ -417,18 +418,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     if (now_us >= 0) {
       pacer_->Process(now_us);
     }
-    queued_packets_ = 0;
-    emitted_packets_ = 0;
     active_probe_clusters_.clear();
-    if (has_last_emitted_packet_) {
-      next_rtp_sequence_number_ =
-          static_cast<uint16_t>(last_emitted_rtp_sequence_number_ + 1);
-      next_transport_sequence_number_ =
-          static_cast<uint16_t>(last_emitted_transport_sequence_number_ + 1);
-    } else {
-      next_rtp_sequence_number_ = 1;
-      next_transport_sequence_number_ = 1;
-    }
   }
 
   uint32_t EffectivePacingBps(int64_t now_us) const {
@@ -522,6 +512,18 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     uint32_t packet_size_bytes = 0;
   };
 
+  Status EnqueueRetransmission(const PacingAdapterPacket& packet) {
+    const auto pacer_stats = pacer_->stats();
+    if (pacer_stats.queue_bytes + packet.bytes.size() > kMaxPacingQueueBytes) {
+      ++snapshot_.dropped_retransmission_packets;
+      return Status::Ok();
+    }
+    if (!pacer_->EnqueuePacket(packet)) {
+      ++snapshot_.dropped_retransmission_packets;
+    }
+    return Status::Ok();
+  }
+
   Status HandleNack(const RtcpAdapterNack& nack, int64_t receive_time_us) {
     for (uint16_t packet_id : nack.packet_ids) {
       auto found = packet_history_.Find(TransportPacketHistoryKey{
@@ -555,7 +557,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       packet.enqueue_time_us = receive_time_us;
       packet.retransmission = true;
       packet.bytes = std::move(rebuilt_bytes);
-      Status status = EmitPacketNow(packet, receive_time_us);
+      Status status = EnqueueRetransmission(packet);
       if (!status) {
         return status;
       }
@@ -600,30 +602,34 @@ class WebRtcVideoPushClient final : public VideoPushClient {
                              now_us);
       }
     }
-    ++emitted_packets_;
-    last_emitted_rtp_sequence_number_ = packet.rtp_sequence_number;
     if (packet.padding) {
-      next_rtp_sequence_number_ =
+      const uint16_t next_rtp_sequence_number =
           static_cast<uint16_t>(packet.rtp_sequence_number + 1);
-    }
-    if (packet.transport_sequence_number >= 0) {
-      last_emitted_transport_sequence_number_ =
-          static_cast<uint16_t>(packet.transport_sequence_number);
-      if (packet.padding) {
-        next_transport_sequence_number_ =
-            static_cast<uint16_t>(packet.transport_sequence_number + 1);
+      if (SequenceNumberAtOrAfter(next_rtp_sequence_number,
+                                  next_rtp_sequence_number_)) {
+        next_rtp_sequence_number_ = next_rtp_sequence_number;
       }
     }
-    has_last_emitted_packet_ = true;
-    if (!packet.padding) {
+    if (packet.transport_sequence_number >= 0) {
+      if (packet.padding) {
+        const uint16_t next_transport_sequence_number =
+            static_cast<uint16_t>(packet.transport_sequence_number + 1);
+        if (SequenceNumberAtOrAfter(next_transport_sequence_number,
+                                    next_transport_sequence_number_)) {
+          next_transport_sequence_number_ = next_transport_sequence_number;
+        }
+      }
+    }
+    if (!packet.padding && !packet.retransmission) {
       ++sent_rtp_packet_count_;
       sent_rtp_octet_count_ += packet.bytes.size();
       packet_history_.Store(
           TransportPacketHistoryKey{kSenderPacketHistoryHopId,
                                     config_.session.ids.sender_ssrc,
                                     packet.rtp_sequence_number},
-          packet.bytes.data(), packet.bytes.size(), now_us,
-          packet.retransmission);
+          packet.bytes.data(), packet.bytes.size(), now_us, false);
+    } else if (!packet.padding && packet.retransmission) {
+      ++snapshot_.retransmission_count;
     }
     return Status::Ok();
   }
@@ -656,11 +662,6 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   int64_t first_capture_time_us_ = -1;
   SenderRateCap sender_rate_cap_;
   uint32_t latest_rtt_ms_ = 0;
-  uint64_t queued_packets_ = 0;
-  uint64_t emitted_packets_ = 0;
-  bool has_last_emitted_packet_ = false;
-  uint16_t last_emitted_rtp_sequence_number_ = 0;
-  uint16_t last_emitted_transport_sequence_number_ = 0;
   bool keyframe_request_pending_ = false;
   uint32_t sent_rtp_packet_count_ = 0;
   uint32_t sent_rtp_octet_count_ = 0;

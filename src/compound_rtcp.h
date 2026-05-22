@@ -9,11 +9,17 @@
 
 namespace webrtc_qos {
 
+struct RtcpPacketIterationStats {
+  size_t supported_packets = 0;
+  size_t unsupported_packets = 0;
+};
+
 inline Status ForEachSupportedRtcpPacket(
     const uint8_t* data,
     size_t size,
     const std::function<Status(const uint8_t*, size_t,
-                               const RtcpAdapterParsedPacket&)>& handler) {
+                               const RtcpAdapterParsedPacket&)>& handler,
+    RtcpPacketIterationStats* stats = nullptr) {
   if (data == nullptr || size == 0) {
     return Status::Error(StatusCode::kInvalidArgument, "empty RTCP packet");
   }
@@ -55,6 +61,9 @@ inline Status ForEachSupportedRtcpPacket(
          (fmt == kFeedbackNack || fmt == kFeedbackTransportCc)) ||
         (packet_type == kPacketTypePsfb && fmt == kFeedbackPli);
     if (supported) {
+      if (stats != nullptr) {
+        ++stats->supported_packets;
+      }
       RtcpAdapterParsedPacket parsed;
       if (!ParseRtcpPacket(data + offset, packet_size, &parsed)) {
         return Status::Error(StatusCode::kMalformedPacket,
@@ -64,6 +73,8 @@ inline Status ForEachSupportedRtcpPacket(
       if (!status) {
         return status;
       }
+    } else if (stats != nullptr) {
+      ++stats->unsupported_packets;
     }
 
     offset += packet_size;

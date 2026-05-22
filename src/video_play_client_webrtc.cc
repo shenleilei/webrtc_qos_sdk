@@ -23,6 +23,20 @@ bool HasRtpPadding(const uint8_t* rtp_bytes, size_t rtp_size) {
   return rtp_bytes != nullptr && rtp_size > 0 && (rtp_bytes[0] & 0x20) != 0;
 }
 
+uint32_t ResolveReceiverFeedbackSsrc(const SessionConfig& session) {
+  if (session.rtcp.receiver_feedback_ssrc != 0) {
+    return session.rtcp.receiver_feedback_ssrc;
+  }
+  if (session.ids.receiver_id != 0) {
+    const uint32_t candidate = session.ids.receiver_id | 0x80000000u;
+    if (candidate != session.ids.sender_ssrc) {
+      return candidate;
+    }
+  }
+  const uint32_t fallback = session.ids.sender_ssrc ^ 0x00ff00ffu;
+  return fallback != 0 ? fallback : 1u;
+}
+
 class WebRtcVideoPlayClient final : public VideoPlayClient {
  public:
   explicit WebRtcVideoPlayClient(VideoPlayClientConfig config)
@@ -176,7 +190,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
           continue;
         }
         RtcpAdapterNack nack;
-        nack.sender_ssrc = config_.session.ids.receiver_id;
+        nack.sender_ssrc = ResolveReceiverFeedbackSsrc(config_.session);
         nack.media_ssrc = config_.session.ids.sender_ssrc;
         nack.packet_ids = event.rtp_sequence_numbers;
         if (!BuildRtcpNack(nack, &rtcp_bytes)) {
@@ -187,7 +201,7 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       } else if (event.type ==
                  NackRequesterAdapterEventType::kKeyFrameRequest) {
         RtcpAdapterPli pli;
-        pli.sender_ssrc = config_.session.ids.receiver_id;
+        pli.sender_ssrc = ResolveReceiverFeedbackSsrc(config_.session);
         pli.media_ssrc = config_.session.ids.sender_ssrc;
         if (!BuildRtcpPli(pli, &rtcp_bytes)) {
           return Status::Error(StatusCode::kInternalError,

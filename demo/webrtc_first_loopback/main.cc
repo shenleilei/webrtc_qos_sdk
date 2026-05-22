@@ -404,7 +404,7 @@ void PrintScenario(const Scenario& scenario, const Metrics& metrics) {
             << " playable_ratio=" << playable_ratio
             << " dropped=" << metrics.downlink_dropped
             << " receiver_rtcp=" << metrics.receiver_rtcp
-            << " rtx=" << metrics.retransmissions
+            << " retransmission=" << metrics.retransmissions
             << " bad_send_rps="
             << TickRate(metrics.bad_pushed_frames, metrics.bad_ticks)
             << " recovery_send_rps="

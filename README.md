@@ -9,6 +9,7 @@
 - [推拉客户端 SDK 集成说明](docs/sdk_push_play_integration.md)
 - [WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md)
 - [Phase-2 主实施文档](webrtc_first_phase2_master_plan.md)
+- [Phase-3 逻辑正确性收敛计划](webrtc_first_phase3_plan.md)
 
 ## 当前状态
 
@@ -35,6 +36,16 @@ libwebrtc_qos_webrtc_nack_requester.a
 `libwebrtc_qos_webrtc_pacing.a` 当前已经切到 WebRTC `PacingController` 最小闭包：adapter 内部把 SDK bytes 解析成 `RtpPacketToSend`，交给 `PacingController` 做队列、packet priority、probe cluster 和发送时机判断，再把出队结果还原成 RTP bytes。发布包没有直接打全量 `modules/pacing`，也没有引入 `task_queue_paced_sender` 或 `packet_router`。RTP padding 由 adapter 在已有媒体包模板后生成：`size <= 1 byte` 的 probe/keepalive padding 请求返回空，避免破坏 probe 首包顺序；真实 padding 包分配新的 RTP sequence number 和 transport-wide sequence number，设置 RTP padding bit，参与 uplink TWCC，但不进入 packet history 或视频 jitter/解码路径。
 
 SDK facade 已显式透出 padding 边界：`TransportPacketMetadata::padding` 标记 padding RTP 包，`QosSnapshot::emitted_padding_packets / emitted_padding_bytes` 记录 pacer padding 输出；server 对 padding 包生成 TWCC arrival feedback 但不缓存为可重传媒体包；play 端先喂 NACK requester 处理序号连续性，再跳过 H264 depacketize/video jitter。
+
+### 当前仍未闭合的事项
+
+下面这些点当前还不能对外描述成“正式完成”：
+
+- 正式验收闭环还缺 3 项：`SOAK_MINUTES>=120` 的 production soak、真实 renderer `pass`、正式 `capture_library/manifest.csv` 和业务素材库。
+- 当前支持的是 `NACK + 原 RTP 包重传`，不支持 `RFC4588 RTX`，也不支持 `FEC / ULPFEC / FlexFEC / RED`。
+- compound RTCP 当前只承诺处理 `SR / RR / TWCC / NACK / PLI`；server 对 unsupported RTCP packet 会显式计数并默认 drop，不做透明 relay。
+
+上面这些逻辑正确性问题的收敛计划见 [Phase-3 逻辑正确性收敛计划](webrtc_first_phase3_plan.md)。
 
 ## 默认发布包
 
@@ -115,7 +126,7 @@ PREFIX=/root/output SDK_ROOT=/root/webrtc_qos_sdk \
   scripts/verify_webrtc_first_roles.sh
 ```
 
-`verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口。`VERIFY_LEVEL=smoke` 会串起 no-selfmade、WebRTC module smoke、外部 CMake package、loopback、pacing probe、role facade 和 synthetic 弱网矩阵；`VERIFY_LEVEL=qoe` 在 smoke 基础上增加低 RPS/低码率真实 H264 QoE 和恢复时间分布；`VERIFY_LEVEL=production` 会继续进入 production soak，并可通过 `REQUIRE_REAL_RENDERER=1 / REQUIRE_CAPTURE_LIBRARY=1` 把真实 renderer 和正式采集素材库变成硬门禁。
+`verify_webrtc_first_phase2.sh` 是当前 Phase-2 聚合门禁入口。`VERIFY_LEVEL=smoke` 会串起 no-selfmade、WebRTC module smoke、外部 CMake package、loopback、pacing probe、role facade 和 synthetic 弱网矩阵；`VERIFY_LEVEL=qoe` 在 smoke 基础上增加低 RPS/低码率真实 H264 QoE 和恢复时间分布；`VERIFY_LEVEL=production` 会继续进入 production soak，并可通过 `REQUIRE_REAL_RENDERER=1 / REQUIRE_CAPTURE_LIBRARY=1` 把真实 renderer 和正式采集素材库变成硬门禁。当前 `SOAK_MINUTES=0` 的默认本地 production smoke 只验证 runner/archive 链路，默认配置为 `FRAMES_PER_CYCLE=12 / CONTENT_MODES=block_motion / SCENARIOS=weak_network_low_rps_low_bitrate`；正式验收仍必须显式跑 `SOAK_MINUTES>=120`。
 
 `scripts/verify_webrtc_first_phase2_completion_audit.sh` 是“能否宣布 Phase-2 完成”的审计门禁。它不会重新跑所有 case，而是检查既有证据是否达到完成标准：smoke/qoe 必须通过，production soak 必须来自 `SOAK_MINUTES>=120` 或更长的正式运行并有 archive，real renderer 必须是有真实显示环境的 pass 结果，capture library 必须是正式业务素材库而不是 fixture。当前本机预期不会通过这个审计，因为还缺多小时 production soak、真实 GPU/窗口 renderer 和正式业务采集素材库。
 
@@ -125,7 +136,7 @@ PREFIX=/root/output SDK_ROOT=/root/webrtc_qos_sdk \
 
 当前本机 `VERIFY_LEVEL=qoe` 聚合门禁已通过，summary 位于 `artifacts/webrtc_first_phase2_verify_qoe/phase2_verify_summary.txt`。本次聚合里 synthetic facade 弱网矩阵 8/8 通过；真实 H264 low-RPS/low-bitrate case 结果为 `bad_send_rps=10.9091`、`bad_rtp_pps=92.7273`、`max_bad_target_bps=400000`、`max_bad_encoder_fps=10`，恢复到 `recovery_send_rps=30`、`max_recovery_target_bps=840944`、`max_recovery_encoder_fps=30`，`playable_ratio=0.923077`、`avg_psnr_y=45.9423`、`avg_ssim_y=0.999833`。恢复时间分布门禁 `samples=1`，`target/fps/full_recovery_time_ms_p95=0`，低于 `1000ms` 门槛。
 
-当前本机也跑通了 `VERIFY_LEVEL=production` 短时 smoke，summary 位于 `artifacts/webrtc_first_phase2_verify_production_smoke/phase2_verify_summary.txt`。本次只配置 `SOAK_CYCLES=1 / FRAMES_PER_CYCLE=12 / RUN_REAL_RENDERER=0 / RUN_CAPTURE_LIBRARY=0`，用于验证 production runner、CSV 聚合、archive metadata、sha256 manifest、tarball 和离线 archive verifier 链路，不代表生产级多小时结论。短时结果：`cycles=1`、`rows=1`、`pass_rows=1`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`、`weak_low_bad_send_rps_max=12.8571`、`weak_low_bad_rtp_pps_max=184.286`、`weak_low_target_bps_max=750000`、`weak_low_encoder_fps_max=10`，离线归档校验和恢复时间分布校验均通过。
+当前本机也跑通了 `VERIFY_LEVEL=production` 短时 smoke，summary 位于 `artifacts/webrtc_first_phase2_verify/phase2_verify_summary.txt`，对应 production soak 证据在 `artifacts/webrtc_first_phase2_verify/production_soak/`。本次只配置 `SOAK_CYCLES=1 / SOAK_MINUTES=0 / FRAMES_PER_CYCLE=12 / CONTENT_MODES=block_motion / SCENARIOS=weak_network_low_rps_low_bitrate / RUN_REAL_RENDERER=0 / RUN_CAPTURE_LIBRARY=0`，用于验证 production runner、CSV 聚合、archive metadata、sha256 manifest、tarball 和离线 archive verifier 链路，不代表生产级多小时结论。短时结果：`cycles=1`、`rows=1`、`pass_rows=1`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`、`weak_low_bad_send_rps_max=12.8571`、`weak_low_bad_rtp_pps_max=150`、`weak_low_target_bps_max=750000`、`weak_low_encoder_fps_max=10`，离线归档校验和恢复时间分布校验均通过。
 
 当前本机还跑通了 Phase-2 聚合门禁中的 capture fixture：先用 `scripts/generate_capture_library_fixture.sh` 生成六类 deterministic mp4 和 `manifest.csv`，再用 `RUN_CAPTURE_LIBRARY=1 REQUIRE_CAPTURE_LIBRARY=1` 驱动 `verify_webrtc_first_phase2.sh`。结果位于 `artifacts/webrtc_first_phase2_verify_capture_fixture/phase2_verify_summary.txt`：manifest 校验 `entries=6`，覆盖 `high_motion,indoor_face,low_light_noise,outdoor_walking,scene_cut,screen_text`；capture QoE `rows=6/6 pass`，`playable_ratio_min=0.833333`、`avg_psnr_y_min=42.6753`、`avg_ssim_y_min=0.998468`、`decode_errors=0`、`freeze_count=0`、`renderer_proxy_drop_frames=0`、`renderer_proxy_max_gap_ms=34`。这只证明采集库入口、manifest 强门禁和转码/QoE 链路可执行，不等价于正式业务真实采集素材。
 
@@ -164,11 +175,13 @@ cmake --build build-webrtc-first \
 
 ```text
 backend=webrtc_first_facade transport=custom_bytes peer_connection=false
-good_static pushed=36 decoded=36 playable_ratio=1 dropped=0 receiver_rtcp=0 rtx=0 bad_send_rps=0 recovery_send_rps=0 min_bad_target=0 max_recovery_target=0 min_bad_fps=0 max_recovery_fps=0 final_target=1207178 final_fps=30 pass=true
-walking_dead_zone_recover pushed=30 decoded=30 playable_ratio=1 dropped=12 receiver_rtcp=1 rtx=12 bad_send_rps=12 recovery_send_rps=30 min_bad_target=600000 max_recovery_target=1207178 min_bad_fps=10 max_recovery_fps=30 final_target=1207178 final_fps=30 pass=true
+good_static pushed=36 decoded=36 playable_ratio=1 dropped=0 receiver_rtcp=0 retransmission=0 bad_send_rps=0 recovery_send_rps=0 min_bad_target=0 max_recovery_target=0 min_bad_fps=0 max_recovery_fps=0 final_target=1207178 final_fps=30 pass=true
+walking_dead_zone_recover pushed=30 decoded=30 playable_ratio=1 dropped=12 receiver_rtcp=1 retransmission=12 bad_send_rps=12 recovery_send_rps=30 min_bad_target=600000 max_recovery_target=1207178 min_bad_fps=10 max_recovery_fps=30 final_target=1207178 final_fps=30 pass=true
 ```
 
-这个 demo 的意义是补齐 Phase-2 的独立可运行入口：业务传输仍只是搬运 bytes，server 只做最小 relay/QoS router，弱网场景能触发 NACK/RTX、rate cap 下探和恢复回升，并明确不创建 `PeerConnection`。
+这个 demo 的意义是补齐 Phase-2 的独立可运行入口：业务传输仍只是搬运 bytes，server 只做最小 relay/QoS router，弱网场景能触发 `NACK / retransmission`、rate cap 下探和恢复回升，并明确不创建 `PeerConnection`。
+
+当前日志里的 `retransmission` 表示 `NACK + 原 RTP 包重传`，不是 RFC4588 RTX。
 
 同时新增仓库内 UDP role demo：`webrtc_qos_webrtc_first_udp_demo`。它保留自动化 `selftest`，并提供独立 `sender/server/receiver` 三个进程模式，便于手工验证自定义 UDP transport 下的 WebRTC-first facade bytes 边界。
 
@@ -346,7 +359,7 @@ freeze_duration_ms=0
 max_inter_render_gap_ms<=100
 push_queue_full=0
 dead_zone_nack=1 per seed
-dead_zone_rtx=27..28 per seed
+dead_zone_retransmission=27..28 per seed
 weak_network_bad_send_rps=9.375
 weak_network_bad_rtp_pps=80.625..90
 weak_network_final_target_bps=1260893..1287137
@@ -496,7 +509,7 @@ PREFLIGHT_ONLY=1 \
   scripts/run_webrtc_first_phase2_production_gate.sh
 ```
 
-这个审计脚本会读取 smoke/qoe summary、production soak summary/config/archive、real renderer summary 和 capture manifest summary，并复用 production soak archive verifier 校验 sha256 manifest、row pass、弱网低 RPS/低码率和恢复时间分布。它的默认 production 输入路径是 `artifacts/webrtc_first_phase2_verify_production/`，也可以通过 `EVIDENCE_BUNDLE_DIR` 审计收集好的 bundle。当前只有 `production_smoke`、renderer skipped 和 fixture capture 时会失败，这是预期结果；失败 summary 会写出还缺哪类证据。
+这个审计脚本会读取 smoke/qoe summary、production soak summary/config/archive、real renderer summary 和 capture manifest summary，并复用 production soak archive verifier 校验 sha256 manifest、row pass、弱网低 RPS/低码率和恢复时间分布。它的默认 production 输入路径是 `artifacts/webrtc_first_phase2_verify_production/`，也可以通过 `EVIDENCE_BUNDLE_DIR` 审计收集好的 bundle。当前只有短时 production smoke、renderer skipped 和 fixture capture 时会失败，这是预期结果；失败 summary 会写出还缺哪类证据。
 
 如果要在正式机器上一键跑完整验收，直接使用：
 
@@ -544,9 +557,9 @@ recovery_target_bps=2079075..2089773
 recovery_encoder_fps=30
 full_recovery_time_ms=0
 dead_zone_nack=1 per seed
-dead_zone_rtx=96..102
+dead_zone_retransmission=96..102
 oscillating_nack=13..15
-oscillating_rtx=13..15
+oscillating_retransmission=13..15
 ```
 
 高复杂内容的门槛故意和普通 720p 稳定性分开：它要求 `playable_ratio>=0.75`、`avg_psnr_y>=15dB`、`decode_errors=0`、`freeze_count=0`，弱网段不高于 `15 AU RPS / 240 RTP pps / 900000bps / 10fps`，并且 `max_bad_target_bps` 和 `max_bad_encoder_fps` 在整个弱网窗口内都不能超过上限；恢复段回到 `30 AU RPS / 2Mbps+ / 30fps`，`full_recovery_time_ms<=1000ms`。这里的 RTP pps 和弱网码率上限高于普通内容，是因为 stress 内容每帧 RTP 分片显著更多，且 1.8Mbps 起始码率下 server 当前半码率 rate cap 会落到 `900000bps`。

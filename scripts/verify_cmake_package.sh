@@ -358,6 +358,14 @@ std::vector<uint8_t> MakeAccessUnit() {
   return au;
 }
 
+std::vector<uint8_t> MakeByePacket(uint32_t sender_ssrc) {
+  return std::vector<uint8_t>{
+      0x81, 0xcb, 0x00, 0x01, static_cast<uint8_t>(sender_ssrc >> 24),
+      static_cast<uint8_t>(sender_ssrc >> 16),
+      static_cast<uint8_t>(sender_ssrc >> 8),
+      static_cast<uint8_t>(sender_ssrc)};
+}
+
 }  // namespace
 
 int main() {
@@ -367,6 +375,8 @@ int main() {
   session.ids.transport_id = 1;
   session.ids.sender_ssrc = 0x12345678;
   session.ids.receiver_id = 9;
+  session.rtcp.receiver_feedback_ssrc = 0x90000009u;
+  session.rtcp.server_feedback_ssrc = 0x70000009u;
 
   struct EmittedPacket {
     std::vector<uint8_t> bytes;
@@ -460,21 +470,22 @@ int main() {
     return 6;
   }
 
-  std::vector<std::vector<uint8_t>> server_to_sender;
-  std::vector<webrtc_qos::TransportPacketView> server_to_receiver_views;
-  std::vector<std::vector<uint8_t>> server_to_receiver_bytes;
+  std::vector<EmittedPacket> server_to_sender_packets;
+  std::vector<EmittedPacket> server_to_receiver_packets;
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
   server_config.sender_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
-        server_to_sender.emplace_back(packet.bytes, packet.bytes + packet.size);
+        server_to_sender_packets.push_back(
+            EmittedPacket{{packet.bytes, packet.bytes + packet.size},
+                          packet.metadata});
         return webrtc_qos::Status::Ok();
       };
   server_config.receiver_output =
       [&](const webrtc_qos::TransportPacketView& packet) {
-        server_to_receiver_views.push_back(packet);
-        server_to_receiver_bytes.emplace_back(packet.bytes,
-                                              packet.bytes + packet.size);
+        server_to_receiver_packets.push_back(
+            EmittedPacket{{packet.bytes, packet.bytes + packet.size},
+                          packet.metadata});
         return webrtc_qos::Status::Ok();
       };
   std::unique_ptr<webrtc_qos::ServerQosRouter> server =
@@ -490,22 +501,29 @@ int main() {
     }
     server_receive_time_us += 50000;
   }
-  if (server_to_receiver_views.empty()) {
+  if (server_to_receiver_packets.empty()) {
     return 8;
   }
-  if (server_to_receiver_views[0].metadata.kind !=
+  if (server_to_receiver_packets[0].metadata.kind !=
           webrtc_qos::TransportPacketKind::kRtp ||
-      server_to_receiver_views[0].metadata.retransmission ||
-      server_to_sender.empty()) {
+      server_to_receiver_packets[0].metadata.retransmission ||
+      server_to_sender_packets.empty()) {
     return 9;
   }
   bool saw_twcc = false;
-  for (const auto& packet : server_to_sender) {
+  for (const auto& packet : server_to_sender_packets) {
     webrtc_qos::RtcpAdapterParsedPacket parsed;
-    if (webrtc_qos::ParseRtcpPacket(packet.data(), packet.size(), &parsed) &&
+    if (webrtc_qos::ParseRtcpPacket(packet.bytes.data(), packet.bytes.size(),
+                                    &parsed) &&
         parsed.type == webrtc_qos::RtcpAdapterPacketType::kTransportFeedback) {
       saw_twcc = true;
-      if (!push->OnTransportFeedback(packet.data(), packet.size(), 1500000)) {
+      if (parsed.transport_feedback.sender_ssrc !=
+              session.rtcp.server_feedback_ssrc ||
+          parsed.transport_feedback.sender_ssrc == session.ids.receiver_id) {
+        return 40;
+      }
+      if (!push->OnTransportFeedback(packet.bytes.data(), packet.bytes.size(),
+                                     1500000)) {
         return 10;
       }
     }
@@ -519,19 +537,26 @@ int main() {
       push_snapshot.sender_rates.final_target_bps == 0) {
     return 12;
   }
-  server_to_sender.clear();
+  server_to_sender_packets.clear();
 
   if (!server->OnSenderRtcp(push_rtcp_packets[0].data(),
                             push_rtcp_packets[0].size(), 2200000)) {
     return 20;
   }
   bool saw_rr = false;
-  for (const auto& packet : server_to_sender) {
+  for (const auto& packet : server_to_sender_packets) {
     webrtc_qos::RtcpAdapterParsedPacket parsed;
-    if (webrtc_qos::ParseRtcpPacket(packet.data(), packet.size(), &parsed) &&
+    if (webrtc_qos::ParseRtcpPacket(packet.bytes.data(), packet.bytes.size(),
+                                    &parsed) &&
         parsed.type == webrtc_qos::RtcpAdapterPacketType::kReceiverReport) {
       saw_rr = true;
-      if (!push->OnTransportFeedback(packet.data(), packet.size(), 2300000)) {
+      if (parsed.receiver_report.sender_ssrc !=
+              session.rtcp.server_feedback_ssrc ||
+          parsed.receiver_report.sender_ssrc == session.ids.receiver_id) {
+        return 41;
+      }
+      if (!push->OnTransportFeedback(packet.bytes.data(), packet.bytes.size(),
+                                     2300000)) {
         return 21;
       }
     }
@@ -546,7 +571,7 @@ int main() {
 
   std::vector<uint8_t> pli_bytes;
   webrtc_qos::RtcpAdapterPli pli;
-  pli.sender_ssrc = session.ids.receiver_id;
+  pli.sender_ssrc = session.rtcp.receiver_feedback_ssrc;
   pli.media_ssrc = session.ids.sender_ssrc;
   if (!webrtc_qos::BuildRtcpPli(pli, &pli_bytes) ||
       !push->OnTransportFeedback(pli_bytes.data(), pli_bytes.size(),
@@ -559,14 +584,28 @@ int main() {
 
   std::vector<uint8_t> sender_nack_bytes;
   webrtc_qos::RtcpAdapterNack sender_nack;
-  sender_nack.sender_ssrc = session.ids.receiver_id;
+  sender_nack.sender_ssrc = session.rtcp.receiver_feedback_ssrc;
   sender_nack.media_ssrc = session.ids.sender_ssrc;
   sender_nack.packet_ids.push_back(2);
   const size_t push_packets_before_retransmission = push_packets.size();
+  size_t original_media_packets = 0;
+  size_t original_rtp_octets = 0;
+  for (size_t packet_index = 0; packet_index < push_packets_before_retransmission;
+       ++packet_index) {
+    if (push_packets[packet_index].metadata.padding ||
+        push_packets[packet_index].metadata.retransmission) {
+      continue;
+    }
+    ++original_media_packets;
+    original_rtp_octets += push_packets[packet_index].bytes.size();
+  }
   if (!webrtc_qos::BuildRtcpNack(sender_nack, &sender_nack_bytes) ||
       !push->OnTransportFeedback(sender_nack_bytes.data(),
                                  sender_nack_bytes.size(), 2500000)) {
     return 35;
+  }
+  if (push_packets.size() != push_packets_before_retransmission) {
+    return 42;
   }
   bool saw_retransmission = false;
   for (int i = 0; i < 100; ++i) {
@@ -610,10 +649,83 @@ int main() {
   if (!saw_requested_sequence) {
     return 37;
   }
+  if (push->GetQosSnapshot(3000000).retransmission_count == 0) {
+    return 43;
+  }
+  const size_t push_rtcp_packets_before_sr_check = push_rtcp_packets.size();
+  if (!push->Process(3600000)) {
+    return 44;
+  }
+  bool saw_updated_sr = false;
+  for (size_t packet_index = push_rtcp_packets_before_sr_check;
+       packet_index < push_rtcp_packets.size(); ++packet_index) {
+    webrtc_qos::RtcpAdapterParsedPacket parsed;
+    if (!webrtc_qos::ParseRtcpPacket(push_rtcp_packets[packet_index].data(),
+                                     push_rtcp_packets[packet_index].size(),
+                                     &parsed) ||
+        parsed.type != webrtc_qos::RtcpAdapterPacketType::kSenderReport) {
+      continue;
+    }
+    saw_updated_sr = true;
+    if (parsed.sender_report.packet_count != original_media_packets ||
+        parsed.sender_report.octet_count != original_rtp_octets) {
+      return 45;
+    }
+  }
+  if (!saw_updated_sr) {
+    return 46;
+  }
 
-  server_to_sender.clear();
+  std::vector<uint8_t> burst_nack_bytes;
+  webrtc_qos::RtcpAdapterNack burst_nack;
+  burst_nack.sender_ssrc = session.rtcp.receiver_feedback_ssrc;
+  burst_nack.media_ssrc = session.ids.sender_ssrc;
+  burst_nack.packet_ids.push_back(1);
+  burst_nack.packet_ids.push_back(2);
+  burst_nack.packet_ids.push_back(3);
+  const size_t push_packets_before_burst = push_packets.size();
+  if (!webrtc_qos::BuildRtcpNack(burst_nack, &burst_nack_bytes) ||
+      !push->OnTransportFeedback(burst_nack_bytes.data(),
+                                 burst_nack_bytes.size(), 3650000)) {
+    return 47;
+  }
+  if (push_packets.size() != push_packets_before_burst) {
+    return 48;
+  }
+  webrtc_qos::AnnexBAccessUnitView second_view = view;
+  second_view.capture_time_us = 3660000;
+  second_view.keyframe = true;
+  if (!push->PushAnnexBAccessUnit(second_view)) {
+    return 49;
+  }
+  bool saw_post_burst_retransmission = false;
+  bool saw_post_burst_primary = false;
+  for (int i = 0; i < 100; ++i) {
+    const int64_t process_time_us = 3665000 + static_cast<int64_t>(i) * 5000;
+    if (!push->Process(process_time_us)) {
+      return 50;
+    }
+    for (size_t packet_index = push_packets_before_burst;
+         packet_index < push_packets.size(); ++packet_index) {
+      if (push_packets[packet_index].metadata.retransmission) {
+        saw_post_burst_retransmission = true;
+      } else {
+        saw_post_burst_primary = true;
+      }
+    }
+    if (saw_post_burst_retransmission && saw_post_burst_primary) {
+      break;
+    }
+  }
+  if (!saw_post_burst_retransmission || !saw_post_burst_primary) {
+    return 51;
+  }
+
+  const uint32_t receiver_a = session.ids.receiver_id;
+  const uint32_t receiver_b = session.ids.receiver_id + 1;
+  server_to_sender_packets.clear();
   const size_t receiver_outputs_before_partial_nack =
-      server_to_receiver_views.size();
+      server_to_receiver_packets.size();
   std::vector<uint8_t> nack_bytes;
   webrtc_qos::RtcpAdapterNack nack;
   nack.sender_ssrc = 0x99999999;
@@ -623,30 +735,94 @@ int main() {
   if (!webrtc_qos::BuildRtcpNack(nack, &nack_bytes)) {
     return 16;
   }
-  if (!server->OnReceiverRtcp(session.ids.receiver_id, nack_bytes.data(),
-                              nack_bytes.size(), 1300000)) {
+  if (!server->OnReceiverRtcp(receiver_a, nack_bytes.data(), nack_bytes.size(),
+                              1300000)) {
     return 17;
   }
-  if (server_to_receiver_views.size() !=
+  if (server_to_receiver_packets.size() !=
           receiver_outputs_before_partial_nack + 1 ||
-      !server_to_receiver_views.back().metadata.retransmission ||
-      server_to_receiver_views.back().metadata.ids.receiver_id !=
-          session.ids.receiver_id ||
-      server_to_sender.size() != 1) {
+      !server_to_receiver_packets.back().metadata.retransmission ||
+      server_to_receiver_packets.back().metadata.ids.receiver_id != receiver_a ||
+      server_to_sender_packets.size() != 1) {
     return 18;
   }
   webrtc_qos::RtcpAdapterParsedPacket forwarded_nack;
-  if (!webrtc_qos::ParseRtcpPacket(server_to_sender[0].data(),
-                                   server_to_sender[0].size(),
+  if (!webrtc_qos::ParseRtcpPacket(server_to_sender_packets[0].bytes.data(),
+                                   server_to_sender_packets[0].bytes.size(),
                                    &forwarded_nack) ||
       forwarded_nack.type != webrtc_qos::RtcpAdapterPacketType::kNack ||
       forwarded_nack.nack.packet_ids.size() != 1 ||
       forwarded_nack.nack.packet_ids[0] != 777) {
     return 39;
   }
+  if (server_to_sender_packets[0].metadata.ids.receiver_id != receiver_a) {
+    return 56;
+  }
 
-  server_to_sender.clear();
-  const size_t receiver_outputs_before_nack = server_to_receiver_views.size();
+  server_to_sender_packets.clear();
+  const size_t receiver_outputs_before_second_partial_nack =
+      server_to_receiver_packets.size();
+  std::vector<uint8_t> receiver_b_nack_bytes;
+  webrtc_qos::RtcpAdapterNack receiver_b_nack;
+  receiver_b_nack.sender_ssrc = 0x88888888;
+  receiver_b_nack.media_ssrc = session.ids.sender_ssrc;
+  receiver_b_nack.packet_ids.push_back(2);
+  receiver_b_nack.packet_ids.push_back(888);
+  if (!webrtc_qos::BuildRtcpNack(receiver_b_nack, &receiver_b_nack_bytes) ||
+      !server->OnReceiverRtcp(receiver_b, receiver_b_nack_bytes.data(),
+                              receiver_b_nack_bytes.size(), 1305000)) {
+    return 57;
+  }
+  if (server_to_receiver_packets.size() !=
+          receiver_outputs_before_second_partial_nack + 1 ||
+      !server_to_receiver_packets.back().metadata.retransmission ||
+      server_to_receiver_packets.back().metadata.ids.receiver_id != receiver_b ||
+      server_to_sender_packets.size() != 1) {
+    return 58;
+  }
+  webrtc_qos::RtcpAdapterParsedPacket forwarded_receiver_b_nack;
+  if (!webrtc_qos::ParseRtcpPacket(
+          server_to_sender_packets[0].bytes.data(),
+          server_to_sender_packets[0].bytes.size(),
+          &forwarded_receiver_b_nack) ||
+      forwarded_receiver_b_nack.type !=
+          webrtc_qos::RtcpAdapterPacketType::kNack ||
+      forwarded_receiver_b_nack.nack.packet_ids.size() != 1 ||
+      forwarded_receiver_b_nack.nack.packet_ids[0] != 888 ||
+      server_to_sender_packets[0].metadata.ids.receiver_id != receiver_b) {
+    return 59;
+  }
+
+  const uint32_t unsupported_before =
+      server->GetQosSnapshot(1310000).unsupported_rtcp_packet_count;
+  std::vector<uint8_t> supported_nack_bytes;
+  webrtc_qos::RtcpAdapterNack supported_nack;
+  supported_nack.sender_ssrc = session.rtcp.receiver_feedback_ssrc;
+  supported_nack.media_ssrc = session.ids.sender_ssrc;
+  supported_nack.packet_ids.push_back(1);
+  if (!webrtc_qos::BuildRtcpNack(supported_nack, &supported_nack_bytes)) {
+    return 52;
+  }
+  std::vector<uint8_t> compound_rtcp = supported_nack_bytes;
+  const auto bye_packet = MakeByePacket(0x12121212u);
+  compound_rtcp.insert(compound_rtcp.end(), bye_packet.begin(), bye_packet.end());
+  server_to_sender_packets.clear();
+  const size_t receiver_outputs_before_compound =
+      server_to_receiver_packets.size();
+  if (!server->OnReceiverRtcp(session.ids.receiver_id, compound_rtcp.data(),
+                              compound_rtcp.size(), 1315000)) {
+    return 53;
+  }
+  if (server->GetQosSnapshot(1315000).unsupported_rtcp_packet_count !=
+          unsupported_before + 1 ||
+      server_to_receiver_packets.size() != receiver_outputs_before_compound + 1 ||
+      !server_to_receiver_packets.back().metadata.retransmission ||
+      !server_to_sender_packets.empty()) {
+    return 54;
+  }
+
+  server_to_sender_packets.clear();
+  const size_t receiver_outputs_before_nack = server_to_receiver_packets.size();
 
   if (push_packets.size() < 3) {
     return 24;
@@ -673,9 +849,13 @@ int main() {
     if (webrtc_qos::ParseRtcpPacket(packet.data(), packet.size(), &parsed) &&
         parsed.type == webrtc_qos::RtcpAdapterPacketType::kNack &&
         !parsed.nack.packet_ids.empty() && parsed.nack.packet_ids[0] == 2) {
+      if (parsed.nack.sender_ssrc != session.rtcp.receiver_feedback_ssrc ||
+          parsed.nack.sender_ssrc == session.ids.receiver_id) {
+        return 55;
+      }
       saw_play_nack = true;
-      if (!server->OnReceiverRtcp(session.ids.receiver_id, packet.data(),
-                                  packet.size(), 3020000)) {
+      if (!server->OnReceiverRtcp(receiver_a, packet.data(), packet.size(),
+                                  3020000)) {
         return 28;
       }
     }
@@ -688,9 +868,9 @@ int main() {
       play_rtcp_packets.size() <= play_rtcp_count_before_tick) {
     return 38;
   }
-  if (server_to_receiver_views.size() != receiver_outputs_before_nack + 1 ||
-      !server_to_receiver_views.back().metadata.retransmission ||
-      !server_to_sender.empty()) {
+  if (server_to_receiver_packets.size() != receiver_outputs_before_nack + 1 ||
+      !server_to_receiver_packets.back().metadata.retransmission ||
+      !server_to_sender_packets.empty()) {
     return 30;
   }
   return 0;

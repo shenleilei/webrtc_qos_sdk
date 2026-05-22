@@ -672,7 +672,7 @@ int RunUdpServer(uint16_t local_port,
             << " sender_rtcp=" << metrics.sender_rtcp
             << " receiver_rtcp=" << metrics.receiver_rtcp
             << " sender_rate_caps=" << metrics.sender_rate_caps
-            << " rtx=" << snapshot.retransmission_count
+            << " retransmission=" << snapshot.retransmission_count
             << "\n";
   return 0;
 }
@@ -770,7 +770,7 @@ int RunUdpReceiver(uint16_t local_port,
             << " decoded=" << metrics.decoded_frames
             << " receiver_rtcp=" << metrics.receiver_rtcp
             << " dropped=" << metrics.downlink_dropped
-            << " rtx=" << metrics.retransmissions
+            << " retransmission=" << metrics.retransmissions
             << "\n";
   return 0;
 }
@@ -1088,7 +1088,7 @@ int RunUdpSelftest(int frames) {
             << " sender_rtcp=" << metrics.sender_rtcp
             << " receiver_rtcp=" << metrics.receiver_rtcp
             << " dropped=" << metrics.downlink_dropped
-            << " rtx=" << metrics.retransmissions
+            << " retransmission=" << metrics.retransmissions
             << " sender_rate_caps=" << metrics.sender_rate_caps
             << " bad_send_rps="
             << TickRate(metrics.bad_pushed_frames, metrics.bad_ticks)

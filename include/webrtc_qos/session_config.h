@@ -32,6 +32,12 @@ struct TwccSessionConfig {
 
 struct RtcpSessionConfig {
   uint16_t sr_rr_interval_ms = 1000;
+  // Sender SSRC used by play-side receiver feedback such as NACK/PLI.
+  // If left at 0, the facade derives a stable SSRC distinct from receiver_id.
+  uint32_t receiver_feedback_ssrc = 0;
+  // Sender SSRC used by server-generated uplink feedback such as TWCC/RR.
+  // If left at 0, the facade derives a stable SSRC distinct from receiver_id.
+  uint32_t server_feedback_ssrc = 0;
 };
 
 struct SessionConfig {

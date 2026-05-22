@@ -24,6 +24,12 @@ CAPTURE_WIDTH="${CAPTURE_WIDTH:-320}"
 CAPTURE_HEIGHT="${CAPTURE_HEIGHT:-180}"
 CAPTURE_SCENARIOS="${CAPTURE_SCENARIOS:-baseline}"
 CAPTURE_SEEDS="${CAPTURE_SEEDS:-1}"
+PRODUCTION_SMOKE_FRAMES="${PRODUCTION_SMOKE_FRAMES:-12}"
+PRODUCTION_SMOKE_WIDTH="${PRODUCTION_SMOKE_WIDTH:-${QOE_WIDTH}}"
+PRODUCTION_SMOKE_HEIGHT="${PRODUCTION_SMOKE_HEIGHT:-${QOE_HEIGHT}}"
+PRODUCTION_SMOKE_CONTENT_MODES="${PRODUCTION_SMOKE_CONTENT_MODES:-block_motion}"
+PRODUCTION_SMOKE_SCENARIOS="${PRODUCTION_SMOKE_SCENARIOS:-weak_network_low_rps_low_bitrate}"
+PRODUCTION_SMOKE_SEEDS="${PRODUCTION_SMOKE_SEEDS:-1}"
 
 mkdir -p "${OUTPUT_DIR}/logs"
 SUMMARY_FILE="${OUTPUT_DIR}/phase2_verify_summary.txt"
@@ -116,13 +122,23 @@ fi
 
 if [[ "${VERIFY_LEVEL}" == "production" ]]; then
   if [[ "${SOAK_MINUTES}" == "0" ]]; then
-    SOAK_MINUTES="${PRODUCTION_SOAK_MINUTES}"
+    run_step production_soak \
+      env SDK_ROOT="${SDK_ROOT}" WEBRTC_PREFIX="${WEBRTC_PREFIX}" \
+        OUTPUT_DIR="${OUTPUT_DIR}/production_soak" \
+        SOAK_CYCLES="${SOAK_CYCLES}" SOAK_MINUTES=0 \
+        FRAMES_PER_CYCLE="${PRODUCTION_SMOKE_FRAMES}" \
+        WIDTH="${PRODUCTION_SMOKE_WIDTH}" HEIGHT="${PRODUCTION_SMOKE_HEIGHT}" \
+        CONTENT_MODES="${PRODUCTION_SMOKE_CONTENT_MODES}" \
+        SCENARIOS="${PRODUCTION_SMOKE_SCENARIOS}" \
+        SEEDS="${PRODUCTION_SMOKE_SEEDS}" \
+        "${SDK_ROOT}/scripts/run_webrtc_first_qoe_production_soak.sh"
+  else
+    run_step production_soak \
+      env SDK_ROOT="${SDK_ROOT}" WEBRTC_PREFIX="${WEBRTC_PREFIX}" \
+        OUTPUT_DIR="${OUTPUT_DIR}/production_soak" \
+        SOAK_CYCLES="${SOAK_CYCLES}" SOAK_MINUTES="${SOAK_MINUTES}" \
+        "${SDK_ROOT}/scripts/run_webrtc_first_qoe_production_soak.sh"
   fi
-  run_step production_soak \
-    env SDK_ROOT="${SDK_ROOT}" WEBRTC_PREFIX="${WEBRTC_PREFIX}" \
-      OUTPUT_DIR="${OUTPUT_DIR}/production_soak" \
-      SOAK_CYCLES="${SOAK_CYCLES}" SOAK_MINUTES="${SOAK_MINUTES}" \
-      "${SDK_ROOT}/scripts/run_webrtc_first_qoe_production_soak.sh"
 
   if [[ "${RUN_REAL_RENDERER}" == "auto" ]]; then
     RUN_REAL_RENDERER=1

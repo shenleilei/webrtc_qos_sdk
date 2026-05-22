@@ -110,8 +110,8 @@ production_renderer_drops="$(kv_value "${production_summary}" renderer_proxy_dro
 if [[ ! -f "${production_summary}" || ! -f "${production_config}" ]]; then
   if [[ -n "${EVIDENCE_BUNDLE_DIR}" ]]; then
     audit_fail production_soak "missing_in_bundle summary=${production_summary}"
-  elif [[ -f "${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production_smoke/production_soak/webrtc_first_qoe_production_soak_summary.txt" ]]; then
-    audit_fail production_soak "full_production_summary_missing only_short_smoke_found=${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production_smoke/production_soak"
+  elif [[ -f "${SDK_ROOT}/artifacts/webrtc_first_phase2_verify/production_soak/webrtc_first_qoe_production_soak_summary.txt" ]]; then
+    audit_fail production_soak "full_production_summary_missing only_short_smoke_found=${SDK_ROOT}/artifacts/webrtc_first_phase2_verify/production_soak"
   else
     audit_fail production_soak "missing summary=${production_summary}"
   fi

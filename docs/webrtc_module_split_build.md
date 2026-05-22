@@ -468,7 +468,7 @@ rm -f "$tmp"
 防回归：
 
 - `verify_cmake_package.sh` 覆盖 play 侧 NACK requester 到 server 本地重传的 runtime 验证。
-- `run_webrtc_first_facade_matrix.sh` 中 `burst_loss_recover`、`walking_dead_zone_recover` 要求触发 NACK/RTX。
+- `run_webrtc_first_facade_matrix.sh` 中 `burst_loss_recover`、`walking_dead_zone_recover` 要求触发 `NACK / retransmission`。
 
 ### 10.8 自研模块不能作为 fallback 保留
 

@@ -76,6 +76,9 @@ session.ids.session_id = 1;
 session.ids.stream_id = 1;
 session.ids.transport_id = 1;
 session.ids.sender_ssrc = 0x12345678;
+session.ids.receiver_id = 9;
+session.rtcp.receiver_feedback_ssrc = 0x90000009;  // optional
+session.rtcp.server_feedback_ssrc = 0x70000009;    // optional for server role
 
 webrtc_qos::VideoPushClientConfig config;
 config.session = session;
@@ -198,6 +201,13 @@ play->Process(now_us);
 - 完整 QoE 结论
 
 这些指标由上层 decode/QoE harness 计算，例如 `run_webrtc_first_ffmpeg_qoe.sh`。
+
+### 5.4 receiver_id 和 RTCP SSRC 不是一回事
+
+- `session.ids.receiver_id` 是业务路由身份，用来告诉 server “这是哪个下游 receiver 的反馈”。
+- `session.rtcp.receiver_feedback_ssrc` 是 play 侧发 `NACK / PLI` 时写进 RTCP packet 的 sender SSRC。
+- `session.rtcp.server_feedback_ssrc` 是 server 发 uplink `TWCC / RR` 时写进 RTCP packet 的 sender SSRC。
+- 这两个 RTCP SSRC 如果不显式配置，facade 会自动派生稳定值，并保证不直接等于业务 `receiver_id`。
 
 ## 6. Server 端集成
 

@@ -72,7 +72,7 @@ QoS 正不正确，通常不是靠单一场景能看出来的。
 - sender 能不能在弱网窗口里持续低发送
 - 恢复段能不能回升
 - server 的 rate cap 策略是不是按预期工作
-- NACK/RTX/PLI 链路是不是可观测
+- NACK/重传/PLI 链路是不是可观测
 
 ### 2.3 真实 H264 QoE
 
@@ -147,7 +147,7 @@ QoS 正不正确，通常不是靠单一场景能看出来的。
 
 作用：
 
-- 看短 burst loss 时，系统能不能靠 `NACK/RTX` 恢复，而不是无意义地降码率
+- 看短 burst loss 时，系统能不能靠 `NACK/重传` 恢复，而不是无意义地降码率
 
 这类场景不要求 sender 下探码率，因为它不是持续带宽问题。
 
@@ -187,7 +187,7 @@ QoS 正不正确，通常不是靠单一场景能看出来的。
 
 - 验证“弱网 + 实际下行丢包 + 本地/远端恢复链路”这条组合场景
 
-这里不只看码率/FPS，还看 `NACK/RTX` 是否真的发生。
+这里不只看码率/FPS，还看 `NACK/重传` 是否真的发生。
 
 ### 3.8 Multi-Receiver Worst Cap
 
@@ -266,7 +266,7 @@ QoS 正不正确，通常不是靠单一场景能看出来的。
 
 1. 弱网窗口里 sender 真的下探
 2. 恢复窗口里 sender 真的回升
-3. 丢包场景里 NACK/RTX/PLI 真的发生
+3. 丢包场景里 NACK/重传/PLI 真的发生
 4. 解码/播放结果仍然可接受
 5. 长流和多 seed 场景里结论可重复
 
@@ -328,7 +328,28 @@ QoS 正不正确，通常不是靠单一场景能看出来的。
 - 有 evidence bundle、archive、sha256 manifest
 - 有 completion audit，防止把 short smoke 当完成
 
-## 7. 推荐阅读顺序
+## 7. 当前测试仍不能证明什么
+
+当前 smoke / matrix / qoe 已经补上并验证了这些三期逻辑点：
+
+- sender 收到 NACK 后不会在 `OnTransportFeedback()` 调用栈里同步直发 RTP；重传会重新进入 WebRTC pacer，并由后续 `Process(now_us)` 出队。
+- RTCP SR 的 media packet/octet count 不再重复统计原 RTP 包重传。
+- play 侧 receiver feedback SSRC 和 server 侧 uplink feedback SSRC 已经和业务 `receiver_id` 显式拆开。
+- compound RTCP 中 unsupported block 的 drop 行为已经可观测，server 会累计 unsupported RTCP packet 计数。
+
+当前仍不能当成已经被测试完全证明的，主要只剩正式验收闭环：
+
+- `SOAK_MINUTES>=120` 的 production soak
+- 真实 renderer `pass`
+- 正式 `capture_library/manifest.csv`
+
+因此，当前测试结论更准确的表述应该是：
+
+- WebRTC-first 主路径已经可运行、可验证、可归档。
+- 主要弱网控制、恢复、RTCP 身份拆分和 compound RTCP drop 行为已经有证据。
+- 但正式验收边界仍有未完成项，详见 [Phase-3 逻辑正确性收敛计划](../webrtc_first_phase3_plan.md) 和 [Phase-2 主实施文档](../webrtc_first_phase2_master_plan.md)。
+
+## 8. 推荐阅读顺序
 
 如果你要完整理解这个项目，建议按下面顺序读：
 
@@ -337,3 +358,4 @@ QoS 正不正确，通常不是靠单一场景能看出来的。
 3. [推拉客户端 SDK 集成说明](sdk_push_play_integration.md)
 4. [WebRTC 子模块拆分编译说明](webrtc_module_split_build.md)
 5. [Phase-2 主实施文档](../webrtc_first_phase2_master_plan.md)
+6. [Phase-3 逻辑正确性收敛计划](../webrtc_first_phase3_plan.md)
