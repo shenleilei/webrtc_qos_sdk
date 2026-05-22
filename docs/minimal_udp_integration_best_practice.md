@@ -553,7 +553,64 @@ bundle 固定包含 `metadata.txt`、`build_config.txt`、`git_status.txt`、
 “第一条 warn/error 在哪个角色、哪个 track、哪个 receiver 出现”以及“弱网前后
 bitrate/FPS/NACK/retransmission 怎么变化”。
 
-## 8. 线程和时钟
+## 8. 错误码和运行契约
+
+最小 UDP 外围不要把 SDK 返回的 `Status` 当成普通 bool 丢弃。业务 summary 可以只打
+`operation + status_code + reason`，但完整上下文必须依赖 `RuntimeLogConfig` 写入角色
+日志文件。当前 public `StatusCode` 的集成语义如下：
+
+- `kInvalidArgument`：配置缺必需 callback、空 RTP/RTCP/AU、未知 track 或非法
+  `SessionConfig`。
+- `kUnsupported`：facade 尚未 `Start()` 就调用运行期方法，或收到当前不承诺处理的
+  RTCP 能力。
+- `kMalformedPacket`：RTP、RTCP 或 H264 Annex-B 解析失败。
+- `kQueueFull`：pacer、恢复队列或 history 达到容量；上层应丢当前帧/包并等待后续
+  `Process()` 恢复。
+- `kInternalError`：业务 `TransportOutput`、decoded AU callback 或 SDK 内部不可恢复
+  构包路径失败。
+
+主要 public method 的错误边界：
+
+| API | 主要非 OK 返回 | 最小处理方式 |
+| --- | --- | --- |
+| `VideoPushClient::Start()` | `kInvalidArgument` | 修正 config 后重建 facade。 |
+| `VideoPushClient::Process()` | `kUnsupported`、`kInternalError` | before-start 属集成错误；transport failure 要记录并按业务网络策略重试或重连。 |
+| `VideoPushClient::PushAnnexBAccessUnit()` | `kUnsupported`、`kInvalidArgument`、`kMalformedPacket`、`kQueueFull` | 单个 malformed/queue full 不要杀进程，记录并等待下一帧；持续发生再触发业务告警。 |
+| `VideoPushClient::OnTransportFeedback()` | `kInvalidArgument`、`kMalformedPacket` | drop 当前 RTCP，并依赖后续反馈恢复。 |
+| `VideoPlayClient::Start()` | `kInvalidArgument` | 修正 config 后重建 facade。 |
+| `VideoPlayClient::Process()` | `kUnsupported`、`kInternalError` | before-start 属集成错误；RTCP 输出失败按业务网络策略处理。 |
+| `VideoPlayClient::OnRtpPacket()` | `kUnsupported`、`kInvalidArgument`、`kMalformedPacket`、`kInternalError` | malformed 单包丢弃；decoded AU callback 失败要作为媒体输出故障处理。 |
+| `VideoPlayClient::OnRtcpPacket()` | `kInvalidArgument`、`kMalformedPacket` | drop 当前 RTCP。 |
+| `ServerQosRouter::Start()` | `kInvalidArgument` | 修正 sender/receiver output 后重建 router。 |
+| `ServerQosRouter::OnSenderRtp()` | `kUnsupported`、`kMalformedPacket`、`kInternalError` | malformed 单包丢弃；receiver output failure 要进入网络/relay 故障处理。 |
+| `ServerQosRouter::OnSenderRtcp()` | `kUnsupported`、`kInvalidArgument`、`kMalformedPacket`、`kInternalError` | unsupported RTCP 默认 drop；output failure 按 relay 故障处理。 |
+| `ServerQosRouter::OnReceiverRtcp()` | `kUnsupported`、`kInvalidArgument`、`kMalformedPacket`、`kInternalError` | NACK/PLI 可触发本地重传或转发；output failure 按 relay 故障处理。 |
+| `ServerQosRouter::OnDownlinkQuality()` | `kOk` | 当前只更新状态、写 metrics/alerts，不应失败。 |
+
+日志和告警契约：
+
+- 所有 warn/error 日志都带 `status_code`、`reason` 和
+  `session_id/stream_id/transport_id/source_id/track_id/sender_ssrc/receiver_id`。
+- malformed H264/RTP、transport output failure、server receiver output failure 和
+  decode output failure 会写 alerts，规则名分别是 `malformed_h264`、
+  `malformed_rtp`、`transport_output_failed`、`receiver_output_failed`、
+  `decode_output_failed`。
+- 日志和 alerts 不写媒体 payload，也不写 RTP/RTCP/AU 原始 bytes。
+- stdout/stderr 只适合打印人工 summary；生产排障以 JSONL 日志、metrics、alerts 和
+  debug bundle 为准。
+
+门禁：
+
+```bash
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_error_contract.sh
+```
+
+该脚本会先安装当前 SDK，再从安装 prefix 构建外部 CMake fixture，覆盖 config error、
+before-start、malformed packet、transport failure、relay output failure 和 decode
+output failure，并验证返回 `StatusCode`、日志事件和 alerts 规则一致。
+
+## 9. 线程和时钟
 
 推荐线程模型：
 
@@ -570,7 +627,7 @@ bitrate/FPS/NACK/retransmission 怎么变化”。
 - 低 FPS、弱网、暂停采集期间也要继续调用 `Process(now_us)`。
 - RTP/RTCP receive time 用收到 UDP datagram 的本地单调时间。
 
-## 9. 安全和网络边界
+## 10. 安全和网络边界
 
 最小 UDP 方式适用于本机、内网、专线、可信 C/S 网络或业务已有安全隧道的场景。
 当前 SDK 不提供完整 WebRTC 的这些能力：
@@ -585,7 +642,7 @@ bitrate/FPS/NACK/retransmission 怎么变化”。
 QUIC、DTLS、VPN、专线加密、访问控制和重放保护。无论底层是 UDP、QUIC 还是业务
 自定义传输，SDK facade 看到的仍然只是 RTP/RTCP opaque bytes。
 
-## 10. 最小验证方式
+## 11. 最小验证方式
 
 本仓库内最接近业务最小集成的参考是 UDP 三角色 demo：
 
@@ -626,6 +683,8 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_metrics.sh
 PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_alerts.sh
+PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
+  scripts/verify_phase5_error_contract.sh
 OUTPUT_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
   scripts/collect_phase5_debug_bundle.sh
 BUNDLE_DIR=/tmp/webrtc_qos_phase5_debug_bundle \
@@ -634,7 +693,7 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
   scripts/verify_phase5_minimal_udp_external_app.sh
 ```
 
-## 11. 集成检查清单
+## 12. 集成检查清单
 
 - sender/server/receiver 使用同一份 `SessionConfig`。
 - 所有 track 都来自 `SessionConfig.video_tracks`。
@@ -651,10 +710,11 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 - sender/server/receiver 显式配置 metrics 文件，能看到弱网下探、恢复和恢复事件。
 - sender/server/receiver 显式配置 alerts 文件，能看到弱网、恢复、malformed、
   transport failure 和 decode failure 告警。
+- 所有 SDK `Status` 失败都打印 `status_code` 和 `reason`，完整上下文写入角色日志文件。
 - 每次问题复现都收集 debug bundle，并用 `manifest.sha256` 做离线完整性校验。
 - 业务没有直接依赖 WebRTC 内部头、`PeerConnection`、ICE、DTLS 或 SRTP。
 
-## 12. 参考文档
+## 13. 参考文档
 
 - [推拉客户端 SDK 集成说明](sdk_push_play_integration.md)
 - [WebRTC 边界声明](webrtc_boundary_statement.md)

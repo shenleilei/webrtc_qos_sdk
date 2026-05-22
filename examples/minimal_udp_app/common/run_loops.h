@@ -43,12 +43,32 @@ struct SampleMetrics {
   uint32_t final_fps = 0;
 };
 
+inline const char* StatusCodeName(webrtc_qos::StatusCode code) {
+  switch (code) {
+    case webrtc_qos::StatusCode::kOk:
+      return "ok";
+    case webrtc_qos::StatusCode::kInvalidArgument:
+      return "invalid_argument";
+    case webrtc_qos::StatusCode::kUnsupported:
+      return "unsupported";
+    case webrtc_qos::StatusCode::kMalformedPacket:
+      return "malformed_packet";
+    case webrtc_qos::StatusCode::kQueueFull:
+      return "queue_full";
+    case webrtc_qos::StatusCode::kInternalError:
+      return "internal_error";
+  }
+  return "unknown";
+}
+
 inline void RequireStatus(const webrtc_qos::Status& status,
                           const char* operation) {
   if (status) {
     return;
   }
-  std::cerr << operation << " failed: " << status.message << "\n";
+  std::cerr << operation << " failed: code="
+            << StatusCodeName(status.code) << " reason=" << status.message
+            << " full_error=role_log_when_log_dir_is_enabled\n";
   std::exit(2);
 }
 

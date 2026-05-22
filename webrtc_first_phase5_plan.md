@@ -793,12 +793,16 @@ push/server/play 日志、metrics 和 alerts 文件。
 业务集成时需要知道错误是参数问题、packet malformed、queue full、transport output
 失败还是内部状态错误。当前 `StatusCode` 已有基础枚举，但使用和文档还不够系统。
 
+当前已补齐文档和门禁：`docs/minimal_udp_integration_best_practice.md` 已列出
+public method 的主要错误条件，`scripts/verify_phase5_error_contract.sh` 会从安装
+prefix 构建外部 CMake fixture，验证错误返回、日志事件和 alerts 规则一致。
+
 #### 设计方案
 
 把 role facade 的错误契约文档化并补门禁：
 
 - `kInvalidArgument`：空指针、size=0、未知 track、非法 config。
-- `kUnsupported`：当前 RTCP block 或能力不支持。
+- `kUnsupported`：before-start 调用、当前 RTCP block 或能力不支持。
 - `kMalformedPacket`：RTP/RTCP/H264 payload 解析失败。
 - `kQueueFull`：pacer/jitter/packet history 达到容量。
 - `kInternalError`：transport output 失败或不可恢复内部错误。
@@ -810,11 +814,22 @@ push/server/play 日志、metrics 和 alerts 文件。
 - config 错误必须在 `Start()` 或工厂创建阶段尽早失败。
 - 所有 warn/error 都应写日志文件，并带 status code。
 
+当前错误契约门禁覆盖：
+
+- push/play/server `Start()` 缺必需 callback 返回 `kInvalidArgument` 并写
+  `start_failed`。
+- push/play/server before-start 调用返回 `kUnsupported` 并写对应 warn 日志。
+- malformed H264/RTP 返回 `kMalformedPacket`，写 warn 日志和 malformed alerts。
+- push transport output failure、server receiver output failure、play decoded AU
+  output failure 返回 `kInternalError`，写 error 日志和 availability/media alerts。
+- 日志和 alerts 均包含统一身份字段和 `status_code/reason`，不包含媒体 payload
+  bytes。
+
 #### 验收标准
 
-- 新增错误路径 runtime smoke。
+- `scripts/verify_phase5_error_contract.sh` 通过。
 - 文档列出每个 public method 的主要错误条件。
-- demo 遇到错误会打印 summary，同时把完整错误写入日志文件。
+- demo 遇到错误会打印 `status_code/reason` summary，同时把完整错误写入日志文件。
 
 ### 4.8 P1：发布包与兼容性
 
@@ -1003,7 +1018,20 @@ scripts/verify_phase5_alerts.sh
 - transport output failure 触发 availability alert。
 - malformed packet 触发 warn/error 日志和 alert。
 
-### 6.4 Debug bundle 门禁
+### 6.4 错误契约门禁
+
+```bash
+scripts/verify_phase5_error_contract.sh
+```
+
+覆盖：
+
+- 外部安装包 consumer 只通过 public headers 和 `role_*` target 触发错误路径。
+- config error、before-start、malformed packet、transport failure、relay failure、
+  decode output failure 返回稳定 `StatusCode`。
+- 对应 warn/error 日志和 alerts 规则落盘，并带统一身份字段。
+
+### 6.5 Debug bundle 门禁
 
 ```bash
 scripts/verify_phase5_debug_bundle.sh
@@ -1015,7 +1043,7 @@ scripts/verify_phase5_debug_bundle.sh
 - manifest sha256 校验通过。
 - bundle 不包含原始媒体 payload。
 
-### 6.5 External sample 门禁
+### 6.6 External sample 门禁
 
 ```bash
 scripts/verify_phase5_minimal_udp_external_app.sh
@@ -1030,7 +1058,7 @@ scripts/verify_phase5_minimal_udp_external_app.sh
 - no PeerConnection / no SDK src include。
 - 日志和 metrics 进入 output dir。
 
-### 6.6 生产验收门禁
+### 6.7 生产验收门禁
 
 继续使用：
 
