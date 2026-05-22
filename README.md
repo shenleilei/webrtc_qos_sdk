@@ -5,6 +5,7 @@
 ## 文档导航
 
 - [WebRTC QoS 总览与 SDK 设计说明](docs/webrtc_qos_overview.md)
+- [WebRTC 边界声明](docs/webrtc_boundary_statement.md)
 - [QoS 测试与验证方法](docs/qos_test_validation_methodology.md)
 - [推拉客户端 SDK 集成说明](docs/sdk_push_play_integration.md)
 - [WebRTC 子模块拆分编译说明](docs/webrtc_module_split_build.md)
@@ -21,7 +22,8 @@
 - 已保留 `transport_packet_history`：只保存 opaque RTP bytes，供 sender/server 在 WebRTC NACK 路由后按 `hop_id/ssrc/rtp_sequence_number` 找原包重传；它不解析 RTCP、不生成 NACK、不做恢复策略。
 - 已提供 WebRTC-backed `CreateVideoPushClient()` / `CreateVideoPlayClient()` / `CreateServerQosRouter()` 默认实现。push/play 使用 WebRTC H264 RTP、RTP packet、pacing、GoogCC、NackRequester 和 video jitter adapters；server 使用 WebRTC RTP/RTCP adapters 和 `transport_packet_history` 做 relay、uplink TWCC 生成、SR/RR RTT、NACK 本地重传、PLI/NACK 路由。
 - WebRTC adapter patch 已纳入 `third_party/webrtc_patches/webrtc_qos_sdk.patch`，不再依赖 `/root/src` 里的不可见本地改动。
-- 当前工作区还包含 Phase-4A 的第一条实现切片：`SessionConfig.video_tracks`、`source_id / track_id / sender_ssrc`、per-track snapshot/adaptation 查询，以及 shared `GoogCC / pacer` 下的多 track / 多 SSRC 主路径。它已经通过 `verify_webrtc_first_multitrack.sh`、`verify_webrtc_first_roles.sh` 和 Phase-2 smoke/qoe/production 短时门禁；但多 receiver fanout support 层仍未进入当前实现。
+- 当前工作区已经包含默认 multi-track / multi-SSRC 能力基线：`SessionConfig.video_tracks`、`source_id / track_id / sender_ssrc`、per-track snapshot/adaptation 查询，以及 shared `GoogCC / pacer` 下的多 track / 多 SSRC 主路径。它已经通过 `verify_webrtc_first_multitrack.sh`、`verify_webrtc_first_roles.sh` 和 Phase-2 smoke/qoe/production 短时门禁；但多 receiver fanout support 层仍未进入当前实现。
+- 当前默认门禁里还增加了 `run_webrtc_first_multitrack_matrix.sh`，用于验证双 track 下的 shared source cap 分配、track 级 `PLI/NACK/retransmission` 隔离，以及 per-track 输出身份。
 
 当前可打包的 WebRTC 模块：
 
@@ -165,11 +167,11 @@ PREFIX=/root/output SDK_ROOT=/root/webrtc_qos_sdk \
 - play 侧 `Process(now_us)` 会推进 NackRequester 的无包窗口重试
 - server 对部分命中 NACK 会本地重传命中包，并只把 miss 的 packet ids 转发给 sender
 
-`verify_webrtc_first_roles.sh` 会继续调用 `verify_no_selfmade_media_stack.sh` 和 `verify_webrtc_first_loopback.sh`，确认旧自研媒体栈没有回到 public API、CMake 或发布包，并确认基础 WebRTC-first media bytes 链路可外部消费。它也会构建 `webrtc_qos_webrtc_first_udp_demo`，跑 UDP selftest，并 smoke 检查独立 `sender/server/receiver` 三个角色入口都使用 `backend=webrtc_first_facade transport=udp peer_connection=false`。
+`verify_webrtc_first_roles.sh` 会继续调用 `verify_no_selfmade_media_stack.sh`、`verify_webrtc_first_loopback.sh`、`verify_webrtc_first_multitrack.sh` 和 `run_webrtc_first_multitrack_matrix.sh`，确认旧自研媒体栈没有回到 public API、CMake 或发布包，基础 WebRTC-first bytes 链路可外部消费，并且当前默认 multi-track 能力在双 track 情况下满足 shared source cap 分配、feedback isolation 和 per-track 身份输出。它也会构建 `webrtc_qos_webrtc_first_udp_demo`，跑 UDP selftest，并 smoke 检查独立 `sender/server/receiver` 三个角色入口都使用 `backend=webrtc_first_facade transport=udp peer_connection=false`。
 
 ## WebRTC-first Demo
 
-已新增仓库内 demo：`webrtc_qos_webrtc_first_loopback_demo`。当前默认 source build 就会构建它；如果显式关闭 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE`，该 demo 会随 facade 一起关闭。它直接使用 `VideoPushClient / ServerQosRouter / VideoPlayClient` 三个 role facade，不直接 include WebRTC adapter，也不使用旧自研 RTP/RTCP/pacer/video jitter 入口。
+已新增仓库内 demo：`webrtc_qos_webrtc_first_loopback_demo`。当前默认 source build 就会构建它；如果显式关闭 `WEBRTC_QOS_ENABLE_WEBRTC_FACADE`，该 demo 会随 facade 一起关闭。它直接使用 `VideoPushClient / ServerQosRouter / VideoPlayClient` 三个 role facade，不直接 include WebRTC adapter，也不使用旧自研 RTP/RTCP/pacer/video jitter 入口。当前默认会同时覆盖 `single_track` 和 `dual_track` 两组场景。
 
 构建和运行：
 
@@ -187,15 +189,19 @@ cmake --build build-webrtc-first \
 
 ```text
 backend=webrtc_first_facade transport=custom_bytes peer_connection=false
-good_static pushed=36 decoded=36 playable_ratio=1 dropped=0 receiver_rtcp=0 retransmission=0 bad_send_rps=0 recovery_send_rps=0 min_bad_target=0 max_recovery_target=0 min_bad_fps=0 max_recovery_fps=0 final_target=1207178 final_fps=30 pass=true
-walking_dead_zone_recover pushed=30 decoded=30 playable_ratio=1 dropped=12 receiver_rtcp=1 retransmission=12 bad_send_rps=12 recovery_send_rps=30 min_bad_target=600000 max_recovery_target=1207178 min_bad_fps=10 max_recovery_fps=30 final_target=1207178 final_fps=30 pass=true
+track_profile=single_track tracks=1
+good_static_single_track ... pass=true
+walking_dead_zone_recover_single_track ... pass=true
+track_profile=dual_track tracks=2
+good_static_dual_track ... pass=true
+walking_dead_zone_recover_dual_track ... pass=true
 ```
 
 这个 demo 的意义是补齐 Phase-2 的独立可运行入口：业务传输仍只是搬运 bytes，server 只做最小 relay/QoS router，弱网场景能触发 `NACK / retransmission`、rate cap 下探和恢复回升，并明确不创建 `PeerConnection`。
 
 当前日志里的 `retransmission` 表示 `NACK + 原 RTP 包重传`，不是 RFC4588 RTX。
 
-同时新增仓库内 UDP role demo：`webrtc_qos_webrtc_first_udp_demo`。它保留自动化 `selftest`，并提供独立 `sender/server/receiver` 三个进程模式，便于手工验证自定义 UDP transport 下的 WebRTC-first facade bytes 边界。
+同时新增仓库内 UDP role demo：`webrtc_qos_webrtc_first_udp_demo`。它保留自动化 `selftest`，并提供独立 `sender/server/receiver` 三个进程模式，便于手工验证自定义 UDP transport 下的 WebRTC-first facade bytes 边界。当前默认 `selftest` 会同时覆盖 `single_track` 和 `dual_track` 两组场景，并输出总体 `udp_selftest profiles=single_track,dual_track pass=...` 结果。
 
 ```bash
 cmake --build build-webrtc-first \
@@ -213,7 +219,7 @@ cmake --build build-webrtc-first \
   sender 50001 127.0.0.1:50000 90
 ```
 
-`selftest` 最新本地输出显示 `transport=udp` 且 `peer_connection=false`，弱网段降到 `600000bps / 10fps`，恢复段回到 `1207178bps / 30fps`，并触发 receiver RTCP、NACK 和 server 本地重传。独立角色 smoke 输出分别为 `udp_sender`、`udp_server`、`udp_receiver`，用于确认 demo 不再只有单进程入口。
+`selftest` 最新本地输出显示 `transport=udp` 且 `peer_connection=false`，默认会依次输出 `udp_selftest_single_track`、`udp_selftest_dual_track` 和总体 `udp_selftest profiles=single_track,dual_track pass=true`；双轨场景下坏网阶段允许 shared source cap 把 `min_bad_fps` 拉到 `15`，同时仍要求弱网下探、恢复回升和 `NACK / retransmission` 链路成立。独立角色 smoke 输出分别为 `udp_sender`、`udp_server`、`udp_receiver`，用于确认 demo 不再只有单进程入口。
 
 ## CMake 集成
 
@@ -245,7 +251,7 @@ WebRtcQosSdk::role_server_bundle
 
 这几个 bundle 会把当前角色实际用到的 SDK 静态库和 WebRTC 子模块 archive 合并成单个 `.a` 文件；外部工程仍只需要再补系统库依赖（`Threads::Threads`、`dl`、`rt`、`atomic`）。
 
-如果你要接入当前 Phase-4A 的第一条多 track 切片，发送端和接收端已经支持：
+如果你要接入当前默认 multi-track 能力，发送端和接收端已经支持：
 
 - `SessionConfig.video_tracks`
 - `AnnexBAccessUnitView.ids.{source_id,track_id,sender_ssrc}`

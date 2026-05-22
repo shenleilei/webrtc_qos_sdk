@@ -339,17 +339,46 @@ std::string EndpointToString(const sockaddr_in& addr) {
          std::to_string(ntohs(addr.sin_port));
 }
 
-webrtc_qos::SessionConfig MakeDefaultSession(const char* debug_name) {
+void AppendTrack(webrtc_qos::SessionConfig* session,
+                 uint32_t track_id,
+                 uint32_t sender_ssrc,
+                 bool base_track,
+                 uint32_t weight) {
+  webrtc_qos::VideoTrackConfig track;
+  track.ids = session->ids;
+  track.ids.track_id = track_id;
+  track.ids.sender_ssrc = sender_ssrc;
+  track.base_track = base_track;
+  track.weight = weight;
+  session->video_tracks.push_back(track);
+}
+
+webrtc_qos::SessionConfig MakeBaseSession(const char* debug_name) {
   webrtc_qos::SessionConfig session;
   session.ids.session_id = 1;
   session.ids.stream_id = 1;
   session.ids.transport_id = 1;
-  session.ids.sender_ssrc = 0x12345678;
   session.ids.receiver_id = 0x2222;
+  session.ids.source_id = session.ids.stream_id;
   session.start_bitrate_bps = 1200000;
   session.min_bitrate_bps = 300000;
   session.max_bitrate_bps = 2500000;
   session.debug_name = debug_name;
+  return session;
+}
+
+webrtc_qos::SessionConfig MakeSingleTrackSession(const char* debug_name) {
+  webrtc_qos::SessionConfig session = MakeBaseSession(debug_name);
+  AppendTrack(&session, 101, 0x12345678u, true, 100);
+  session.ids.sender_ssrc = session.video_tracks.front().ids.sender_ssrc;
+  return session;
+}
+
+webrtc_qos::SessionConfig MakeDualTrackSession(const char* debug_name) {
+  webrtc_qos::SessionConfig session = MakeBaseSession(debug_name);
+  AppendTrack(&session, 101, 0x12345678u, true, 70);
+  AppendTrack(&session, 202, 0x13355779u, false, 30);
+  session.ids.sender_ssrc = session.video_tracks.front().ids.sender_ssrc;
   return session;
 }
 
@@ -446,17 +475,19 @@ bool SendSenderRateCap(UdpEndpoint* endpoint,
   return endpoint->SendTo(sender_addr, EncodeWirePacket(wire));
 }
 
-bool CheckMetrics(const Metrics& metrics) {
+bool CheckMetrics(const Metrics& metrics, size_t track_total) {
   const double playable_ratio =
       metrics.pushed_frames == 0
           ? 0.0
           : static_cast<double>(metrics.decoded_frames) /
                 metrics.pushed_frames;
+  const uint32_t max_bad_fps = track_total > 1 ? 15u : 10u;
   return playable_ratio >= 0.85 && metrics.sender_rtp > 0 &&
          metrics.sender_rtcp > 0 && metrics.receiver_rtcp > 0 &&
          metrics.sender_rate_caps > 0 && metrics.downlink_dropped > 0 &&
          metrics.retransmissions > 0 && metrics.min_bad_target_bps > 0 &&
-         metrics.min_bad_target_bps <= 600000 && metrics.min_bad_fps <= 10 &&
+         metrics.min_bad_target_bps <= 600000 &&
+         metrics.min_bad_fps <= max_bad_fps &&
          TickRate(metrics.bad_pushed_frames, metrics.bad_ticks) <= 15.0 &&
          metrics.max_recovery_target_bps >= 1000000 &&
          metrics.max_recovery_fps >= 25 &&
@@ -475,7 +506,7 @@ int RunUdpSender(uint16_t local_port,
 
   Metrics metrics;
   const webrtc_qos::SessionConfig session =
-      MakeDefaultSession("webrtc_first_udp_sender");
+      MakeSingleTrackSession("webrtc_first_udp_sender");
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
   push_config.transport_output =
@@ -547,6 +578,7 @@ int RunUdpSender(uint16_t local_port,
     view.size = au.size();
     view.capture_time_us = now_us;
     view.keyframe = true;
+    view.ids = session.video_tracks.front().ids;
     RequireStatus(push->PushAnnexBAccessUnit(view), "sender push AU");
     ++metrics.pushed_frames;
     RequireStatus(push->Process(now_us + 1000), "sender process after AU");
@@ -563,6 +595,7 @@ int RunUdpSender(uint16_t local_port,
   std::cout << "udp_sender backend=webrtc_first_facade"
             << " transport=udp"
             << " peer_connection=false"
+            << " tracks=" << session.video_tracks.size()
             << " local=" << EndpointToString(udp.local_addr())
             << " server=" << EndpointToString(server_addr)
             << " pushed=" << metrics.pushed_frames
@@ -587,7 +620,7 @@ int RunUdpServer(uint16_t local_port,
 
   Metrics metrics;
   const webrtc_qos::SessionConfig session =
-      MakeDefaultSession("webrtc_first_udp_server");
+      MakeSingleTrackSession("webrtc_first_udp_server");
   webrtc_qos::ServerQosRouterConfig server_config;
   server_config.session = session;
   server_config.sender_output =
@@ -665,6 +698,7 @@ int RunUdpServer(uint16_t local_port,
   std::cout << "udp_server backend=webrtc_first_facade"
             << " transport=udp"
             << " peer_connection=false"
+            << " tracks=" << session.video_tracks.size()
             << " local=" << EndpointToString(udp.local_addr())
             << " sender=" << EndpointToString(sender_addr)
             << " receiver=" << EndpointToString(receiver_addr)
@@ -688,7 +722,7 @@ int RunUdpReceiver(uint16_t local_port,
 
   Metrics metrics;
   const webrtc_qos::SessionConfig session =
-      MakeDefaultSession("webrtc_first_udp_receiver");
+      MakeSingleTrackSession("webrtc_first_udp_receiver");
   webrtc_qos::VideoPlayClientConfig play_config;
   play_config.session = session;
   play_config.transport_output =
@@ -765,6 +799,7 @@ int RunUdpReceiver(uint16_t local_port,
   std::cout << "udp_receiver backend=webrtc_first_facade"
             << " transport=udp"
             << " peer_connection=false"
+            << " tracks=" << session.video_tracks.size()
             << " local=" << EndpointToString(udp.local_addr())
             << " server=" << EndpointToString(server_addr)
             << " decoded=" << metrics.decoded_frames
@@ -775,7 +810,9 @@ int RunUdpReceiver(uint16_t local_port,
   return 0;
 }
 
-int RunUdpSelftest(int frames) {
+int RunUdpSelftestProfile(const webrtc_qos::SessionConfig& session,
+                          const char* label,
+                          int frames) {
   UdpEndpoint sender_udp;
   UdpEndpoint server_udp;
   UdpEndpoint receiver_udp;
@@ -785,16 +822,6 @@ int RunUdpSelftest(int frames) {
   }
 
   Metrics metrics;
-  webrtc_qos::SessionConfig session;
-  session.ids.session_id = 1;
-  session.ids.stream_id = 1;
-  session.ids.transport_id = 1;
-  session.ids.sender_ssrc = 0x12345678;
-  session.ids.receiver_id = 0x2222;
-  session.start_bitrate_bps = 1200000;
-  session.min_bitrate_bps = 300000;
-  session.max_bitrate_bps = 2500000;
-  session.debug_name = "webrtc_first_udp_selftest";
 
   webrtc_qos::VideoPushClientConfig push_config;
   push_config.session = session;
@@ -1046,6 +1073,7 @@ int RunUdpSelftest(int frames) {
     view.size = au.size();
     view.capture_time_us = now_us;
     view.keyframe = true;
+    view.ids = session.video_tracks.front().ids;
     RequireStatus(push->PushAnnexBAccessUnit(view), "push UDP AU");
     ++metrics.pushed_frames;
     RequireStatus(push->Process(now_us + 1000), "push process after AU");
@@ -1074,10 +1102,12 @@ int RunUdpSelftest(int frames) {
           ? 0.0
           : static_cast<double>(metrics.decoded_frames) /
                 metrics.pushed_frames;
-  const bool pass = CheckMetrics(metrics);
-  std::cout << "udp_selftest backend=webrtc_first_facade"
+  const bool pass = CheckMetrics(metrics, session.video_tracks.size());
+  std::cout << "udp_selftest_" << label
+            << " backend=webrtc_first_facade"
             << " transport=udp"
             << " peer_connection=false"
+            << " tracks=" << session.video_tracks.size()
             << " sender_port=" << sender_udp.port()
             << " server_port=" << server_udp.port()
             << " receiver_port=" << receiver_udp.port()
@@ -1101,6 +1131,27 @@ int RunUdpSelftest(int frames) {
             << " max_recovery_fps=" << metrics.max_recovery_fps
             << " final_target=" << metrics.final_target_bps
             << " final_fps=" << metrics.final_fps
+            << " pass=" << (pass ? "true" : "false")
+            << "\n";
+  return pass ? 0 : 1;
+}
+
+int RunUdpSelftest(int frames) {
+  const auto single_track_session =
+      MakeSingleTrackSession("webrtc_first_udp_selftest_single_track");
+  const auto dual_track_session =
+      MakeDualTrackSession("webrtc_first_udp_selftest_dual_track");
+
+  const int single_status =
+      RunUdpSelftestProfile(single_track_session, "single_track", frames);
+  const int dual_status =
+      RunUdpSelftestProfile(dual_track_session, "dual_track", frames);
+
+  const bool pass = single_status == 0 && dual_status == 0;
+  std::cout << "udp_selftest backend=webrtc_first_facade"
+            << " transport=udp"
+            << " peer_connection=false"
+            << " profiles=single_track,dual_track"
             << " pass=" << (pass ? "true" : "false")
             << "\n";
   return pass ? 0 : 1;

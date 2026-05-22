@@ -51,6 +51,25 @@ struct Scenario {
   bool drop_downlink_in_bad_window = false;
 };
 
+struct TrackProfile {
+  std::string label;
+  webrtc_qos::SessionConfig session;
+};
+
+void AppendTrack(webrtc_qos::SessionConfig* session,
+                 uint32_t track_id,
+                 uint32_t sender_ssrc,
+                 bool base_track,
+                 uint32_t weight) {
+  webrtc_qos::VideoTrackConfig track;
+  track.ids = session->ids;
+  track.ids.track_id = track_id;
+  track.ids.sender_ssrc = sender_ssrc;
+  track.base_track = base_track;
+  track.weight = weight;
+  session->video_tracks.push_back(track);
+}
+
 Packet CopyPacket(const webrtc_qos::TransportPacketView& view) {
   Packet packet;
   packet.kind = view.metadata.kind;
@@ -115,20 +134,41 @@ int FpsInterval(uint32_t fps) {
   return fps >= 10 ? 3 : 6;
 }
 
-Metrics RunScenario(const Scenario& scenario) {
+TrackProfile MakeBaseTrackProfile(const char* label) {
+  TrackProfile profile;
+  profile.label = label;
+  profile.session.ids.session_id = 1;
+  profile.session.ids.stream_id = 1;
+  profile.session.ids.transport_id = 1;
+  profile.session.ids.receiver_id = 0x2222;
+  profile.session.ids.source_id = profile.session.ids.stream_id;
+  profile.session.start_bitrate_bps = 1200000;
+  profile.session.min_bitrate_bps = 300000;
+  profile.session.max_bitrate_bps = 2500000;
+  profile.session.debug_name = label;
+  return profile;
+}
+
+TrackProfile MakeSingleTrackProfile() {
+  TrackProfile profile = MakeBaseTrackProfile("single_track");
+  AppendTrack(&profile.session, 101, 0x12345678u, true, 100);
+  profile.session.ids.sender_ssrc = profile.session.video_tracks.front().ids.sender_ssrc;
+  return profile;
+}
+
+TrackProfile MakeDualTrackProfile() {
+  TrackProfile profile = MakeBaseTrackProfile("dual_track");
+  AppendTrack(&profile.session, 101, 0x12345678u, true, 70);
+  AppendTrack(&profile.session, 202, 0x13355779u, false, 30);
+  profile.session.ids.sender_ssrc = profile.session.video_tracks.front().ids.sender_ssrc;
+  return profile;
+}
+
+Metrics RunScenario(const TrackProfile& profile, const Scenario& scenario) {
   Metrics metrics;
   metrics.ticks = scenario.frames;
-
-  webrtc_qos::SessionConfig session;
-  session.ids.session_id = 1;
-  session.ids.stream_id = 1;
-  session.ids.transport_id = 1;
-  session.ids.sender_ssrc = 0x12345678;
-  session.ids.receiver_id = 0x2222;
-  session.start_bitrate_bps = 1200000;
-  session.min_bitrate_bps = 300000;
-  session.max_bitrate_bps = 2500000;
-  session.debug_name = scenario.name;
+  webrtc_qos::SessionConfig session = profile.session;
+  session.debug_name = scenario.name + "_" + profile.label;
 
   std::vector<Packet> push_output;
   std::vector<Packet> play_output;
@@ -338,6 +378,9 @@ Metrics RunScenario(const Scenario& scenario) {
     view.size = au.size();
     view.capture_time_us = now_us;
     view.keyframe = true;
+    if (!session.video_tracks.empty()) {
+      view.ids = session.video_tracks.front().ids;
+    }
     RequireStatus(push->PushAnnexBAccessUnit(view), "push AU");
     ++metrics.pushed_frames;
 
@@ -369,7 +412,9 @@ Metrics RunScenario(const Scenario& scenario) {
   return metrics;
 }
 
-bool CheckScenario(const Scenario& scenario, const Metrics& metrics) {
+bool CheckScenario(const Scenario& scenario,
+                   const Metrics& metrics,
+                   size_t track_total) {
   const double playable_ratio =
       metrics.pushed_frames == 0
           ? 0.0
@@ -386,14 +431,18 @@ bool CheckScenario(const Scenario& scenario, const Metrics& metrics) {
       TickRate(metrics.bad_pushed_frames, metrics.bad_ticks);
   const double recovery_send_rps =
       TickRate(metrics.recovery_pushed_frames, metrics.recovery_ticks);
+  const uint32_t max_bad_fps = track_total > 1 ? 15u : 10u;
   return metrics.downlink_dropped > 0 && metrics.receiver_rtcp > 0 &&
          metrics.retransmissions > 0 && metrics.min_bad_target_bps > 0 &&
-         metrics.min_bad_target_bps <= 600000 && metrics.min_bad_fps <= 10 &&
+         metrics.min_bad_target_bps <= 600000 &&
+         metrics.min_bad_fps <= max_bad_fps &&
          bad_send_rps <= 15.0 && metrics.max_recovery_target_bps >= 1000000 &&
          metrics.max_recovery_fps >= 25 && recovery_send_rps >= 25.0;
 }
 
-void PrintScenario(const Scenario& scenario, const Metrics& metrics) {
+void PrintScenario(const Scenario& scenario,
+                   const Metrics& metrics,
+                   size_t track_total) {
   const double playable_ratio =
       metrics.pushed_frames == 0
           ? 0.0
@@ -416,8 +465,9 @@ void PrintScenario(const Scenario& scenario, const Metrics& metrics) {
             << " max_recovery_fps=" << metrics.max_recovery_fps
             << " final_target=" << metrics.final_target_bps
             << " final_fps=" << metrics.final_fps
-            << " pass=" << (CheckScenario(scenario, metrics) ? "true"
-                                                              : "false")
+            << " pass=" << (CheckScenario(scenario, metrics, track_total)
+                                ? "true"
+                                : "false")
             << "\n";
 }
 
@@ -431,15 +481,28 @@ int main(int argc, char** argv) {
                true, true},
   };
 
+  const std::vector<TrackProfile> profiles = {
+      MakeSingleTrackProfile(),
+      MakeDualTrackProfile(),
+  };
+
   bool ok = true;
   std::cout << "backend=webrtc_first_facade"
             << " transport=custom_bytes"
             << " peer_connection=false"
             << "\n";
-  for (const auto& scenario : scenarios) {
-    const Metrics metrics = RunScenario(scenario);
-    PrintScenario(scenario, metrics);
-    ok = CheckScenario(scenario, metrics) && ok;
+  for (const auto& profile : profiles) {
+    std::cout << "track_profile=" << profile.label
+              << " tracks=" << profile.session.video_tracks.size() << "\n";
+    for (const auto& scenario : scenarios) {
+      Scenario labeled_scenario = scenario;
+      labeled_scenario.name = scenario.name + "_" + profile.label;
+      const Metrics metrics = RunScenario(profile, scenario);
+      PrintScenario(labeled_scenario, metrics,
+                    profile.session.video_tracks.size());
+      ok = CheckScenario(scenario, metrics,
+                         profile.session.video_tracks.size()) && ok;
+    }
   }
   return ok ? 0 : 1;
 }

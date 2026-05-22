@@ -11,10 +11,11 @@ Use these files as the primary source of truth:
 1. `webrtc_first_phase3_plan.md`
 2. `webrtc_first_phase2_master_plan.md`
 3. `README.md`
-4. `docs/sdk_push_play_integration.md`
-5. `docs/webrtc_qos_overview.md`
-6. `docs/qos_test_validation_methodology.md`
-7. `webrtc_first_phase4_plan.md`
+4. `docs/webrtc_boundary_statement.md`
+5. `docs/sdk_push_play_integration.md`
+6. `docs/webrtc_qos_overview.md`
+7. `docs/qos_test_validation_methodology.md`
+8. `webrtc_first_phase4_plan.md`
 
 ## Current Architecture
 
@@ -45,15 +46,17 @@ The business side still owns:
 
 ### Track Model
 
-- The current worktree includes an initial multi-track / multi-SSRC slice.
+- The current worktree already includes the default multi-track / multi-SSRC capability baseline.
 - `SessionConfig.video_tracks` can describe multiple tracks under one source.
 - `VideoPushClient` now accepts per-access-unit media identity through
   `AnnexBAccessUnitView.ids`.
 - `VideoPushClient` and `VideoPlayClient` expose per-track snapshot/adaptation
   queries.
-- The current slice is verified by `scripts/verify_webrtc_first_multitrack.sh`
+- The current multi-track baseline is verified by `scripts/verify_webrtc_first_multitrack.sh`
   and is wired into `scripts/verify_webrtc_first_roles.sh`.
-- Multi-receiver fanout engineering is still not part of this slice.
+- The repo demos now default to validating both single-track and dual-track
+  flows rather than only single-track behavior.
+- Multi-receiver fanout engineering is still not part of the current baseline.
 
 ### Retransmission
 
@@ -99,11 +102,11 @@ The remaining gaps are external formal-evidence items:
 - real renderer `pass`
 - formal `capture_library/manifest.csv` and business capture assets
 
-The active Phase-4 target is explicit multi-track / multi-SSRC modeling.
-Multi-receiver fanout engineering is explicitly deferred for now.
-Single-track simulcast / multi-encoding is also deferred for now.
-Do not conflate the current goal with either multi-receiver fanout or
-single-track simulcast.
+The active default capability target is explicit multi-track / multi-SSRC
+modeling.
+Multi-receiver fanout engineering is still out of scope for the current stage.
+Do not split the current design target into multiple parallel media-plane
+options.
 
 ## Build
 
@@ -180,4 +183,5 @@ Notes:
 - Do not collapse RTCP sender SSRC back into business `receiver_id`.
 - Do not count retransmission traffic into sender media SR packet/octet totals.
 - Do not assume `ServerQosRouter` itself manages multi-receiver media fanout.
-- Do not describe the current Phase-4 slice as complete multi-receiver fanout.
+- Do not describe the current Phase-4 baseline as complete multi-receiver fanout.
+- Do not describe multi-track as optional in demos or docs.

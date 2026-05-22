@@ -26,14 +26,15 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 REQUIRE_ALL=1 NINJA_JOBS=2 \
 - `role_transport`
   只提供业务传输边界 support
 
-当前 media 模型已经进入 Phase-4 的第一版多 track 扩展：
+当前 media 模型已经进入默认多 track / 多 SSRC 能力基线：
 
 - 一个 `SessionConfig` 可以通过 `video_tracks` 描述多个 video track。
 - 一个 `VideoPushClient` 实例可以承载一个 source 下多个 sender SSRC。
 - 一个 `VideoPlayClient` 实例可以按 sender SSRC 区分多个接收 track。
+- track 数量的唯一来源就是 `SessionConfig.video_tracks` 本身。
+  填 1 条就是 1 条；填 2 条就是 2 条；填 N 条就是 N 条。
 - 当前还没有进入的是：
   - 多 receiver fanout support 层
-  - single-track simulcast / multi-encoding
 
 业务项目通常直接按角色链接，不自己手动拼 `webrtc_googcc + webrtc_pacing + webrtc_rtp_rtcp + ...`。
 
@@ -86,8 +87,8 @@ session.ids.stream_id = 1;
 session.ids.transport_id = 1;
 session.ids.sender_ssrc = 0x12345678;
 session.ids.receiver_id = 9;
-session.rtcp.receiver_feedback_ssrc = 0x90000009;  // optional
-session.rtcp.server_feedback_ssrc = 0x70000009;    // optional for server role
+session.rtcp.receiver_feedback_ssrc = 0x90000009;  // 可显式设置
+session.rtcp.server_feedback_ssrc = 0x70000009;    // server 侧可显式设置
 
 webrtc_qos::VideoPushClientConfig config;
 config.session = session;

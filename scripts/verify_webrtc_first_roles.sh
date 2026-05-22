@@ -107,6 +107,7 @@ PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/verify_webrtc_modules.sh"
 PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/verify_webrtc_first_loopback.sh"
 PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/verify_webrtc_first_pacing_probe.sh"
 PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/verify_webrtc_first_multitrack.sh"
+PREFIX="${PREFIX}" "${SDK_ROOT}/scripts/run_webrtc_first_multitrack_matrix.sh"
 
 rm -rf "${BUILD_DIR}"
 cmake -S "${SDK_ROOT}" -B "${BUILD_DIR}" \
@@ -126,8 +127,12 @@ if ! grep -q "peer_connection=false" <<<"${demo_output}"; then
   echo "WebRTC-first demo must not use PeerConnection" >&2
   exit 1
 fi
-if ! grep -q "walking_dead_zone_recover.*pass=true" <<<"${demo_output}"; then
-  echo "WebRTC-first demo did not pass weak-network recovery scenario" >&2
+if ! grep -q "walking_dead_zone_recover_single_track.*pass=true" <<<"${demo_output}"; then
+  echo "WebRTC-first demo did not pass single-track weak-network recovery scenario" >&2
+  exit 1
+fi
+if ! grep -q "walking_dead_zone_recover_dual_track.*pass=true" <<<"${demo_output}"; then
+  echo "WebRTC-first demo did not pass dual-track weak-network recovery scenario" >&2
   exit 1
 fi
 udp_demo_output="$("${BUILD_DIR}/webrtc_qos_webrtc_first_udp_demo" selftest 36)"

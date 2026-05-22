@@ -147,7 +147,7 @@ WebRTC 在这些问题上已经积累了成熟能力：
 - WebRTC video jitter/packet buffer
 - C/S 自定义 RTP/RTCP/UDP bytes 边界
 - sender / server / play 三角色 facade
-- 当前工作区已落下第一条 Phase-4A 多 track 切片：
+- 默认多 track / 多 SSRC 能力基线：
   一个 source 下多个 `track_id / sender_ssrc`、shared uplink `GoogCC / pacer`、
   per-track snapshot/adaptation 查询
 
@@ -372,7 +372,7 @@ server 侧：
 
 - 当前恢复链路支持的是 `NACK + 原 RTP 包重传`，不是 `RFC4588 RTX`。
 - compound RTCP 当前只承诺 `SR / RR / TWCC / NACK / PLI`；遇到其它 block 时，server 会显式累计 unsupported RTCP packet 计数并默认 drop。
-- 多 track 当前只完成了第一条实现切片：public model、shared sender QoS、per-track play isolation 已落地；多 track 的更系统化 QoE/soak 门禁和更广泛的文档收口还在继续推进。
+- 多 track 当前已经落下默认能力基线：public model、shared sender QoS、per-track play isolation 已落地；更系统化的 multi-track QoE/soak 门禁还在继续推进。
 - 正式验收闭环还缺 `SOAK_MINUTES>=120` 的 production soak、真实 renderer `pass` 和正式 `capture_library/manifest.csv`。
 
 上面这些未完成项的收敛计划，见 [Phase-3 逻辑正确性收敛计划](../webrtc_first_phase3_plan.md) 和 [Phase-2 主实施文档](../webrtc_first_phase2_master_plan.md)。

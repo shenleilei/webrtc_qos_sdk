@@ -48,7 +48,7 @@ Phase-4 必须避免这两个极端。
 
 ## 1.2 当前工作区状态
 
-基于当前工作区实现，Phase-4A 的第一条最小切片已经落地：
+基于当前工作区实现，默认 multi-track / multi-SSRC 能力基线已经落地：
 
 - public model 已支持 `source_id / track_id / sender_ssrc`
 - `SessionConfig.video_tracks` 已可描述一个 source 下多个 track
@@ -60,6 +60,8 @@ Phase-4 必须避免这两个极端。
   retransmission route
 - `scripts/verify_webrtc_first_multitrack.sh` 已验证两 track 外部消费路径，
   且已接入 `scripts/verify_webrtc_first_roles.sh`
+- 仓库内 loopback demo 和 UDP selftest 当前默认也同时覆盖 single-track 与
+  dual-track 两组场景
 
 当前仍未完成的，不是“多 track 根本不能跑”，而是更完整的四期收尾项，例如：
 
@@ -96,7 +98,6 @@ Phase-4 之后，整个系统应尽量切成三层：
 
 - sender / receiver
 - track / SSRC
-- encoding
 - RTP/RTCP
 - NACK / PLI
 - pacing
@@ -115,16 +116,15 @@ W3C 官方模型里有三层不同概念：
 2. **track**
    source 可以产生多个 `MediaStreamTrack`。
 
-3. **sender / transceiver / encoding**
+3. **sender / transceiver**
    一个 sender 绑定一个 track；
-   一个 sender 又可以带多个 `sendEncodings`，对应 simulcast / 多 encoding。
+   sender 自己维护媒体发送状态和对应的 SSRC 语义。
 
-因此标准 WebRTC 天然支持两条路线：
+标准 WebRTC 本身可以承载更复杂的媒体发送形态，但当前仓库的默认能力目标已经明确收敛为：
 
-- **路线 A：多 track / 多 sender / 多 SSRC**
-- **路线 B：单 track + 多 encodings / simulcast**
+- **多 track / 多 sender / 多 SSRC**
 
-但当前 Phase-4 只推进路线 A。路线 B 只保留为未来备注，不进入当前实施目标。
+这个方向是当前默认要求，不作为可选扩展。
 
 ## 2. Phase-4 原则
 
@@ -132,15 +132,14 @@ W3C 官方模型里有三层不同概念：
    不做 ICE、DTLS、SRTP、SDP、STUN、TURN，不让 WebRTC 接管 socket。
 
 2. 不重新发明 media plane。
-   sender / receiver / track / encoding / SSRC 的媒体语义，优先贴近 WebRTC 原生模型。
+   sender / receiver / track / SSRC 的媒体语义，优先贴近 WebRTC 原生模型。
 
 3. transport/control 与 media 明确分离。
    我们只在外面包 transport adapter 和 control-plane adapter，不在里面再写一套
    自定义 sender/receiver 媒体编排模型。
 
-4. 当前只做多 track，不做多 encoding 路线。
-   如果未来业务明确需要“同一内容多层发送”，再单独开下一阶段讨论
-   single-track simulcast / multi-encoding。
+4. 当前默认能力是多 track。
+   当前阶段只围绕多 track / 多 sender SSRC 收口，不再引入并行 media-plane 路线。
 
 5. 保持当前单 track API 可用。
    现有单 track `VideoPushClient / VideoPlayClient / ServerQosRouter`
@@ -167,7 +166,6 @@ W3C 官方模型里有三层不同概念：
 - 多 track
 - 多 sender
 - 多 SSRC
-- 单 track 多 encodings
 
 但当前 SDK 只抽取了：
 
@@ -225,9 +223,9 @@ Phase-4 不应该先做一个很重的：
 不急着把 receiver registry / fanout support 层做进 SDK
 ```
 
-## 5. Phase-4 路线拆分
+## 5. Phase-4 默认目标
 
-### 5.1 Phase-4A：多 Track / 多 Sender SSRC
+### 5.1 多 Track / 多 Sender SSRC
 
 适用场景：
 
@@ -242,18 +240,13 @@ Phase-4 不应该先做一个很重的：
 - 继续复用 shared GoogCC / shared pacing
 - 让 play 端输出带 track 身份
 
-### 5.2 当前决定
+### 5.2 当前不做
 
-你已经明确了当前第一小阶段先做：
-
-- **Phase-4A：多 Track / 多 Sender SSRC**
-
-并明确暂时不做：
+当前明确不做：
 
 - 多 receiver fanout 工程化
-- 单 track + 多 encodings / simulcast
 
-## 6. Phase-4A：多 Track / 多 Sender SSRC 设计目标
+## 6. 多 Track / 多 Sender SSRC 设计目标
 
 ### 6.1 Public model 需要能表达多个 track
 
@@ -271,7 +264,16 @@ Phase-4 不应该先做一个很重的：
 - `sender_ssrc`
 - `receiver_id`
 
-Phase-4A 需要把 `source_id / track_id` 加进来，或者新增与之等价的媒体身份结构。
+当前默认能力要求已经是多 track，因此 `source_id / track_id` 必须进入稳定 public model，
+而不是继续停留在临时扩展。
+
+同时，track 数量的唯一来源就是 track 列表本身：
+
+- 配 1 条 track，就是 1 条
+- 配 2 条 track，就是 2 条
+- 配 N 条 track，就是 N 条
+
+不再额外设计独立的 `track_count` 模式开关。
 
 ### 6.2 sender 侧不能变成多套独立 GoogCC
 
@@ -435,7 +437,7 @@ Phase-4A 需要把 `source_id / track_id` 加进来，或者新增与之等价�
 
 ## 10. 完成判定
 
-Phase-4A 完成不能只看“能发两个 SSRC”，至少要满足：
+当前这一阶段完成不能只看“能发两个 SSRC”，至少要满足：
 
 - 多 track / 多 sender SSRC 已进入明确 public model
 - source 级 shared pacing / GoogCC 已落地
@@ -456,7 +458,7 @@ Phase-4A 完成不能只看“能发两个 SSRC”，至少要满足：
 本阶段暂不做：
 
 - 多 receiver fanout 工程化
-- 单 track + 多 encodings / simulcast
+- 其它超出当前多 track / 多 sender SSRC 范围的 media-plane 扩展
 - 完整 SFU 控制面
 - PeerConnection / SDP / ICE / DTLS / SRTP
 - 音频多轨
