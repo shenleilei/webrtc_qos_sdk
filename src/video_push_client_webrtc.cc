@@ -454,38 +454,48 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     return std::max<uint32_t>(1, total_weight);
   }
 
-  uint32_t TrackTargetBps(const TrackState& track, int64_t now_us) const {
-    const uint32_t source_target_bps = FinalTargetBps(now_us);
+  uint32_t AllocateTrackTargetBps(const TrackState& track,
+                                  uint32_t source_target_bps,
+                                  uint32_t source_floor_bps) const {
     if (track_states_.size() <= 1) {
       return source_target_bps;
     }
-    const uint64_t track_target_bps =
-        (static_cast<uint64_t>(source_target_bps) *
+
+    const bool is_base_track = track.config.base_track;
+    const uint32_t reserved_base_floor =
+        is_base_track ? std::min(source_target_bps, source_floor_bps) : 0u;
+    const uint32_t remaining_bps =
+        source_target_bps > source_floor_bps
+            ? source_target_bps - source_floor_bps
+            : 0u;
+    const uint64_t weighted_share =
+        (static_cast<uint64_t>(remaining_bps) *
          std::max<uint32_t>(1, track.config.weight)) /
         TotalEnabledTrackWeight();
-    return std::max<uint32_t>(config_.session.min_bitrate_bps,
-                              static_cast<uint32_t>(track_target_bps));
+    return static_cast<uint32_t>(weighted_share) + reserved_base_floor;
+  }
+
+  uint32_t TrackTargetBps(const TrackState& track, int64_t now_us) const {
+    const uint32_t source_target_bps = FinalTargetBps(now_us);
+    return AllocateTrackTargetBps(track, source_target_bps,
+                                  config_.session.min_bitrate_bps);
   }
 
   uint32_t TrackStartBitrateBps(const TrackState& track) const {
-    if (track_states_.size() <= 1) {
-      return config_.session.start_bitrate_bps;
-    }
-    const uint64_t track_start_bps =
-        (static_cast<uint64_t>(config_.session.start_bitrate_bps) *
-         std::max<uint32_t>(1, track.config.weight)) /
-        TotalEnabledTrackWeight();
-    return std::max<uint32_t>(config_.session.min_bitrate_bps,
-                              static_cast<uint32_t>(track_start_bps));
+    return AllocateTrackTargetBps(track, config_.session.start_bitrate_bps,
+                                  config_.session.min_bitrate_bps);
   }
 
   uint32_t SuggestedMaxFps(const TrackState& track, uint32_t target_bps) const {
     const uint32_t max_fps = std::max<uint16_t>(1, track.config.h264.max_fps);
-    if (target_bps <= config_.session.min_bitrate_bps) {
+    if (target_bps == 0) {
+      return 0;
+    }
+    if (track.config.base_track && target_bps <= config_.session.min_bitrate_bps) {
       return std::min<uint32_t>(max_fps, 5);
     }
     const uint32_t track_start_bps = TrackStartBitrateBps(track);
-    if (target_bps <= track_start_bps / 2) {
+    if (target_bps <= std::max<uint32_t>(1u, track_start_bps / 2)) {
       return std::min<uint32_t>(max_fps, 10);
     }
     if (target_bps <= (track_start_bps * 3) / 4) {

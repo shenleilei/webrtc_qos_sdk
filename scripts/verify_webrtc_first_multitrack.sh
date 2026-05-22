@@ -25,6 +25,7 @@ EOF
 
 cat > "${WORK_DIR}/main.cc" <<'EOF'
 #include <cstdint>
+#include <iostream>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -234,9 +235,20 @@ int main() {
                                        &track_b_adaptation)) {
     return 12;
   }
+  const auto source_snapshot = push->GetQosSnapshot(1300000);
   if (track_a_adaptation.target_bitrate_bps <=
       track_b_adaptation.target_bitrate_bps) {
     return 13;
+  }
+  if (static_cast<uint64_t>(track_a_adaptation.target_bitrate_bps) +
+          track_b_adaptation.target_bitrate_bps >
+      static_cast<uint64_t>(source_snapshot.sender_rates.final_target_bps) + 1) {
+    std::cerr << "uncapped allocation overflow track_a="
+              << track_a_adaptation.target_bitrate_bps
+              << " track_b=" << track_b_adaptation.target_bitrate_bps
+              << " source="
+              << source_snapshot.sender_rates.final_target_bps << "\n";
+    return 24;
   }
 
   std::vector<uint8_t> pli_bytes;
@@ -297,6 +309,41 @@ int main() {
   }
   if (!saw_track_b_retransmission || saw_track_a_retransmission) {
     return 20;
+  }
+
+  webrtc_qos::SenderRateCap low_cap =
+      webrtc_qos::UnlimitedSenderRateCap(session.ids, 1, 1455000);
+  low_cap.cap_bps = 600000;
+  low_cap.receive_time_us = 1455000;
+  if (!push->OnSenderRateCap(low_cap)) {
+    return 25;
+  }
+  if (!push->GetTrackEncoderAdaptation(track_a.ids.track_id, 1460000,
+                                       &track_a_adaptation) ||
+      !push->GetTrackEncoderAdaptation(track_b.ids.track_id, 1460000,
+                                       &track_b_adaptation)) {
+    return 26;
+  }
+  const auto capped_source_snapshot = push->GetQosSnapshot(1460000);
+  if (track_a_adaptation.target_bitrate_bps <=
+          track_b_adaptation.target_bitrate_bps ||
+      track_a_adaptation.max_fps < track_b_adaptation.max_fps ||
+      static_cast<uint64_t>(track_a_adaptation.target_bitrate_bps) +
+              track_b_adaptation.target_bitrate_bps >
+          static_cast<uint64_t>(
+              capped_source_snapshot.sender_rates.final_target_bps) + 1) {
+    std::cerr << "capped allocation invalid track_a_bps="
+              << track_a_adaptation.target_bitrate_bps
+              << " track_b_bps=" << track_b_adaptation.target_bitrate_bps
+              << " track_a_fps=" << track_a_adaptation.max_fps
+              << " track_b_fps=" << track_b_adaptation.max_fps
+              << " track_a_weight=" << track_a.weight
+              << " track_b_weight=" << track_b.weight
+              << " track_a_base=" << track_a.base_track
+              << " track_b_base=" << track_b.base_track
+              << " source_bps="
+              << capped_source_snapshot.sender_rates.final_target_bps << "\n";
+    return 27;
   }
 
   webrtc_qos::QosSnapshot track_a_play_snapshot;
