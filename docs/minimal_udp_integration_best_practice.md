@@ -719,6 +719,8 @@ PREFIX=/root/webrtc_qos_sdk/dist/linux-x86_64 \
 - 所有 SDK `Status` 失败都打印 `status_code` 和 `reason`，完整上下文写入角色日志文件。
 - 每次问题复现都收集 debug bundle，并用 `manifest.sha256` 做离线完整性校验。
 - debug bundle 里必须有 `runtime_config.json`，并通过配置 dump 脱敏校验。
+- 正式 production gate 非 dry-run 失败时，优先使用 wrapper 输出的
+  `failure_debug_bundle/` 和 `logs/failure_debug_bundle_*.log` 排查。
 - 发布前必须跑 `verify_phase5_release_contract.sh`，确认普通 `role_*` 和
   `role_*_bundle` 两种安装包链接方式都可用。
 - 业务没有直接依赖 WebRTC 内部头、`PeerConnection`、ICE、DTLS 或 SRTP。

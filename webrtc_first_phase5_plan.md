@@ -161,7 +161,10 @@ wrapper 会先跑 Phase-5 release contract 和 debug bundle 门禁，再调用�
 `run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
 正式 capture library、evidence bundle 和 completion audit。默认输出目录为
 `artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
-`files.txt` 和 `manifest.sha256`。本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但
+`files.txt` 和 `manifest.sha256`。非 dry-run 失败时会自动收集并校验
+`failure_debug_bundle/`，让失败证据也包含日志、metrics、alerts、timeline 和
+runtime config；`verify_phase5_production_gate.sh` 在 gate 失败时会要求该失败包
+存在且 manifest 可离线校验。本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但
 dry-run 不代表生产证据完成。
 
 `verify_phase5_completion_audit.sh` 是最终完成度审计入口：默认要求
@@ -1141,6 +1144,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - Phase-5 debug bundle collect/verify。
 - WebRTC-first production gate preflight、soak、renderer、capture library 和 audit。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
+- 非 dry-run 失败时自动输出 verified `failure_debug_bundle/`，并由顶层 verifier
+  强制校验。
 - completion audit 对“实现项齐全但正式生产证据缺失”和“正式完成”做硬区分。
 
 ## 7. 里程碑

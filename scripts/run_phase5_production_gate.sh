@@ -7,6 +7,7 @@ PHASE5_BUILD_ID="${PHASE5_BUILD_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${SDK_ROOT}/artifacts/phase5_production_gate/${PHASE5_BUILD_ID}}"
 PHASE2_OUTPUT_ROOT="${PHASE2_OUTPUT_ROOT:-${OUTPUT_ROOT}/webrtc_first_production_gate}"
 PHASE5_DEBUG_BUNDLE_DIR="${PHASE5_DEBUG_BUNDLE_DIR:-${OUTPUT_ROOT}/phase5_debug_bundle}"
+FAILURE_DEBUG_BUNDLE_DIR="${FAILURE_DEBUG_BUNDLE_DIR:-${OUTPUT_ROOT}/failure_debug_bundle}"
 LOG_DIR="${LOG_DIR:-${OUTPUT_ROOT}/logs}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_ROOT}/phase5_production_gate_summary.txt}"
 METADATA_FILE="${METADATA_FILE:-${OUTPUT_ROOT}/metadata.txt}"
@@ -67,6 +68,30 @@ write_manifest() {
   )
 }
 
+collect_failure_debug_bundle() {
+  local failed_step="$1"
+  if [[ "${PHASE5_DRY_RUN}" == "1" ]]; then
+    return
+  fi
+  write_summary "failure_debug_bundle_status=collecting failed_step=${failed_step}"
+  if env SDK_ROOT="${SDK_ROOT}" PREFIX="${WEBRTC_PREFIX}" \
+      OUTPUT_DIR="${FAILURE_DEBUG_BUNDLE_DIR}" \
+      "${SDK_ROOT}/scripts/collect_phase5_debug_bundle.sh" \
+      >"${LOG_DIR}/failure_debug_bundle_collect.log" 2>&1; then
+    if env BUNDLE_DIR="${FAILURE_DEBUG_BUNDLE_DIR}" \
+        "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" \
+        >"${LOG_DIR}/failure_debug_bundle_verify.log" 2>&1; then
+      write_summary "failure_debug_bundle_status=pass dir=${FAILURE_DEBUG_BUNDLE_DIR}"
+    else
+      local verify_status=$?
+      write_summary "failure_debug_bundle_status=verify_failed exit=${verify_status} dir=${FAILURE_DEBUG_BUNDLE_DIR} log=${LOG_DIR}/failure_debug_bundle_verify.log"
+    fi
+  else
+    local collect_status=$?
+    write_summary "failure_debug_bundle_status=collect_failed exit=${collect_status} dir=${FAILURE_DEBUG_BUNDLE_DIR} log=${LOG_DIR}/failure_debug_bundle_collect.log"
+  fi
+}
+
 run_step() {
   local name="$1"
   shift
@@ -88,6 +113,8 @@ run_step() {
     local status=$?
     write_summary "step=${name} status=fail exit=${status} log=${log_file}"
     write_summary "phase5_production_gate_status=fail"
+    collect_failure_debug_bundle "${name}"
+    write_summary "failure_debug_bundle=${FAILURE_DEBUG_BUNDLE_DIR}"
     write_manifest
     tail -n 80 "${log_file}" >&2 || true
     exit "${status}"
@@ -107,6 +134,7 @@ require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.
   printf 'OUTPUT_ROOT=%s\n' "${OUTPUT_ROOT}"
   printf 'PHASE2_OUTPUT_ROOT=%s\n' "${PHASE2_OUTPUT_ROOT}"
   printf 'PHASE5_DEBUG_BUNDLE_DIR=%s\n' "${PHASE5_DEBUG_BUNDLE_DIR}"
+  printf 'FAILURE_DEBUG_BUNDLE_DIR=%s\n' "${FAILURE_DEBUG_BUNDLE_DIR}"
   printf 'SOAK_MINUTES=%s\n' "${SOAK_MINUTES}"
   printf 'MIN_PRODUCTION_SOAK_MINUTES=%s\n' "${MIN_PRODUCTION_SOAK_MINUTES}"
   printf 'SOAK_CYCLES=%s\n' "${SOAK_CYCLES}"
