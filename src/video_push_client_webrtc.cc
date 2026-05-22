@@ -84,6 +84,19 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   }
 
   Status Start() override {
+    if (!logger_.InitializationStatus()) {
+      return logger_.InitializationStatus();
+    }
+    if (!metrics_writer_.InitializationStatus()) {
+      logger_.Error("start_failed", config_.session.ids,
+                    metrics_writer_.InitializationStatus());
+      return metrics_writer_.InitializationStatus();
+    }
+    if (!alert_writer_.InitializationStatus()) {
+      logger_.Error("start_failed", config_.session.ids,
+                    alert_writer_.InitializationStatus());
+      return alert_writer_.InitializationStatus();
+    }
     if (!config_.transport_output) {
       Status status = InvalidArgument("VideoPushClient requires transport_output");
       logger_.Error("start_failed", config_.session.ids, status);

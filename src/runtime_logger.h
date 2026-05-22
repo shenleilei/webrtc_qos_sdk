@@ -34,6 +34,7 @@ class RuntimeLogger {
   void Warn(const char* event, const TransportIds& ids, const Status& status);
   void Error(const char* event, const TransportIds& ids, const Status& status);
   void Flush();
+  const Status& InitializationStatus() const { return init_status_; }
 
  private:
   struct QueuedLogRecord {
@@ -49,12 +50,13 @@ class RuntimeLogger {
            const std::string* extra_json_fields = nullptr);
   void WorkerLoop();
   void WriteRecordLocked(const QueuedLogRecord& record);
-  void RotateIfNeededLocked();
+  bool RotateIfNeededLocked();
   bool ShouldLog(LogLevel level) const;
   uint32_t MaxQueueRecords() const;
   bool IsAsyncEnabled() const;
 
   RuntimeLogConfig config_;
+  Status init_status_ = Status::Ok();
   std::string role_;
   std::string path_prefix_;
   uint32_t file_index_ = 0;

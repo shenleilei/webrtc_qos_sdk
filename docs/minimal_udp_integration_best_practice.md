@@ -467,9 +467,10 @@ play_config.logging = logging;
 ```
 
 `RuntimeLogConfig` 只负责文件日志；SDK runtime logger 不提供 stderr fallback，也不会
-在文件打开失败时把结构化运行日志退回 stdout/stderr。业务进程可以继续用
-stdout/stderr 打人工 usage、启动 summary 或退出原因，但生产排障上下文必须来自角色
-JSONL 日志、metrics、alerts 和 debug bundle。
+在文件打开失败时把结构化运行日志退回 stdout/stderr。显式启用日志文件但目录为空、
+目录不可创建或文件不可打开时，role `Start()` 会返回失败，避免生产排障时误以为日志
+已经落盘。业务进程可以继续用 stdout/stderr 打人工 usage、启动 summary 或退出原因，
+但生产排障上下文必须来自角色 JSONL 日志、metrics、alerts 和 debug bundle。
 
 默认不配置日志时 SDK 不会输出运行日志。demo 可用 `--log-dir` 快速验证：
 
@@ -646,8 +647,8 @@ log/metrics/alerts 开关和 bundle 内相对路径，不记录媒体 bytes、�
 - `kMalformedPacket`：RTP、RTCP 或 H264 Annex-B 解析失败。
 - `kQueueFull`：pacer、恢复队列或 history 达到容量；上层应丢当前帧/包并等待后续
   `Process()` 恢复。
-- `kInternalError`：业务 `TransportOutput`、decoded AU callback 或 SDK 内部不可恢复
-  构包路径失败。
+- `kInternalError`：业务 `TransportOutput`、decoded AU callback、显式启用的
+  log/metrics/alerts 文件输出不可写，或 SDK 内部不可恢复构包路径失败。
 
 主要 public method 的错误边界：
 
@@ -662,6 +663,7 @@ log/metrics/alerts 开关和 bundle 内相对路径，不记录媒体 bytes、�
 | `VideoPlayClient::OnRtpPacket()` | `kUnsupported`、`kInvalidArgument`、`kMalformedPacket`、`kInternalError` | malformed 单包丢弃；decoded AU callback 失败要作为媒体输出故障处理。 |
 | `VideoPlayClient::OnRtcpPacket()` | `kInvalidArgument`、`kMalformedPacket` | drop 当前 RTCP。 |
 | `ServerQosRouter::Start()` | `kInvalidArgument` | 修正 sender/receiver output 后重建 router。 |
+| 任一 role `Start()` | `kInternalError` | 修正显式启用的 log/metrics/alerts 输出目录权限或路径后重建 role。 |
 | `ServerQosRouter::OnSenderRtp()` | `kUnsupported`、`kMalformedPacket`、`kInternalError` | malformed 单包丢弃；receiver output failure 要进入网络/relay 故障处理。 |
 | `ServerQosRouter::OnSenderRtcp()` | `kUnsupported`、`kInvalidArgument`、`kMalformedPacket`、`kInternalError` | unsupported RTCP 默认 drop；output failure 按 relay 故障处理。 |
 | `ServerQosRouter::OnReceiverRtcp()` | `kUnsupported`、`kInvalidArgument`、`kMalformedPacket`、`kInternalError` | NACK/PLI 可触发本地重传或转发；output failure 按 relay 故障处理。 |

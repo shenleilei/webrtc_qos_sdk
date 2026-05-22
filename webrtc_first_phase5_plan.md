@@ -439,6 +439,8 @@ transport/output：
 - `std::cout` 只保留最终 summary 和人工 demo 提示，不作为 SDK 运行日志。
 - SDK runtime logger 不提供 stderr fallback；文件日志不可用时不能把结构化运行日志
   退回 stdout/stderr。
+- 显式启用 log/metrics/alerts 文件输出但目录为空、目录不可创建或文件不可打开时，
+  push/server/play `Start()` 必须返回错误，避免生产排障包缺失关键运行证据。
 - 日志文件超过阈值会轮转；demo 和 external sample 支持
   `--log-max-file-bytes / --log-max-files`，`verify_phase5_logging.sh` 会用低阈值
   强制验证 push/server/play 三个 role 的轮转和保留文件数上限。
@@ -1024,6 +1026,8 @@ prefix 构建外部 CMake fixture，验证错误返回、日志事件和 alerts 
 
 - push/play/server `Start()` 缺必需 callback 返回 `kInvalidArgument` 并写
   `start_failed`。
+- 显式启用的 log/metrics/alerts 文件输出不可写时，push/play/server `Start()`
+  返回 `kInternalError`，不能静默继续运行。
 - push/play/server before-start 调用返回 `kUnsupported` 并写对应 warn 日志。
 - malformed H264/RTP 返回 `kMalformedPacket`，写 warn 日志和 malformed alerts。
 - push transport output failure、server receiver output failure、play decoded AU

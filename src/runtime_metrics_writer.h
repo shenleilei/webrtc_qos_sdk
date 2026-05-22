@@ -7,6 +7,7 @@
 
 #include "webrtc_qos/qos_metrics.h"
 #include "webrtc_qos/runtime_metrics.h"
+#include "webrtc_qos/status.h"
 #include "webrtc_qos/types.h"
 
 namespace webrtc_qos {
@@ -30,14 +31,16 @@ class RuntimeMetricsWriter {
   void WriteTrack(const QosSnapshot& snapshot,
                   const EncoderAdaptation* adaptation = nullptr);
   void Flush();
+  const Status& InitializationStatus() const { return init_status_; }
 
  private:
   void Write(const char* scope,
              const QosSnapshot& snapshot,
              const EncoderAdaptation* adaptation);
-  void RotateIfNeededLocked();
+  bool RotateIfNeededLocked();
 
   RuntimeMetricsConfig config_;
+  Status init_status_ = Status::Ok();
   std::string role_;
   std::string path_prefix_;
   uint32_t file_index_ = 0;

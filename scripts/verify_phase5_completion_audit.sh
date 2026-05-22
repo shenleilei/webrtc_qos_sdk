@@ -139,6 +139,12 @@ require_doc_pattern scripts/verify_phase5_logging.sh \
   'validated_no_runtime_stdout_stderr_logging' logging_no_runtime_stdout_stderr_gate
 require_doc_pattern scripts/verify_phase5_logging.sh \
   'also_stderr' logging_no_stderr_fallback_gate
+require_doc_pattern scripts/verify_phase5_error_contract.sh \
+  'unwritable log dir' logging_unwritable_dir_contract
+require_doc_pattern scripts/verify_phase5_error_contract.sh \
+  'unwritable metrics dir' metrics_unwritable_dir_contract
+require_doc_pattern scripts/verify_phase5_error_contract.sh \
+  'unwritable alerts dir' alerts_unwritable_dir_contract
 require_doc_pattern scripts/verify_phase5_metrics.sh \
   'validated_metrics_rotation' metrics_rotation_gate
 require_doc_pattern scripts/verify_phase5_alerts.sh \

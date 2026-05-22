@@ -58,6 +58,7 @@ cat > "${WORK_DIR}/main.cc" <<'EOF'
 
 #include "webrtc_qos/runtime_alerts.h"
 #include "webrtc_qos/runtime_logging.h"
+#include "webrtc_qos/runtime_metrics.h"
 #include "webrtc_qos/server_qos_router.h"
 #include "webrtc_qos/session_config.h"
 #include "webrtc_qos/status.h"
@@ -172,6 +173,16 @@ webrtc_qos::RuntimeAlertConfig MakeAlerts(const std::string& dir) {
   return config;
 }
 
+webrtc_qos::RuntimeMetricsConfig MakeMetrics(const std::string& dir) {
+  webrtc_qos::RuntimeMetricsConfig config;
+  config.file.enabled = true;
+  config.file.directory = dir;
+  config.file.basename = "webrtc_qos_error_contract_metrics";
+  config.file.max_file_bytes = 1024 * 1024;
+  config.file.max_files = 16;
+  return config;
+}
+
 webrtc_qos::TransportOutput OkTransport() {
   return [](const webrtc_qos::TransportPacketView&) {
     return webrtc_qos::Status::Ok();
@@ -258,9 +269,57 @@ int main(int argc, char** argv) {
 
   const std::string log_dir = argv[1];
   const std::string alerts_dir = argv[2];
+  const std::string unwritable_runtime_path = "/dev/null/phase5-runtime-output";
   const webrtc_qos::SessionConfig session = MakeSession();
   const std::vector<uint8_t> au = MakeIdrAccessUnit(42);
   const uint8_t bad_rtp[] = {0x01, 0x02, 0x03};
+
+  {
+    webrtc_qos::VideoPushClientConfig config;
+    config.session = session;
+    config.logging = MakeLogs(unwritable_runtime_path);
+    config.transport_output = OkTransport();
+    std::unique_ptr<webrtc_qos::VideoPushClient> push =
+        webrtc_qos::CreateVideoPushClient(config);
+    if (!push ||
+        !RequireCode(push->Start(),
+                     webrtc_qos::StatusCode::kInternalError,
+                     "push start with unwritable log dir")) {
+      return 1;
+    }
+  }
+
+  {
+    webrtc_qos::VideoPlayClientConfig config;
+    config.session = session;
+    config.metrics = MakeMetrics(unwritable_runtime_path);
+    config.transport_output = OkTransport();
+    config.decoded_access_unit_output = OkDecode();
+    std::unique_ptr<webrtc_qos::VideoPlayClient> play =
+        webrtc_qos::CreateVideoPlayClient(config);
+    if (!play ||
+        !RequireCode(play->Start(),
+                     webrtc_qos::StatusCode::kInternalError,
+                     "play start with unwritable metrics dir")) {
+      return 1;
+    }
+  }
+
+  {
+    webrtc_qos::ServerQosRouterConfig config;
+    config.session = session;
+    config.alerts = MakeAlerts(unwritable_runtime_path);
+    config.sender_output = OkTransport();
+    config.receiver_output = OkTransport();
+    std::unique_ptr<webrtc_qos::ServerQosRouter> server =
+        webrtc_qos::CreateServerQosRouter(config);
+    if (!server ||
+        !RequireCode(server->Start(),
+                     webrtc_qos::StatusCode::kInternalError,
+                     "server start with unwritable alerts dir")) {
+      return 1;
+    }
+  }
 
   {
     webrtc_qos::VideoPushClientConfig config;

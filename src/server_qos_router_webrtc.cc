@@ -94,6 +94,19 @@ class WebRtcServerQosRouter final : public ServerQosRouter {
   }
 
   Status Start() override {
+    if (!logger_.InitializationStatus()) {
+      return logger_.InitializationStatus();
+    }
+    if (!metrics_writer_.InitializationStatus()) {
+      logger_.Error("start_failed", config_.session.ids,
+                    metrics_writer_.InitializationStatus());
+      return metrics_writer_.InitializationStatus();
+    }
+    if (!alert_writer_.InitializationStatus()) {
+      logger_.Error("start_failed", config_.session.ids,
+                    alert_writer_.InitializationStatus());
+      return alert_writer_.InitializationStatus();
+    }
     if (!config_.sender_output || !config_.receiver_output) {
       Status status = InvalidArgument(
           "ServerQosRouter requires sender_output and receiver_output");

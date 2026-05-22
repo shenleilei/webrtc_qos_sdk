@@ -107,12 +107,19 @@ int64_t AlertTimeUs(int64_t now_us) {
 RuntimeAlertWriter::RuntimeAlertWriter(RuntimeAlertConfig config,
                                        std::string role)
     : config_(std::move(config)), role_(std::move(role)) {
-  if (!config_.file.enabled || config_.file.directory.empty()) {
+  if (!config_.file.enabled) {
+    return;
+  }
+  if (config_.file.directory.empty()) {
+    init_status_ = Status::Error(StatusCode::kInvalidArgument,
+                                 "runtime alerts directory is required");
     return;
   }
   std::error_code error;
   std::filesystem::create_directories(config_.file.directory, error);
   if (error) {
+    init_status_ = Status::Error(StatusCode::kInternalError,
+                                 "runtime alerts directory is not writable");
     return;
   }
 
@@ -122,7 +129,12 @@ RuntimeAlertWriter::RuntimeAlertWriter(RuntimeAlertConfig config,
          << TimestampForPath() << "-" << WallClockNowUs() << "-"
          << NextAlertInstance();
   path_prefix_ = prefix.str();
-  RotateIfNeededLocked();
+  if (!RotateIfNeededLocked()) {
+    init_status_ =
+        Status::Error(StatusCode::kInternalError,
+                      "runtime alerts file could not be opened");
+    path_prefix_.clear();
+  }
 }
 
 RuntimeAlertWriter::~RuntimeAlertWriter() {
@@ -221,15 +233,15 @@ bool RuntimeAlertWriter::SuppressedLocked(const char* rule,
   return false;
 }
 
-void RuntimeAlertWriter::RotateIfNeededLocked() {
+bool RuntimeAlertWriter::RotateIfNeededLocked() {
   if (path_prefix_.empty()) {
-    return;
+    return false;
   }
   const uint64_t max_file_bytes =
       config_.file.max_file_bytes == 0 ? 64 * 1024 * 1024
                                        : config_.file.max_file_bytes;
   if (file_.is_open() && current_file_bytes_ < max_file_bytes) {
-    return;
+    return true;
   }
   if (file_.is_open()) {
     file_.flush();
@@ -245,6 +257,7 @@ void RuntimeAlertWriter::RotateIfNeededLocked() {
   ++file_index_;
   current_file_bytes_ = 0;
   file_.open(path.str(), std::ios::out | std::ios::trunc);
+  return file_.is_open();
 }
 
 }  // namespace webrtc_qos

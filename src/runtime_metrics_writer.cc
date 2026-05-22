@@ -62,12 +62,19 @@ bool AdaptationKeyframe(const EncoderAdaptation* adaptation) {
 RuntimeMetricsWriter::RuntimeMetricsWriter(RuntimeMetricsConfig config,
                                            std::string role)
     : config_(std::move(config)), role_(std::move(role)) {
-  if (!config_.file.enabled || config_.file.directory.empty()) {
+  if (!config_.file.enabled) {
+    return;
+  }
+  if (config_.file.directory.empty()) {
+    init_status_ = Status::Error(StatusCode::kInvalidArgument,
+                                 "runtime metrics directory is required");
     return;
   }
   std::error_code error;
   std::filesystem::create_directories(config_.file.directory, error);
   if (error) {
+    init_status_ = Status::Error(StatusCode::kInternalError,
+                                 "runtime metrics directory is not writable");
     return;
   }
 
@@ -77,7 +84,12 @@ RuntimeMetricsWriter::RuntimeMetricsWriter(RuntimeMetricsConfig config,
          << TimestampForPath() << "-" << WallClockNowUs() << "-"
          << NextMetricsInstance();
   path_prefix_ = prefix.str();
-  RotateIfNeededLocked();
+  if (!RotateIfNeededLocked()) {
+    init_status_ =
+        Status::Error(StatusCode::kInternalError,
+                      "runtime metrics file could not be opened");
+    path_prefix_.clear();
+  }
 }
 
 RuntimeMetricsWriter::~RuntimeMetricsWriter() {
@@ -191,15 +203,15 @@ void RuntimeMetricsWriter::Write(const char* scope,
   }
 }
 
-void RuntimeMetricsWriter::RotateIfNeededLocked() {
+bool RuntimeMetricsWriter::RotateIfNeededLocked() {
   if (path_prefix_.empty()) {
-    return;
+    return false;
   }
   const uint64_t max_file_bytes =
       config_.file.max_file_bytes == 0 ? 64 * 1024 * 1024
                                        : config_.file.max_file_bytes;
   if (file_.is_open() && current_file_bytes_ < max_file_bytes) {
-    return;
+    return true;
   }
   if (file_.is_open()) {
     file_.flush();
@@ -215,6 +227,7 @@ void RuntimeMetricsWriter::RotateIfNeededLocked() {
   ++file_index_;
   current_file_bytes_ = 0;
   file_.open(path.str(), std::ios::out | std::ios::trunc);
+  return file_.is_open();
 }
 
 }  // namespace webrtc_qos

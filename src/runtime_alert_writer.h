@@ -35,6 +35,7 @@ class RuntimeAlertWriter {
   void Flush();
 
   const RuntimeAlertConfig& config() const { return config_; }
+  const Status& InitializationStatus() const { return init_status_; }
 
  private:
   void Write(AlertSeverity severity,
@@ -48,9 +49,10 @@ class RuntimeAlertWriter {
   bool SuppressedLocked(const char* rule,
                         const TransportIds& ids,
                         int64_t now_us);
-  void RotateIfNeededLocked();
+  bool RotateIfNeededLocked();
 
   RuntimeAlertConfig config_;
+  Status init_status_ = Status::Ok();
   std::string role_;
   std::string path_prefix_;
   uint32_t file_index_ = 0;
