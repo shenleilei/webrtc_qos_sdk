@@ -249,6 +249,8 @@ runtime_config = {
         "first_problem": "timeline/first_problem.json",
         "health_report": "monitoring/health_report.json",
         "health_summary": "monitoring/health_summary.txt",
+        "slo_report": "monitoring/slo_report.json",
+        "slo_summary": "monitoring/slo_summary.txt",
         "alert_policy": "monitoring/alert_policy.json",
         "alert_policy_summary": "monitoring/alert_policy_summary.txt",
         "incident_report": "monitoring/incident_report.json",
@@ -895,6 +897,8 @@ health_report = {
         "alerts_summary": "alerts/alerts_summary.txt",
         "timeline_summary": "timeline/summary.txt",
         "first_problem": "timeline/first_problem.json",
+        "slo_report": "monitoring/slo_report.json",
+        "slo_summary": "monitoring/slo_summary.txt",
         "alert_policy": "monitoring/alert_policy.json",
         "alert_policy_summary": "monitoring/alert_policy_summary.txt",
         "incident_report": "monitoring/incident_report.json",
@@ -940,6 +944,181 @@ with (root / "monitoring" / "health_summary.txt").open(
             f"required={action['required']}\n"
         )
 
+def max_metric(field):
+    values = []
+    for row in metric_rows:
+        try:
+            values.append(int(row.get(field, 0) or 0))
+        except ValueError:
+            values.append(0)
+    return max(values or [0])
+
+alert_count_by_category = Counter(alert.get("category", "") for alert in alerts)
+slo_objectives = [
+    {
+        "id": "availability.process_tick_gap",
+        "category": "availability",
+        "target": "max_process_tick_gap_us <= max_process_tick_gap_ms",
+        "observed": max_metric("max_process_tick_gap_us"),
+        "threshold": int(runtime_alerts.get("max_process_tick_gap_ms", 2000)) * 1000,
+        "unit": "us",
+        "source": "metrics/summary.csv",
+        "recommended_action": "inspect role worker scheduling and process loop stalls",
+    },
+    {
+        "id": "availability.rtp_output_gap",
+        "category": "availability",
+        "target": "max_rtp_output_gap_us <= max_rtp_output_gap_ms",
+        "observed": max_metric("max_rtp_output_gap_us"),
+        "threshold": int(runtime_alerts.get("max_rtp_output_gap_ms", 2000)) * 1000,
+        "unit": "us",
+        "source": "metrics/summary.csv",
+        "recommended_action": "inspect sender/server RTP output continuity and transport callback health",
+    },
+    {
+        "id": "availability.rtp_input_gap",
+        "category": "availability",
+        "target": "max_rtp_input_gap_us <= max_rtp_input_gap_ms",
+        "observed": max_metric("max_rtp_input_gap_us"),
+        "threshold": int(runtime_alerts.get("max_rtp_input_gap_ms", 2000)) * 1000,
+        "unit": "us",
+        "source": "metrics/summary.csv",
+        "recommended_action": "inspect receiver RTP input continuity and upstream packet flow",
+    },
+    {
+        "id": "availability.consecutive_transport_failures",
+        "category": "availability",
+        "target": "max_consecutive_transport_failures < threshold",
+        "observed": max_metric("max_consecutive_transport_failures"),
+        "threshold": int(runtime_alerts.get("consecutive_transport_failures_threshold", 3)),
+        "unit": "failures",
+        "source": "metrics/summary.csv",
+        "recommended_action": "inspect transport callback failures and downstream UDP send path",
+    },
+    {
+        "id": "media_quality.low_target_bitrate_alerts",
+        "category": "media_quality",
+        "target": "low_target_bitrate alerts == 0 outside expected weak-network tests",
+        "observed": alert_rule_counts.get("low_target_bitrate", 0),
+        "threshold": 0,
+        "unit": "alerts",
+        "source": "alerts/alerts_summary.txt",
+        "recommended_action": "inspect congestion feedback, sender caps, and weak-network adaptation",
+    },
+    {
+        "id": "media_quality.video_drop_alerts",
+        "category": "media_quality",
+        "target": "video_drop_frames alerts == 0",
+        "observed": alert_rule_counts.get("video_drop_frames", 0),
+        "threshold": 0,
+        "unit": "alerts",
+        "source": "alerts/alerts_summary.txt",
+        "recommended_action": "inspect downstream video drop and receiver QoE evidence",
+    },
+    {
+        "id": "network_qos.high_loss_alerts",
+        "category": "network_qos",
+        "target": "high_downlink_loss alerts == 0 outside expected weak-network tests",
+        "observed": alert_rule_counts.get("high_downlink_loss", 0),
+        "threshold": 0,
+        "unit": "alerts",
+        "source": "alerts/alerts_summary.txt",
+        "recommended_action": "inspect downstream loss, NACK rate, retransmission hit/miss, and UDP path quality",
+    },
+    {
+        "id": "network_qos.nack_recovery_alerts",
+        "category": "network_qos",
+        "target": "NACK/retransmission alerts are explainable by test scenario",
+        "observed": alert_rule_counts.get("nack_generated", 0)
+        + alert_rule_counts.get("local_retransmission_hit", 0),
+        "threshold": 0,
+        "unit": "alerts",
+        "source": "alerts/alerts_summary.txt",
+        "recommended_action": "inspect RTP loss/reordering and retransmission effectiveness",
+    },
+]
+
+for item in slo_objectives:
+    if item["unit"] == "alerts":
+        item["status"] = "warn" if int(item["observed"]) > int(item["threshold"]) else "pass"
+    elif item["id"] == "availability.consecutive_transport_failures":
+        item["status"] = "fail" if int(item["observed"]) >= int(item["threshold"]) else "pass"
+    else:
+        item["status"] = "fail" if int(item["observed"]) > int(item["threshold"]) else "pass"
+
+slo_status = (
+    "fail"
+    if any(item["status"] == "fail" for item in slo_objectives)
+    else "warn"
+    if any(item["status"] == "warn" for item in slo_objectives)
+    else "pass"
+)
+slo_report = {
+    "schema_version": 1,
+    "source": "phase5_debug_bundle",
+    "slo_status": slo_status,
+    "scope": "single debug bundle run; not a production SLO claim",
+    "categories": {
+        "availability": "process loop, RTP flow, and transport callback continuity",
+        "media_quality": "adaptation, video drop, decode/render health indicators",
+        "network_qos": "loss, NACK, retransmission, and UDP path indicators",
+    },
+    "runtime_thresholds": {
+        "max_process_tick_gap_ms": runtime_alerts.get("max_process_tick_gap_ms", 2000),
+        "max_rtp_output_gap_ms": runtime_alerts.get("max_rtp_output_gap_ms", 2000),
+        "max_rtp_input_gap_ms": runtime_alerts.get("max_rtp_input_gap_ms", 2000),
+        "consecutive_transport_failures_threshold": runtime_alerts.get(
+            "consecutive_transport_failures_threshold", 3
+        ),
+    },
+    "objectives": slo_objectives,
+    "category_status": {
+        category: (
+            "fail"
+            if any(
+                item["category"] == category and item["status"] == "fail"
+                for item in slo_objectives
+            )
+            else "warn"
+            if any(
+                item["category"] == category and item["status"] == "warn"
+                for item in slo_objectives
+            )
+            else "pass"
+        )
+        for category in ("availability", "media_quality", "network_qos")
+    },
+    "observed_alert_categories": dict(sorted(alert_count_by_category.items())),
+    "artifacts": {
+        "metrics_summary": "metrics/summary.csv",
+        "alerts_summary": "alerts/alerts_summary.txt",
+        "health_report": "monitoring/health_report.json",
+        "alert_policy": "monitoring/alert_policy.json",
+        "timeline": "timeline/events.jsonl",
+    },
+}
+with (root / "monitoring" / "slo_report.json").open(
+    "w", encoding="utf-8"
+) as handle:
+    json.dump(slo_report, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+
+with (root / "monitoring" / "slo_summary.txt").open(
+    "w", encoding="utf-8"
+) as handle:
+    handle.write(f"slo_status={slo_status}\n")
+    handle.write("scope=single_debug_bundle_run_not_production_slo_claim\n")
+    for category, status in sorted(slo_report["category_status"].items()):
+        observed = alert_count_by_category.get(category, 0)
+        handle.write(f"category={category} status={status} observed_alerts={observed}\n")
+    for item in slo_objectives:
+        handle.write(
+            f"objective={item['id']} category={item['category']} "
+            f"status={item['status']} observed={item['observed']} "
+            f"threshold={item['threshold']} unit={item['unit']} "
+            f"action={item['recommended_action']}\n"
+        )
+
 first_problem_role = problem.get("role", "")
 incident_steps = []
 incident_steps.append({
@@ -951,10 +1130,12 @@ incident_steps.append({
 incident_steps.append({
     "step": 2,
     "name": "check_health_report",
-    "required_action": "inspect role health, top alert rules, and recommended actions",
+    "required_action": "inspect role health, SLO status, top alert rules, and recommended actions",
     "artifacts": [
         "monitoring/health_report.json",
         "monitoring/health_summary.txt",
+        "monitoring/slo_report.json",
+        "monitoring/slo_summary.txt",
     ],
 })
 incident_steps.append({
@@ -1016,6 +1197,7 @@ incident_report = {
     "runbook_steps": incident_steps,
     "evidence_index": {
         "health_report": "monitoring/health_report.json",
+        "slo_report": "monitoring/slo_report.json",
         "alert_policy": "monitoring/alert_policy.json",
         "timeline": "timeline/events.jsonl",
         "first_problem": "timeline/first_problem.json",
@@ -1071,6 +1253,8 @@ PY
   write_summary "first_problem=${OUTPUT_DIR}/timeline/first_problem.json"
   write_summary "health_report=${OUTPUT_DIR}/monitoring/health_report.json"
   write_summary "health_summary=${OUTPUT_DIR}/monitoring/health_summary.txt"
+  write_summary "slo_report=${OUTPUT_DIR}/monitoring/slo_report.json"
+  write_summary "slo_summary=${OUTPUT_DIR}/monitoring/slo_summary.txt"
   write_summary "alert_policy=${OUTPUT_DIR}/monitoring/alert_policy.json"
   write_summary "alert_policy_summary=${OUTPUT_DIR}/monitoring/alert_policy_summary.txt"
   write_summary "incident_report=${OUTPUT_DIR}/monitoring/incident_report.json"

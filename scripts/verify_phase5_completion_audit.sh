@@ -166,6 +166,14 @@ require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'recommended_actions' debug_bundle_health_actions_gate
 require_doc_pattern scripts/collect_phase5_debug_bundle.sh \
+  'slo_report.json' debug_bundle_slo_report_collector
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'slo_report.json' debug_bundle_slo_report_verifier
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'single debug bundle run; not a production SLO claim' debug_bundle_slo_scope_gate
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'availability.process_tick_gap' debug_bundle_slo_availability_gate
+require_doc_pattern scripts/collect_phase5_debug_bundle.sh \
   'alert_policy.json' debug_bundle_alert_policy_collector
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'alert_policy.json' debug_bundle_alert_policy_verifier

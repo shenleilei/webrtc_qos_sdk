@@ -602,7 +602,8 @@ bundle 固定包含 `metadata.txt`、`build_config.txt`、`git_status.txt`、
 `metrics/{push,server,play}_metrics.jsonl`、`metrics/summary.csv`、
 `alerts/alerts.jsonl`、`alerts/alerts_summary.txt`、`timeline/events.jsonl`、
 `timeline/first_problem.json`、`monitoring/health_report.json`、
-`monitoring/alert_policy.json`、`monitoring/incident_report.json` 和 `manifest.sha256`。
+`monitoring/slo_report.json`、`monitoring/alert_policy.json`、
+`monitoring/incident_report.json` 和 `manifest.sha256`。
 这些文件可以回答
 “第一条 warn/error 在哪个角色、哪个 track、哪个 receiver 出现”以及“弱网前后
 bitrate/FPS/NACK/retransmission 怎么变化”。
@@ -617,6 +618,10 @@ role 打开原始 JSONL。
 默认告警规则、阈值来源、适用 role 和排查动作随 bundle 归档。生产排障时先确认
 policy 覆盖当前触发的 alert rule，再看 `health_report.json` 里的 top alert rules
 和 recommended actions。
+
+`monitoring/slo_report.json` / `slo_summary.txt` 是给监控和值班直接消费的目标视图：
+按 availability、media_quality、network_qos 三类列出默认目标、当前观测值、阈值、
+状态和排查动作。它只代表单个 debug bundle 的观测，不是正式生产 SLO 结论。
 
 `monitoring/incident_report.json` / `incident_runbook.txt` 是一线排障入口：先看
 first problem，再确认 health report、alert policy、受影响 role 的 log/metrics/

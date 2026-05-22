@@ -708,6 +708,8 @@ availability alert，以及 sender/server `sender_rtp_output_gap`、play
   monitoring/
     health_report.json
     health_summary.txt
+    slo_report.json
+    slo_summary.txt
     alert_policy.json
     alert_policy_summary.txt
     incident_report.json
@@ -756,6 +758,8 @@ debug_bundle/
   monitoring/
     health_report.json
     health_summary.txt
+    slo_report.json
+    slo_summary.txt
     alert_policy.json
     alert_policy_summary.txt
     incident_report.json
@@ -786,6 +790,11 @@ push/server/play 汇总 metric record 数、alert record 数、alert category/ru
 `recommended_actions`。`monitoring/health_summary.txt` 提供同样信息的文本摘要，
 方便人工在失败 artifact 中快速读取。
 
+`monitoring/slo_report.json` 是给监控和值班直接消费的目标视图：按
+availability、media_quality、network_qos 三类记录目标、当前观测值、阈值、状态和
+排查动作。`monitoring/slo_summary.txt` 是同一信息的文本版。该报告只声明
+single debug bundle run 的观测结果，不等价于正式生产 SLO 完成结论。
+
 `monitoring/alert_policy.json` 是本次运行使用的默认告警策略快照：包含
 availability、media_quality、network_qos 三类规则，记录每条规则的名称、类别、
 严重级别、适用 role、阈值来源、默认阈值、排查动作和本次 bundle 中的观测计数。
@@ -814,6 +823,8 @@ bundle 内相对路径、health report、alert policy 和 incident runbook 路�
 - timeline 同时包含 log/metric/alert 三类事件，并在 summary 中写出 first problem。
 - health report 覆盖三类 role、top alert rules、recommended actions 和 bundle 内
   相对 artifact 指针。
+- SLO report 覆盖 availability、media_quality、network_qos 三类目标、当前观测值、
+  阈值、状态、排查动作和 bundle 内相对 artifact 指针。
 - alert policy 覆盖 availability、media_quality、network_qos 三类规则、默认阈值、
   适用 role、排查动作和本次观测计数。
 - incident report 覆盖 first problem、top alert rules、recommended actions、证据
@@ -839,6 +850,7 @@ bundle 必须支持：
 - 找到第一次 error/warn。
 - 看到关键 metrics 的前后变化。
 - 看到可由 CI/运维直接消费的健康状态和推荐排查动作。
+- 看到可由监控和值班直接消费的 SLO/SLA 目标、观测值和状态。
 - 看到可离线审计的告警策略、阈值来源和规则覆盖。
 - 按 incident runbook 顺序定位 first problem、关联证据并校验 bundle 完整性。
 - 校验 manifest sha256，避免证据被改。
@@ -848,6 +860,8 @@ bundle 必须支持：
 - 任意 Phase-5 runner 失败时自动输出 debug bundle。
 - bundle verifier 能检查必需文件存在、manifest、JSON 字段和 weak-network alert。
 - health report 能按 role 汇总健康状态、首个问题、top alert rules 和推荐动作。
+- SLO report 能按 availability、media_quality、network_qos 汇总目标、观测值、
+  阈值和状态，且明确不冒充正式生产 SLO 结论。
 - alert policy 能证明本次运行的告警规则、阈值和排查动作可离线审计。
 - incident report 能给出固定排查步骤和对应 artifact 指针。
 - bundle 中无原始媒体 payload 和隐私敏感字段。

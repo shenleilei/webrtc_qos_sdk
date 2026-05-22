@@ -49,6 +49,8 @@ required_files=(
   timeline/summary.txt
   monitoring/health_report.json
   monitoring/health_summary.txt
+  monitoring/slo_report.json
+  monitoring/slo_summary.txt
   monitoring/alert_policy.json
   monitoring/alert_policy_summary.txt
   monitoring/incident_report.json
@@ -338,6 +340,8 @@ for key in (
     "alerts_summary",
     "timeline_summary",
     "first_problem",
+    "slo_report",
+    "slo_summary",
     "alert_policy",
     "alert_policy_summary",
     "incident_report",
@@ -362,6 +366,79 @@ for required_text in (
 for role in roles:
     if f"role={role} status=" not in health_summary:
         raise SystemExit(f"health summary missing role {role}")
+
+slo_report = json.loads((root / "monitoring" / "slo_report.json").read_text())
+if slo_report.get("schema_version") != 1:
+    raise SystemExit("slo_report.json missing schema_version=1")
+if slo_report.get("source") != "phase5_debug_bundle":
+    raise SystemExit("slo_report.json has unexpected source")
+if slo_report.get("slo_status") not in {"pass", "warn", "fail"}:
+    raise SystemExit("slo_report.json has unexpected slo_status")
+if slo_report.get("scope") != "single debug bundle run; not a production SLO claim":
+    raise SystemExit("slo_report.json has unexpected scope")
+slo_categories = set(slo_report.get("categories", {}).keys())
+if not {"availability", "media_quality", "network_qos"}.issubset(slo_categories):
+    raise SystemExit(f"slo report missing categories: {sorted(slo_categories)}")
+slo_objectives = slo_report.get("objectives", [])
+if len(slo_objectives) < 8:
+    raise SystemExit("slo report does not cover enough objectives")
+objective_by_id = {item.get("id"): item for item in slo_objectives}
+required_slo_objectives = {
+    "availability.process_tick_gap",
+    "availability.rtp_output_gap",
+    "availability.rtp_input_gap",
+    "availability.consecutive_transport_failures",
+    "media_quality.low_target_bitrate_alerts",
+    "media_quality.video_drop_alerts",
+    "network_qos.high_loss_alerts",
+    "network_qos.nack_recovery_alerts",
+}
+missing_slo = required_slo_objectives - objective_by_id.keys()
+if missing_slo:
+    raise SystemExit(f"slo report missing objectives: {sorted(missing_slo)}")
+for objective_id, item in objective_by_id.items():
+    if item.get("category") not in {"availability", "media_quality", "network_qos"}:
+        raise SystemExit(f"slo objective {objective_id} has bad category")
+    if item.get("status") not in {"pass", "warn", "fail"}:
+        raise SystemExit(f"slo objective {objective_id} has bad status")
+    for key in ("target", "observed", "threshold", "unit", "source", "recommended_action"):
+        if key not in item:
+            raise SystemExit(f"slo objective {objective_id} missing {key}")
+    source = item.get("source")
+    if not source or not (root / source).exists():
+        raise SystemExit(f"slo objective {objective_id} has bad source")
+category_status = slo_report.get("category_status", {})
+for category in ("availability", "media_quality", "network_qos"):
+    if category_status.get(category) not in {"pass", "warn", "fail"}:
+        raise SystemExit(f"slo report missing category status {category}")
+runtime_slo_thresholds = slo_report.get("runtime_thresholds", {})
+for key in (
+    "max_process_tick_gap_ms",
+    "max_rtp_output_gap_ms",
+    "max_rtp_input_gap_ms",
+    "consecutive_transport_failures_threshold",
+):
+    if key not in runtime_slo_thresholds:
+        raise SystemExit(f"slo report missing runtime threshold {key}")
+slo_artifacts = slo_report.get("artifacts", {})
+for key in ("metrics_summary", "alerts_summary", "health_report", "alert_policy", "timeline"):
+    rel = slo_artifacts.get(key)
+    if not rel or not (root / rel).exists():
+        raise SystemExit(f"slo report bad artifact pointer {key}")
+slo_summary = (root / "monitoring" / "slo_summary.txt").read_text(
+    encoding="utf-8"
+)
+for required_text in (
+    "slo_status=",
+    "scope=single_debug_bundle_run_not_production_slo_claim",
+    "category=availability",
+    "category=media_quality",
+    "category=network_qos",
+    "objective=availability.process_tick_gap",
+    "objective=network_qos.high_loss_alerts",
+):
+    if required_text not in slo_summary:
+        raise SystemExit(f"slo summary missing {required_text}")
 
 alert_policy = json.loads((root / "monitoring" / "alert_policy.json").read_text())
 if alert_policy.get("schema_version") != 1:
@@ -507,6 +584,7 @@ for index, step in enumerate(runbook_steps, 1):
 evidence_index = incident_report.get("evidence_index", {})
 for key in (
     "health_report",
+    "slo_report",
     "alert_policy",
     "timeline",
     "first_problem",
@@ -589,6 +667,8 @@ runtime_artifacts = runtime.get("artifacts", {})
 for artifact_kind in (
     "health_report",
     "health_summary",
+    "slo_report",
+    "slo_summary",
     "alert_policy",
     "alert_policy_summary",
     "incident_report",
