@@ -360,6 +360,10 @@ require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'incident_report.json' debug_bundle_incident_report_verifier
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
   'verify_bundle_integrity' debug_bundle_incident_runbook_gate
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'debug bundle files.txt and manifest.sha256 file sets differ' debug_bundle_manifest_file_set_gate
+require_doc_pattern scripts/verify_phase5_debug_bundle.sh \
+  'debug bundle files.txt does not match actual files' debug_bundle_manifest_actual_files_gate
 require_doc_pattern scripts/collect_phase5_debug_bundle.sh \
   'phase5_monitoring_metrics.prom' debug_bundle_monitoring_metrics_collector
 require_doc_pattern scripts/verify_phase5_debug_bundle.sh \

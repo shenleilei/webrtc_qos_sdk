@@ -933,7 +933,8 @@ bundle 内相对路径、health report、alert policy 和 incident runbook 路�
   指针和固定排查步骤。
 - push/server/play 日志中都有 `config_dump`，且只包含脱敏配置摘要。
 - runtime config 覆盖 push/server/play、日志/metrics/alerts 开关和脱敏标记。
-- `manifest.sha256` 可校验。
+- `files.txt`、`manifest.sha256` 和实际 bundle 文件集合一致，且 `manifest.sha256`
+  可校验。
 - bundle 中不出现 `payload/annexb_bytes/rtp_bytes/token/secret/password` 类字段。
 
 当前门禁：
@@ -955,12 +956,13 @@ bundle 必须支持：
 - 看到可由监控和值班直接消费的 SLO/SLA 目标、观测值和状态。
 - 看到可离线审计的告警策略、阈值来源和规则覆盖。
 - 按 incident runbook 顺序定位 first problem、关联证据并校验 bundle 完整性。
-- 校验 manifest sha256，避免证据被改。
+- 校验 files/manifest/实际文件集合一致性，避免证据被改、漏列或额外混入文件。
 
 #### 验收标准
 
 - 任意 Phase-5 runner 失败时自动输出 debug bundle。
-- bundle verifier 能检查必需文件存在、manifest、JSON 字段和 weak-network alert。
+- bundle verifier 能检查必需文件存在、files/manifest/实际文件集合一致性、JSON 字段
+  和 weak-network alert。
 - health report 能按 role 汇总健康状态、首个问题、top alert rules 和推荐动作。
 - SLO report 能按 availability、media_quality、network_qos 汇总目标、观测值、
   阈值和状态，且明确不冒充正式生产 SLO 结论。
