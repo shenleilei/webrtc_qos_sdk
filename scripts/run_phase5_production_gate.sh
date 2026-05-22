@@ -263,6 +263,11 @@ phase2_audit_summary = os.path.join(
     "phase2_completion_audit",
     "phase2_completion_audit_summary.txt",
 )
+phase2_audit_metrics = os.path.join(
+    phase2_dir,
+    "phase2_completion_audit",
+    "phase2_completion_audit_metrics.prom",
+)
 phase2_evidence_bundle = os.path.join(phase2_dir, "phase2_evidence_bundle")
 production_soak_dir = os.path.join(phase2_evidence_bundle, "production_soak")
 production_soak_summary = os.path.join(
@@ -319,6 +324,7 @@ checks = {
         phase2_audit_summary, "phase2_completion_audit=pass"
     )
     and phase2_audit.get("phase2_completion_status") == "complete",
+    "phase2_completion_audit_metrics": has_file(phase2_audit_metrics),
     "production_soak": has_prefix(phase2_audit_summary, "check=production_soak status=pass "),
     "real_renderer": has_prefix(phase2_audit_summary, "check=real_renderer status=pass "),
     "production_soak_summary": has_file(production_soak_summary)
@@ -381,6 +387,11 @@ evidence = [
             "phase2_completion_audit",
             checks["phase2_completion_audit"],
             rel(phase2_audit_summary),
+        ),
+        (
+            "phase2_completion_audit_metrics",
+            checks["phase2_completion_audit_metrics"],
+            rel(phase2_audit_metrics),
         ),
         (
             "production_soak",
@@ -471,6 +482,7 @@ doc = {
     },
     "observability": {
         "implementation_gate_metrics": rel(implementation_metrics),
+        "phase2_completion_audit_metrics": rel(phase2_audit_metrics),
         "debug_bundle_slo_status": slo_status,
         "debug_bundle_slo_report": rel(debug_slo),
     },
@@ -540,6 +552,7 @@ doc = {
         "phase2_production_gate": rel(phase2_dir),
         "phase2_evidence_bundle": rel(phase2_evidence_bundle),
         "phase2_completion_audit": rel(phase2_audit_summary),
+        "phase2_completion_audit_metrics": rel(phase2_audit_metrics),
         "production_soak_summary": rel(production_soak_summary),
         "production_soak_csv": rel(production_soak_csv),
         "production_soak_config": rel(production_soak_config),

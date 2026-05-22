@@ -144,6 +144,104 @@ elif expected_status == "dry_run":
 PY
 }
 
+verify_phase2_completion_audit_metrics() {
+  local metrics_file="$1"
+  python3 - "${metrics_file}" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+for required_text in (
+    "# TYPE webrtc_qos_phase2_completion_audit_info gauge",
+    "webrtc_qos_phase2_completion_audit_info",
+    "webrtc_qos_phase2_completion_audit_checks_total",
+    "webrtc_qos_phase2_completion_audit_check_status",
+    "webrtc_qos_phase2_completion_audit_production_evidence_status",
+):
+    if required_text not in text:
+        raise SystemExit(f"phase2 completion audit metrics missing {required_text}")
+
+line_re = re.compile(
+    r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{([^{}]*)\})?\s+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[+-]?Inf|NaN)$"
+)
+label_re = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"')
+records = []
+for line_no, line in enumerate(text.splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    match = line_re.match(line)
+    if not match:
+        raise SystemExit(
+            f"phase2 completion audit metrics line {line_no} is invalid: {line}"
+        )
+    labels = {}
+    raw_labels = match.group(3) or ""
+    position = 0
+    while position < len(raw_labels):
+        label_match = label_re.match(raw_labels, position)
+        if not label_match:
+            raise SystemExit(
+                f"phase2 completion audit metrics line {line_no} has invalid labels"
+            )
+        labels[label_match.group(1)] = label_match.group(2)
+        position = label_match.end()
+        if position < len(raw_labels):
+            if raw_labels[position] != ",":
+                raise SystemExit(
+                    f"phase2 completion audit metrics line {line_no} has malformed labels"
+                )
+            position += 1
+    records.append({
+        "name": match.group(1),
+        "labels": labels,
+        "value": float(match.group(4)),
+    })
+if not records:
+    raise SystemExit("phase2 completion audit metrics file has no samples")
+
+def has(name, value=None, **labels):
+    for record in records:
+        if record["name"] != name:
+            continue
+        if not all(record["labels"].get(key) == label for key, label in labels.items()):
+            continue
+        if value is not None and record["value"] != value:
+            continue
+        return True
+    return False
+
+if not has(
+    "webrtc_qos_phase2_completion_audit_info",
+    value=1,
+    audit_status="pass",
+    completion_status="complete",
+):
+    raise SystemExit("phase2 completion audit metrics missing pass/complete marker")
+for check in ("production_soak", "real_renderer", "capture_library", "evidence_bundle"):
+    if not has(
+        "webrtc_qos_phase2_completion_audit_check_status",
+        value=1,
+        check=check,
+        status="pass",
+    ):
+        raise SystemExit(f"phase2 completion audit metrics missing pass check {check}")
+    if not has(
+        "webrtc_qos_phase2_completion_audit_production_evidence_status",
+        value=1,
+        check=check,
+        status="pass",
+    ):
+        raise SystemExit(
+            f"phase2 completion audit metrics missing production evidence {check}"
+        )
+if not has("webrtc_qos_phase2_completion_audit_checks_total", value=0, status="fail"):
+    raise SystemExit("phase2 completion audit metrics recorded failed checks")
+PY
+}
+
 verify_readiness_json() {
   local readiness_dir="$1"
   local expected_status="$2"
@@ -442,6 +540,7 @@ if report.get("source") != "phase5_phase2_external_evidence_import":
     raise SystemExit("external phase2 import source mismatch")
 artifacts = report.get("artifacts", {})
 for key in (
+    "phase2_completion_audit_metrics",
     "production_soak_summary",
     "production_soak_csv",
     "production_soak_config",
@@ -584,6 +683,7 @@ checks = {item.get("check"): item.get("status") for item in report.get("checks",
 for required in (
     "bundle_manifest",
     "phase2_completion_audit",
+    "phase2_completion_audit_metrics",
     "production_soak",
     "production_soak_raw_evidence",
     "real_renderer",
@@ -597,6 +697,7 @@ for required in (
         raise SystemExit(f"external phase2 import missing pass check {required}")
 artifacts = report.get("artifacts", {})
 for key in (
+    "phase2_completion_audit_metrics",
     "production_soak_summary",
     "production_soak_csv",
     "production_soak_config",
@@ -660,6 +761,7 @@ require_phase2_completion_evidence() {
   local phase2_summary="${phase2_dir}/phase2_production_gate_summary.txt"
   local evidence_bundle="${phase2_dir}/phase2_evidence_bundle"
   local completion_audit="${phase2_dir}/phase2_completion_audit/phase2_completion_audit_summary.txt"
+  local completion_audit_metrics="${phase2_dir}/phase2_completion_audit/phase2_completion_audit_metrics.prom"
   local production_soak_dir="${evidence_bundle}/production_soak"
   local production_soak_summary="${production_soak_dir}/webrtc_first_qoe_production_soak_summary.txt"
   local production_soak_csv="${production_soak_dir}/webrtc_first_qoe_production_soak.csv"
@@ -675,6 +777,8 @@ require_phase2_completion_evidence() {
     fail "underlying production gate summary missing evidence bundle pointer"
   rg -q '^completion_audit=' "${phase2_summary}" ||
     fail "underlying production gate summary missing completion audit pointer"
+  rg -q '^completion_audit_metrics=' "${phase2_summary}" ||
+    fail "underlying production gate summary missing completion audit metrics pointer"
   if rg -q '^phase2_evidence_source=external_bundle$' "${phase2_summary}"; then
     require_file "${phase2_dir}/phase2_external_evidence_import.json"
     require_file "${phase2_dir}/phase2_external_evidence_import.txt"
@@ -682,6 +786,8 @@ require_phase2_completion_evidence() {
       fail "imported Phase-2 evidence report did not pass"
     rg -q '^check=git_head_match status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
       fail "imported Phase-2 evidence did not match git head"
+    rg -q '^check=phase2_completion_audit_metrics status=pass$' "${phase2_dir}/phase2_external_evidence_import.txt" ||
+      fail "imported Phase-2 evidence did not include completion audit metrics"
   fi
 
   require_file "${evidence_bundle}/manifest.sha256"
@@ -706,6 +812,8 @@ require_phase2_completion_evidence() {
     fail "underlying completion audit missing capture QoE CSV pointer"
   rg -q '^check=evidence_bundle status=pass ' "${completion_audit}" ||
     fail "underlying completion audit missing passed evidence bundle check"
+  require_file "${completion_audit_metrics}"
+  verify_phase2_completion_audit_metrics "${completion_audit_metrics}"
   require_file "${production_soak_summary}"
   require_file "${production_soak_csv}"
   require_file "${production_soak_config}"
@@ -797,6 +905,11 @@ if not implementation_metrics or not os.path.exists(
     os.path.join(gate_dir, implementation_metrics)
 ):
     raise SystemExit("release evidence missing implementation gate metrics")
+phase2_audit_metrics = observability.get("phase2_completion_audit_metrics")
+if not phase2_audit_metrics or not os.path.exists(
+    os.path.join(gate_dir, phase2_audit_metrics)
+):
+    raise SystemExit("release evidence missing Phase-2 completion audit metrics")
 if observability.get("debug_bundle_slo_status") not in {"pass", "warn", "fail"}:
     raise SystemExit("release evidence missing debug bundle SLO status")
 fanout = doc.get("fanout", {})
@@ -810,6 +923,7 @@ required_evidence = {
     "phase5_debug_bundle",
     "phase2_production_gate",
     "phase2_completion_audit",
+    "phase2_completion_audit_metrics",
     "production_soak",
     "production_soak_summary",
     "production_soak_csv",
@@ -849,6 +963,7 @@ for key in (
     "phase2_production_gate",
     "phase2_evidence_bundle",
     "phase2_completion_audit",
+    "phase2_completion_audit_metrics",
     "production_soak_summary",
     "production_soak_csv",
     "production_soak_config",
@@ -1029,6 +1144,7 @@ for expected in (
     "scope=phase5_formal_production_release_evidence",
     "fanout_status=deferred",
     "evidence=phase5_implementation_gate_metrics status=pass",
+    "evidence=phase2_completion_audit_metrics status=pass",
     "evidence=production_soak status=pass",
     "evidence=production_soak_csv status=pass",
     "evidence=real_renderer status=pass",

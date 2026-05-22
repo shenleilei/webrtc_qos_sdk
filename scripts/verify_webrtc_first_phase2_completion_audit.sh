@@ -4,6 +4,7 @@ set -euo pipefail
 SDK_ROOT="${SDK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SDK_ROOT}/artifacts/webrtc_first_phase2_completion_audit}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_DIR}/phase2_completion_audit_summary.txt}"
+PHASE2_COMPLETION_AUDIT_METRICS_PROM="${PHASE2_COMPLETION_AUDIT_METRICS_PROM:-${OUTPUT_DIR}/phase2_completion_audit_metrics.prom}"
 EVIDENCE_BUNDLE_DIR="${EVIDENCE_BUNDLE_DIR:-}"
 
 SMOKE_SUMMARY="${SMOKE_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_smoke/phase2_verify_summary.txt}"
@@ -25,7 +26,7 @@ ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE:-0}"
 REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
 
 mkdir -p "${OUTPUT_DIR}"
-rm -f "${SUMMARY_FILE}"
+rm -f "${SUMMARY_FILE}" "${PHASE2_COMPLETION_AUDIT_METRICS_PROM}"
 
 if [[ -n "${EVIDENCE_BUNDLE_DIR}" ]]; then
   SMOKE_SUMMARY="${EVIDENCE_BUNDLE_DIR}/smoke/phase2_verify_summary.txt"
@@ -39,6 +40,135 @@ fi
 
 write_summary() {
   printf '%s\n' "$*" | tee -a "${SUMMARY_FILE}"
+}
+
+write_audit_metrics() {
+  python3 - "${SUMMARY_FILE}" "${PHASE2_COMPLETION_AUDIT_METRICS_PROM}" <<'PY'
+import collections
+import re
+import sys
+
+summary_path, metrics_path = sys.argv[1:3]
+audit_status = "unknown"
+completion_status = "unknown"
+checks = []
+check_re = re.compile(r"^check=([^ ]+) status=([^ ]+)(?: |$)")
+with open(summary_path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        line = line.strip()
+        match = check_re.match(line)
+        if match:
+            checks.append(match.groups())
+            continue
+        if line.startswith("phase2_completion_audit="):
+            audit_status = line.split("=", 1)[1]
+        elif line.startswith("phase2_completion_status="):
+            completion_status = line.split("=", 1)[1]
+
+
+def prom_escape(value):
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def prom_labels(**labels):
+    items = [
+        f'{key}="{prom_escape(value)}"'
+        for key, value in sorted(labels.items())
+        if value is not None and value != ""
+    ]
+    return "{" + ",".join(items) + "}" if items else ""
+
+
+status_counts = collections.Counter(status for _, status in checks)
+important_status = {
+    "production_soak": "missing",
+    "real_renderer": "missing",
+    "capture_library": "missing",
+    "evidence_bundle": "not_required",
+}
+for check, status in checks:
+    if check in important_status:
+        important_status[check] = status
+
+with open(metrics_path, "w", encoding="utf-8") as fh:
+    fh.write("# HELP webrtc_qos_phase2_completion_audit_info Phase-2 completion audit status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase2_completion_audit_info gauge\n")
+    fh.write(
+        "webrtc_qos_phase2_completion_audit_info"
+        f"{prom_labels(audit_status=audit_status, completion_status=completion_status, source='phase2_completion_audit')} 1\n"
+    )
+    fh.write("# HELP webrtc_qos_phase2_completion_audit_checks_total Phase-2 completion audit check count by status.\n")
+    fh.write("# TYPE webrtc_qos_phase2_completion_audit_checks_total gauge\n")
+    for status in ("pass", "warn", "fail"):
+        fh.write(
+            "webrtc_qos_phase2_completion_audit_checks_total"
+            f"{prom_labels(status=status)} {status_counts.get(status, 0)}\n"
+        )
+    fh.write("# HELP webrtc_qos_phase2_completion_audit_check_status Phase-2 completion audit observed check status.\n")
+    fh.write("# TYPE webrtc_qos_phase2_completion_audit_check_status gauge\n")
+    for check, status in checks:
+        fh.write(
+            "webrtc_qos_phase2_completion_audit_check_status"
+            f"{prom_labels(check=check, status=status)} 1\n"
+        )
+    fh.write("# HELP webrtc_qos_phase2_completion_audit_production_evidence_status Phase-2 completion audit production evidence status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase2_completion_audit_production_evidence_status gauge\n")
+    for check, status in important_status.items():
+        fh.write(
+            "webrtc_qos_phase2_completion_audit_production_evidence_status"
+            f"{prom_labels(check=check, status=status)} 1\n"
+        )
+
+text = open(metrics_path, "r", encoding="utf-8").read()
+for required_text in (
+    "# TYPE webrtc_qos_phase2_completion_audit_info gauge",
+    "webrtc_qos_phase2_completion_audit_info",
+    "webrtc_qos_phase2_completion_audit_checks_total",
+    "webrtc_qos_phase2_completion_audit_check_status",
+    "webrtc_qos_phase2_completion_audit_production_evidence_status",
+):
+    if required_text not in text:
+        raise SystemExit(f"phase2 completion audit metrics missing {required_text}")
+
+line_re = re.compile(
+    r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{([^{}]*)\})?\s+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[+-]?Inf|NaN)$"
+)
+label_re = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"')
+records = []
+for line_no, line in enumerate(text.splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    match = line_re.match(line)
+    if not match:
+        raise SystemExit(
+            f"phase2 completion audit metrics line {line_no} is invalid: {line}"
+        )
+    labels = {}
+    raw_labels = match.group(3) or ""
+    position = 0
+    while position < len(raw_labels):
+        label_match = label_re.match(raw_labels, position)
+        if not label_match:
+            raise SystemExit(
+                f"phase2 completion audit metrics line {line_no} has invalid labels"
+            )
+        labels[label_match.group(1)] = label_match.group(2)
+        position = label_match.end()
+        if position < len(raw_labels):
+            if raw_labels[position] != ",":
+                raise SystemExit(
+                    f"phase2 completion audit metrics line {line_no} has malformed labels"
+                )
+            position += 1
+    records.append({
+        "name": match.group(1),
+        "labels": labels,
+        "value": float(match.group(4)),
+    })
+if not records:
+    raise SystemExit("phase2 completion audit metrics file has no samples")
+PY
 }
 
 has_line() {
@@ -275,6 +405,8 @@ fi
 if [[ "${failures}" -eq 0 ]]; then
   write_summary "phase2_completion_audit=pass"
   write_summary "phase2_completion_status=complete"
+  write_summary "phase2_completion_audit_metrics=${PHASE2_COMPLETION_AUDIT_METRICS_PROM}"
+  write_audit_metrics
   exit 0
 fi
 
@@ -282,4 +414,6 @@ audit_warn next_required_actions "run_VERIFY_LEVEL_production_with_SOAK_MINUTES_
 write_summary "phase2_completion_audit=fail"
 write_summary "phase2_completion_status=incomplete"
 write_summary "failure_count=${failures}"
+write_summary "phase2_completion_audit_metrics=${PHASE2_COMPLETION_AUDIT_METRICS_PROM}"
+write_audit_metrics
 exit 1

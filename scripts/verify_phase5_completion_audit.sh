@@ -410,6 +410,14 @@ require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence missing implementation gate metrics' production_gate_release_implementation_metrics_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase5_implementation_gate_metrics.prom' production_gate_verifies_implementation_metrics
+require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
+  'phase2_completion_audit_metrics.prom' production_gate_phase2_completion_metrics_collector
+require_doc_pattern scripts/run_phase5_production_gate.sh \
+  'phase2_completion_audit_metrics' production_gate_release_phase2_completion_metrics_index
+require_doc_pattern scripts/verify_phase5_production_gate.sh \
+  'webrtc_qos_phase2_completion_audit_info' production_gate_phase2_completion_metrics_verifier
+require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
+  'phase2_completion_audit_metrics' production_gate_external_import_phase2_completion_metrics
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'phase2_completion_audit=pass' production_gate_phase2_completion_audit_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \

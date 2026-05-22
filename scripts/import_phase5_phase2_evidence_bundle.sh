@@ -98,6 +98,9 @@ if ! env SDK_ROOT="${SDK_ROOT}" \
     >"${LOG_DIR}/phase2_completion_audit.log" 2>&1; then
   write_summary "phase2_production_gate_status=fail"
   write_summary "completion_audit=${AUDIT_OUTPUT_DIR}"
+  if [[ -s "${AUDIT_OUTPUT_DIR}/phase2_completion_audit_metrics.prom" ]]; then
+    write_summary "completion_audit_metrics=${AUDIT_OUTPUT_DIR}/phase2_completion_audit_metrics.prom"
+  fi
   write_manifest
   tail -n 80 "${LOG_DIR}/phase2_completion_audit.log" >&2 || true
   exit 1
@@ -185,6 +188,9 @@ def has_file(path):
 
 
 metadata = read_kv(os.path.join(bundle_dir, "metadata.env"))
+audit_metrics = os.path.join(
+    os.path.dirname(audit_summary), "phase2_completion_audit_metrics.prom"
+)
 soak_metadata = read_kv(
     os.path.join(bundle_dir, "production_soak", "archive", "metadata.txt")
 )
@@ -228,6 +234,7 @@ checks = {
     "bundle_manifest": os.path.exists(os.path.join(bundle_dir, "manifest.sha256")),
     "phase2_completion_audit": has_line(audit_summary, "phase2_completion_audit=pass")
     and has_line(audit_summary, "phase2_completion_status=complete"),
+    "phase2_completion_audit_metrics": has_file(audit_metrics),
     "production_soak": has_prefix(audit_summary, "check=production_soak status=pass "),
     "real_renderer": has_prefix(audit_summary, "check=real_renderer status=pass "),
     "capture_library": has_prefix(audit_summary, "check=capture_library status=pass "),
@@ -303,6 +310,7 @@ report = {
     "artifacts": {
         "phase2_evidence_bundle": rel(bundle_dir),
         "phase2_completion_audit": rel(audit_summary),
+        "phase2_completion_audit_metrics": rel(audit_metrics),
         "phase2_completion_audit_log": rel(
             os.path.join(output_root, "logs", "phase2_completion_audit.log")
         ),
@@ -329,6 +337,7 @@ with open(report_summary, "w", encoding="utf-8") as fh:
     fh.write(f"git_head_match={'true' if git_match else 'false'}\n")
     for name, passed in sorted(checks.items()):
         fh.write(f"check={name} status={'pass' if passed else 'fail'}\n")
+    fh.write(f"phase2_completion_audit_metrics={rel(audit_metrics)}\n")
     fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
     fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
     fh.write(f"real_renderer_metrics={rel(real_renderer_metrics)}\n")
@@ -345,6 +354,7 @@ write_summary "phase2_external_evidence_import_summary=${IMPORT_REPORT_SUMMARY}"
 write_summary "phase2_production_gate_status=pass"
 write_summary "evidence_bundle=${BUNDLE_OUTPUT_DIR}"
 write_summary "completion_audit=${AUDIT_OUTPUT_DIR}"
+write_summary "completion_audit_metrics=${AUDIT_OUTPUT_DIR}/phase2_completion_audit_metrics.prom"
 write_summary "manifest=${MANIFEST_FILE}"
 write_manifest
 
