@@ -344,25 +344,22 @@ if [[ "${SOAK_ARCHIVE}" == "1" ]]; then
   else
     echo "tracked_changes=unknown" >"${git_status_file}"
   fi
-  {
-    echo "summary_csv=$(basename "${SUMMARY_CSV}")"
-    echo "summary_txt=$(basename "${SUMMARY_TXT}")"
-    echo "config_env=$(basename "${CONFIG_ENV}")"
-    echo "cycles_dir=$(basename "${CYCLE_DIR}")"
-    echo "archive_dir=$(basename "${SOAK_ARCHIVE_DIR}")"
-  } >"${SOAK_ARCHIVE_DIR}/files.txt"
   (
     cd "${OUTPUT_DIR}"
-    find "$(basename "${CYCLE_DIR}")" -type f -print
-    printf '%s\n' "$(basename "${SUMMARY_CSV}")"
-    printf '%s\n' "$(basename "${SUMMARY_TXT}")"
-    printf '%s\n' "$(basename "${CONFIG_ENV}")"
-    find "$(basename "${SOAK_ARCHIVE_DIR}")" -maxdepth 1 -type f \
-      ! -name manifest.sha256 -print
-  ) | sort | (
-    cd "${OUTPUT_DIR}"
-    xargs sha256sum
-  ) >"${SOAK_ARCHIVE_DIR}/manifest.sha256"
+    {
+      find "$(basename "${CYCLE_DIR}")" -type f -print
+      printf '%s\n' "$(basename "${SUMMARY_CSV}")"
+      printf '%s\n' "$(basename "${SUMMARY_TXT}")"
+      printf '%s\n' "$(basename "${CONFIG_ENV}")"
+      find "$(basename "${SOAK_ARCHIVE_DIR}")" -maxdepth 1 -type f \
+        ! -name manifest.sha256 \
+        ! -name files.txt \
+        -print
+    } | sort >"${SOAK_ARCHIVE_DIR}/files.txt"
+    while IFS= read -r file; do
+      sha256sum "${file}"
+    done <"${SOAK_ARCHIVE_DIR}/files.txt" >"${SOAK_ARCHIVE_DIR}/manifest.sha256"
+  )
   tar -C "${OUTPUT_DIR}" -czf "${SOAK_ARCHIVE_TARBALL}" \
     "$(basename "${SUMMARY_CSV}")" \
     "$(basename "${SUMMARY_TXT}")" \

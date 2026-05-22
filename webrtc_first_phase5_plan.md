@@ -244,11 +244,11 @@ CSV，避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
 production soak archive 也必须是可追溯的正式证据：runner 在
-`archive/metadata.txt` 写入 `sdk_git_tracked_worktree_clean=true|false`，
+`archive/files.txt` 写入真实归档文件清单，并在 `archive/metadata.txt` 写入 `sdk_git_tracked_worktree_clean=true|false`，
 `archive/git_status.txt` 只记录 tracked 文件状态，未跟踪 artifacts/build 目录不污染
 clean 判定；`verify_webrtc_first_qoe_production_soak_archive.sh` 默认要求该归档来自
-clean tracked worktree，只有排查历史归档时才允许显式设置
-`REQUIRE_CLEAN_GIT_WORKTREE=0`。
+clean tracked worktree，并复验 `archive/files.txt`、`archive/manifest.sha256` 与实际
+archive 文件集合一致；只有排查历史归档时才允许显式设置 `REQUIRE_CLEAN_GIT_WORKTREE=0`。
 
 如果真实 renderer、正式 capture library 和 `SOAK_MINUTES>=120` 是在专用测试机跑出的，
 P5 顶层 gate 支持导入该机器收集的 Phase-2 evidence bundle：

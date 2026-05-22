@@ -526,6 +526,12 @@ require_doc_pattern scripts/verify_webrtc_first_qoe_production_soak_archive.sh \
   'REQUIRE_CLEAN_GIT_WORKTREE' production_soak_archive_git_clean_gate
 require_doc_pattern scripts/verify_webrtc_first_qoe_production_soak_archive.sh \
   'sdk_git_tracked_worktree_clean' production_soak_archive_git_clean_verifier
+require_doc_pattern scripts/run_webrtc_first_qoe_production_soak.sh \
+  "! -name files.txt" production_soak_archive_files_scope
+require_doc_pattern scripts/verify_webrtc_first_qoe_production_soak_archive.sh \
+  'production soak archive files.txt and manifest.sha256 file sets differ' production_soak_archive_manifest_file_set_verifier
+require_doc_pattern scripts/verify_webrtc_first_qoe_production_soak_archive.sh \
+  'production soak archive files.txt does not match actual archive files' production_soak_archive_manifest_actual_files_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'release evidence real renderer used xvfb backend' production_gate_release_renderer_xvfb_gate
 require_doc_pattern scripts/run_phase5_production_gate.sh \

@@ -554,7 +554,7 @@ oscillating_edge_recover,1,94,0.979167,0,29.8947,13.3985,0,100,10.5405,137.838,3
 
 已新增 `scripts/run_webrtc_first_qoe_production_soak.sh`，用于把真实 H264 QoE 矩阵包装成可重复运行的生产 soak runner。它可以按 `SOAK_CYCLES` 固定轮数运行，也可以按 `SOAK_MINUTES` 做 wall-clock soak；每轮都会调用 `run_webrtc_first_ffmpeg_qoe.sh`，最后聚合所有 cycle 的 CSV，并把 `decode_errors / freeze_count / renderer_proxy_late/drop / push_queue_full / 弱网低发送 / 恢复时间` 汇总成 pass/fail 门禁。弱网低发送不是只看单行 `pass=true`，runner 和 archive verifier 会再次按 `MAX_WEAK_SEND_RPS / MAX_WEAK_RTP_PPS / MAX_WEAK_TARGET_BPS / MAX_WEAK_ENCODER_FPS` 复查所有 weak-low 场景，确保弱网窗口内持续低 RPS、低 RTP pps、低码率和低 FPS。
 
-runner 现在还会生成可归档证据链：`webrtc_first_qoe_production_soak_config.env`、`archive/metadata.txt`、`archive/git_status.txt`、`archive/manifest.sha256`、每个 cycle 的 CSV/log，以及 `webrtc_first_qoe_production_soak_archive.tar.gz`。`archive/metadata.txt` 会写入 `sdk_git_tracked_worktree_clean=true|false`，`archive/git_status.txt` 只记录 tracked 文件状态，未跟踪 artifacts/build 目录不污染证据；离线 verifier 默认要求 clean tracked worktree，可用 `REQUIRE_CLEAN_GIT_WORKTREE=0` 只做历史归档排查。离线校验入口：
+runner 现在还会生成可归档证据链：`webrtc_first_qoe_production_soak_config.env`、`archive/metadata.txt`、`archive/git_status.txt`、`archive/files.txt`、`archive/manifest.sha256`、每个 cycle 的 CSV/log，以及 `webrtc_first_qoe_production_soak_archive.tar.gz`。`archive/files.txt` 是真实归档文件清单，离线 verifier 会复验它与 `archive/manifest.sha256` 和实际 archive 文件集合一致。`archive/metadata.txt` 会写入 `sdk_git_tracked_worktree_clean=true|false`，`archive/git_status.txt` 只记录 tracked 文件状态，未跟踪 artifacts/build 目录不污染证据；离线 verifier 默认要求 clean tracked worktree，可用 `REQUIRE_CLEAN_GIT_WORKTREE=0` 只做历史归档排查。离线校验入口：
 
 ```bash
 OUTPUT_DIR=/path/to/soak/output \

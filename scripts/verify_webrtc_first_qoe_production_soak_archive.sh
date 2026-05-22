@@ -36,6 +36,73 @@ fi
   sha256sum -c "${SOAK_ARCHIVE_DIR}/manifest.sha256" >/dev/null
 )
 
+verify_archive_manifest_consistency() {
+  python3 - "${OUTPUT_DIR}" "${SOAK_ARCHIVE_DIR}" <<'PY'
+import os
+import sys
+
+output_dir, archive_dir = sys.argv[1:3]
+archive_rel = os.path.relpath(archive_dir, output_dir)
+files_path = os.path.join(archive_dir, "files.txt")
+manifest_path = os.path.join(archive_dir, "manifest.sha256")
+
+with open(files_path, "r", encoding="utf-8") as handle:
+    files = [line.strip() for line in handle if line.strip()]
+with open(manifest_path, "r", encoding="utf-8") as handle:
+    manifest_files = []
+    for line_no, line in enumerate(handle, 1):
+        line = line.rstrip("\n")
+        if len(line) < 67:
+            raise SystemExit(
+                f"production soak archive manifest line {line_no} is too short"
+            )
+        digest, rel = line.split(None, 1)
+        if len(digest) != 64 or not all(
+            ch in "0123456789abcdefABCDEF" for ch in digest
+        ):
+            raise SystemExit(
+                f"production soak archive manifest line {line_no} has invalid sha256"
+            )
+        manifest_files.append(rel.lstrip("*"))
+
+actual_files = []
+for rel_root in ("cycles", archive_rel):
+    root_path = os.path.join(output_dir, rel_root)
+    if not os.path.isdir(root_path):
+        continue
+    for root, _, names in os.walk(root_path):
+        for name in names:
+            rel = os.path.relpath(os.path.join(root, name), output_dir)
+            if rel in {
+                os.path.join(archive_rel, "manifest.sha256"),
+                os.path.join(archive_rel, "files.txt"),
+            }:
+                continue
+            actual_files.append(rel)
+for name in (
+    "webrtc_first_qoe_production_soak.csv",
+    "webrtc_first_qoe_production_soak_summary.txt",
+    "webrtc_first_qoe_production_soak_config.env",
+):
+    if os.path.isfile(os.path.join(output_dir, name)):
+        actual_files.append(name)
+actual_files = sorted(set(actual_files))
+
+if files != sorted(files):
+    raise SystemExit("production soak archive files.txt is not sorted")
+if files != manifest_files:
+    raise SystemExit(
+        "production soak archive files.txt and manifest.sha256 file sets differ"
+    )
+if files != actual_files:
+    raise SystemExit(
+        "production soak archive files.txt does not match actual archive files"
+    )
+PY
+}
+
+verify_archive_manifest_consistency
+
 SUMMARY_CSV="${SUMMARY_CSV}" \
 SUMMARY_TXT="${SUMMARY_TXT}" \
 CONFIG_ENV="${CONFIG_ENV}" \
