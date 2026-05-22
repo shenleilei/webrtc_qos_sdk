@@ -374,6 +374,14 @@ require_doc_pattern scripts/run_phase5_implementation_gate.sh \
   'phase5_error_contract' implementation_gate_runs_error_contract
 require_doc_pattern scripts/run_phase5_implementation_gate.sh \
   "! -path './manifest.sha256'" implementation_gate_top_manifest_scope
+require_doc_pattern scripts/run_phase5_implementation_gate.sh \
+  'phase5_implementation_gate_metrics.prom' implementation_gate_metrics_collector
+require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
+  'verify_gate_metrics' implementation_gate_metrics_verifier
+require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
+  'webrtc_qos_phase5_implementation_gate_step_status' implementation_gate_metrics_step_gate
+require_doc_pattern scripts/verify_phase5_implementation_gate.sh \
+  'webrtc_qos_phase5_implementation_gate_debug_bundle_status' implementation_gate_metrics_debug_bundle_gate
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_phase5_debug_bundle.sh' production_gate_debug_bundle_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \

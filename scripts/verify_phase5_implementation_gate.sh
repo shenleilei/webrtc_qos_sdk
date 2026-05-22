@@ -69,6 +69,7 @@ require_file "${GATE_DIR}/metadata.txt"
 require_file "${SUMMARY_FILE}"
 require_file "${GATE_DIR}/files.txt"
 require_file "${GATE_DIR}/manifest.sha256"
+require_file "${GATE_DIR}/phase5_implementation_gate_metrics.prom"
 
 (
   cd "${GATE_DIR}"
@@ -78,12 +79,145 @@ require_file "${GATE_DIR}/manifest.sha256"
 summary_has '^phase5_implementation_gate=running$' ||
   fail "summary missing implementation gate start marker"
 
+verify_gate_metrics() {
+  local expected_status="$1"
+  python3 - "${GATE_DIR}/phase5_implementation_gate_metrics.prom" "${expected_status}" <<'PY'
+import pathlib
+import re
+import sys
+
+path, expected_status = sys.argv[1:3]
+text = pathlib.Path(path).read_text(encoding="utf-8")
+for required_text in (
+    "# TYPE webrtc_qos_phase5_implementation_gate_info gauge",
+    "webrtc_qos_phase5_implementation_gate_info",
+    "webrtc_qos_phase5_implementation_gate_steps_total",
+    "webrtc_qos_phase5_implementation_gate_step_status",
+    "webrtc_qos_phase5_implementation_gate_debug_bundle_status",
+):
+    if required_text not in text:
+        raise SystemExit(f"implementation gate metrics missing {required_text}")
+
+line_re = re.compile(
+    r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{([^{}]*)\})?\s+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[+-]?Inf|NaN)$"
+)
+label_re = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"')
+records = []
+for line_no, line in enumerate(text.splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    match = line_re.match(line)
+    if not match:
+        raise SystemExit(
+            f"implementation gate metrics line {line_no} is invalid: {line}"
+        )
+    labels = {}
+    raw_labels = match.group(3) or ""
+    position = 0
+    while position < len(raw_labels):
+        label_match = label_re.match(raw_labels, position)
+        if not label_match:
+            raise SystemExit(
+                f"implementation gate metrics line {line_no} has invalid labels"
+            )
+        labels[label_match.group(1)] = label_match.group(2)
+        position = label_match.end()
+        if position < len(raw_labels):
+            if raw_labels[position] != ",":
+                raise SystemExit(
+                    f"implementation gate metrics line {line_no} has malformed labels"
+                )
+            position += 1
+    records.append({
+        "name": match.group(1),
+        "labels": labels,
+        "value": float(match.group(4)),
+    })
+if not records:
+    raise SystemExit("implementation gate metrics file has no samples")
+
+
+def has(name, value=None, **labels):
+    for record in records:
+        if record["name"] != name:
+            continue
+        if not all(record["labels"].get(key) == label for key, label in labels.items()):
+            continue
+        if value is not None and record["value"] != value:
+            continue
+        return True
+    return False
+
+
+def sample_value(name, **labels):
+    for record in records:
+        if record["name"] != name:
+            continue
+        if all(record["labels"].get(key) == label for key, label in labels.items()):
+            return record["value"]
+    return None
+
+
+if not has(
+    "webrtc_qos_phase5_implementation_gate_info",
+    value=1,
+    status=expected_status,
+):
+    raise SystemExit("implementation gate metrics missing expected gate status")
+
+required_steps = (
+    "no_selfmade_media_stack",
+    "phase5_logging",
+    "phase5_metrics",
+    "phase5_alerts",
+    "phase5_error_contract",
+    "phase5_minimal_udp_external_app",
+    "phase5_release_contract",
+)
+if expected_status == "pass":
+    for step in required_steps:
+        if not has(
+            "webrtc_qos_phase5_implementation_gate_step_status",
+            value=1,
+            step=step,
+            status="pass",
+        ):
+            raise SystemExit(f"implementation gate metrics missing pass step {step}")
+    if not has(
+        "webrtc_qos_phase5_implementation_gate_debug_bundle_status",
+        value=1,
+        status="pass",
+    ):
+        raise SystemExit("passed implementation metrics missing debug bundle pass")
+elif expected_status == "fail":
+    fail_count = sample_value(
+        "webrtc_qos_phase5_implementation_gate_steps_total",
+        status="fail",
+    )
+    if fail_count is None or fail_count <= 0:
+        raise SystemExit("failed implementation metrics missing failed step count")
+    if not has(
+        "webrtc_qos_phase5_implementation_gate_step_status",
+        value=1,
+        status="fail",
+    ):
+        raise SystemExit("failed implementation metrics missing failed step marker")
+PY
+}
+
 if [[ "${REQUIRE_PASS}" == "1" ]]; then
   summary_has '^phase5_implementation_gate_status=pass$' ||
     fail "phase5 implementation gate did not pass"
+  verify_gate_metrics pass
 else
   summary_has '^phase5_implementation_gate_status=(pass|fail)$' ||
     fail "summary missing pass/fail status"
+  if summary_has '^phase5_implementation_gate_status=pass$'; then
+    verify_gate_metrics pass
+  else
+    verify_gate_metrics fail
+  fi
 fi
 
 if summary_has '^phase5_implementation_gate_status=fail$'; then

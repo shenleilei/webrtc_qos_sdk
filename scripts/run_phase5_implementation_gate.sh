@@ -11,6 +11,7 @@ SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_ROOT}/phase5_implementation_gate_summary.
 METADATA_FILE="${METADATA_FILE:-${OUTPUT_ROOT}/metadata.txt}"
 FILES_FILE="${FILES_FILE:-${OUTPUT_ROOT}/files.txt}"
 MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_ROOT}/manifest.sha256}"
+PHASE5_IMPLEMENTATION_GATE_METRICS_PROM="${PHASE5_IMPLEMENTATION_GATE_METRICS_PROM:-${OUTPUT_ROOT}/phase5_implementation_gate_metrics.prom}"
 TMP_ROOT="${TMP_ROOT:-/tmp/webrtc_qos_phase5_implementation_gate.${PHASE5_BUILD_ID}}"
 KEEP_TMP_ROOT="${KEEP_TMP_ROOT:-0}"
 
@@ -26,7 +27,8 @@ RUN_PHASE5_DEBUG_BUNDLE="${RUN_PHASE5_DEBUG_BUNDLE:-1}"
 
 rm -rf "${LOG_DIR}" "${ARTIFACT_DIR}" "${TMP_ROOT}"
 mkdir -p "${OUTPUT_ROOT}" "${LOG_DIR}" "${ARTIFACT_DIR}" "${TMP_ROOT}"
-rm -f "${SUMMARY_FILE}" "${METADATA_FILE}" "${FILES_FILE}" "${MANIFEST_FILE}"
+rm -f "${SUMMARY_FILE}" "${METADATA_FILE}" "${FILES_FILE}" "${MANIFEST_FILE}" \
+  "${PHASE5_IMPLEMENTATION_GATE_METRICS_PROM}"
 
 write_summary() {
   printf '%s\n' "$*" | tee -a "${SUMMARY_FILE}"
@@ -54,6 +56,80 @@ write_manifest() {
   )
 }
 
+write_implementation_gate_metrics() {
+  python3 - "${SUMMARY_FILE}" "${PHASE5_IMPLEMENTATION_GATE_METRICS_PROM}" <<'PY'
+import collections
+import re
+import sys
+
+summary_path, metrics_path = sys.argv[1:3]
+status = "unknown"
+step_order = []
+latest_steps = {}
+step_re = re.compile(r"^step=([^ ]+) status=([^ ]+)")
+with open(summary_path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        line = line.strip()
+        if line.startswith("phase5_implementation_gate_status="):
+            status = line.split("=", 1)[1]
+        match = step_re.match(line)
+        if match:
+            step, step_status = match.groups()
+            if step not in latest_steps:
+                step_order.append(step)
+            latest_steps[step] = step_status
+
+
+def prom_escape(value):
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def prom_labels(**labels):
+    items = [
+        f'{key}="{prom_escape(value)}"'
+        for key, value in sorted(labels.items())
+        if value is not None and value != ""
+    ]
+    return "{" + ",".join(items) + "}" if items else ""
+
+
+step_counts = collections.Counter(latest_steps.values())
+debug_bundle_status = (
+    latest_steps.get("verify_phase5_debug_bundle")
+    or latest_steps.get("collect_phase5_debug_bundle")
+    or latest_steps.get("phase5_debug_bundle")
+    or "not_reached"
+)
+with open(metrics_path, "w", encoding="utf-8") as fh:
+    fh.write("# HELP webrtc_qos_phase5_implementation_gate_info Phase-5 implementation gate status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_implementation_gate_info gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_implementation_gate_info"
+        f"{prom_labels(source='phase5_implementation_gate', status=status)} 1\n"
+    )
+    fh.write("# HELP webrtc_qos_phase5_implementation_gate_steps_total Phase-5 implementation gate step count by final status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_implementation_gate_steps_total gauge\n")
+    for step_status in ("pass", "fail", "skipped", "running"):
+        fh.write(
+            "webrtc_qos_phase5_implementation_gate_steps_total"
+            f"{prom_labels(status=step_status)} {step_counts.get(step_status, 0)}\n"
+        )
+    fh.write("# HELP webrtc_qos_phase5_implementation_gate_step_status Phase-5 implementation gate latest step status.\n")
+    fh.write("# TYPE webrtc_qos_phase5_implementation_gate_step_status gauge\n")
+    for step in step_order:
+        fh.write(
+            "webrtc_qos_phase5_implementation_gate_step_status"
+            f"{prom_labels(status=latest_steps[step], step=step)} 1\n"
+        )
+    fh.write("# HELP webrtc_qos_phase5_implementation_gate_debug_bundle_status Phase-5 implementation gate debug bundle status marker.\n")
+    fh.write("# TYPE webrtc_qos_phase5_implementation_gate_debug_bundle_status gauge\n")
+    fh.write(
+        "webrtc_qos_phase5_implementation_gate_debug_bundle_status"
+        f"{prom_labels(status=debug_bundle_status)} 1\n"
+    )
+PY
+}
+
 run_step() {
   local name="$1"
   shift
@@ -65,6 +141,8 @@ run_step() {
     local status=$?
     write_summary "step=${name} status=fail exit=${status} log=${log_file}"
     write_summary "phase5_implementation_gate_status=fail"
+    write_summary "phase5_implementation_gate_metrics=${PHASE5_IMPLEMENTATION_GATE_METRICS_PROM}"
+    write_implementation_gate_metrics
     write_manifest
     tail -n 80 "${log_file}" >&2 || true
     exit "${status}"
@@ -234,7 +312,9 @@ write_summary "phase5_alerts_artifacts=${ARTIFACT_DIR}/alerts"
 write_summary "phase5_error_contract_artifacts=${ARTIFACT_DIR}/error_contract"
 write_summary "phase5_minimal_udp_external_artifacts=${ARTIFACT_DIR}/minimal_udp_external"
 write_summary "phase5_release_contract_artifacts=${ARTIFACT_DIR}/release_contract"
+write_summary "phase5_implementation_gate_metrics=${PHASE5_IMPLEMENTATION_GATE_METRICS_PROM}"
 write_summary "manifest=${MANIFEST_FILE}"
+write_implementation_gate_metrics
 write_manifest
 
 if [[ "${KEEP_TMP_ROOT}" != "1" ]]; then

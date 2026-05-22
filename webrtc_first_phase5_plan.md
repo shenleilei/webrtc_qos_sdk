@@ -165,10 +165,13 @@ production evidence，而是把 no-selfmade、logging、metrics、alerts、error
 contract、minimal UDP external app、release contract 和 debug bundle 门禁串成一份
 可离线复验的实现证据，默认输出到
 `artifacts/phase5_implementation_gate/<utc_build_id>/`，包含 summary、logs、关键
-runtime artifacts、`files.txt` 和 `manifest.sha256`。
+runtime artifacts、`phase5_implementation_gate_metrics.prom`、`files.txt` 和
+`manifest.sha256`。`phase5_implementation_gate_metrics.prom` 用 Prometheus/textfile
+形式导出 gate pass/fail、各 step 最终状态和 debug bundle 状态，供 CI、监控告警和
+production gate wrapper 在正式验收前判断实现证据是否闭合。
 `verify_phase5_implementation_gate.sh` 会复验所有子门禁 pass、三角色日志/metrics/
-alerts 产物、debug bundle manifest 和运行 JSON 统一身份字段，避免 completion audit
-只靠脚本存在和文档 pattern。
+alerts 产物、debug bundle manifest、顶层 `.prom` 指标和运行 JSON 统一身份字段，避免
+completion audit 只靠脚本存在和文档 pattern。
 
 `verify_phase5_production_readiness.sh` 是正式验收前的轻量 preflight。它不跑长时
 soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture manifest、
@@ -262,6 +265,8 @@ evidence 状态和 next required action，供 CI、监控告警和发布系统�
 
 - implementation gate 可离线 verify 通过，证明日志、metrics、alerts、debug bundle、
   external sample、错误契约和发布契约都有运行证据。
+- implementation gate 必须输出并离线复验 `phase5_implementation_gate_metrics.prom`，
+  覆盖 gate status、step status 和 debug bundle status。
 - `SOAK_MINUTES>=120` production soak 通过。
 - 真实 renderer summary 为 `pass`，不是 skipped。
 - 正式 capture library 覆盖所需类别，manifest 校验通过，QoE 通过。
@@ -1360,6 +1365,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
   audit、git head、production soak、真实 renderer、正式 capture library manifest 和
   capture QoE CSV。
 - 顶层 metadata、summary、logs 和 sha256 manifest。
+- 顶层 `phase5_implementation_gate_metrics.prom` 必须覆盖 implementation gate
+  status、step status 和 debug bundle status。
 - 顶层 `phase5_production_gate_metrics.prom` 必须覆盖 gate status、step status、
   failure debug bundle status 和 release evidence status。
 - production wrapper 必须在进入 readiness/soak 前复验 implementation gate，不能只
