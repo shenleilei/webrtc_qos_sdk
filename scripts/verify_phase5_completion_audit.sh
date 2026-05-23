@@ -956,7 +956,7 @@ write_summary "phase5_completion_audit=fail"
 write_summary "pass_count=${pass_count}"
 write_summary "warning_count=${warnings}"
 write_summary "failure_count=${failures}"
-write_summary "next_required_actions=run_phase5_implementation_gate_then_run_phase5_production_gate_with_SOAK_MINUTES_ge_120_real_renderer_pass_formal_capture_library"
+write_summary "next_required_actions=run_phase5_implementation_gate_then_run_phase5_production_gate_with_SOAK_MINUTES_ge_120_and_real_renderer_capture_evidence_or_P5_policy_skip"
 write_summary "phase5_completion_audit_metrics=${PHASE5_COMPLETION_AUDIT_METRICS_PROM}"
 write_audit_metrics
 exit 1

@@ -24,6 +24,8 @@ MIN_CAPTURE_AVG_PSNR_Y="${MIN_CAPTURE_AVG_PSNR_Y:-20.0}"
 MIN_CAPTURE_AVG_SSIM_Y="${MIN_CAPTURE_AVG_SSIM_Y:-0.80}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE:-0}"
+P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER:-0}"
+P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY:-0}"
 REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
 
 mkdir -p "${OUTPUT_DIR}"
@@ -404,7 +406,15 @@ PY
   fi
 fi
 
-if [[ -f "${REAL_RENDERER_SUMMARY}" ]]; then
+if [[ "${P5_SKIP_REAL_RENDERER}" == "1" ]]; then
+  if [[ -f "${REAL_RENDERER_SUMMARY}" ]] &&
+      [[ -f "${REAL_RENDERER_METRICS}" ]] &&
+      [[ "$(kv_value "${REAL_RENDERER_SUMMARY}" real_renderer_status)" == "skipped_by_policy" ]]; then
+    audit_pass real_renderer "policy=skipped_by_p5_no_gpu_display_environment summary=${REAL_RENDERER_SUMMARY} metrics=${REAL_RENDERER_METRICS}"
+  else
+    audit_fail real_renderer "missing_policy_skip_summary summary=${REAL_RENDERER_SUMMARY} metrics=${REAL_RENDERER_METRICS}"
+  fi
+elif [[ -f "${REAL_RENDERER_SUMMARY}" ]]; then
   real_renderer_output=""
   real_renderer_status=0
   if ! real_renderer_output="$(env \
@@ -434,7 +444,17 @@ else
   fi
 fi
 
-if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
+if [[ "${P5_SKIP_CAPTURE_LIBRARY}" == "1" ]]; then
+  if [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]] &&
+      [[ "$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest_verification)" == "skipped_by_policy" ]] &&
+      [[ -f "${CAPTURE_QOE_CSV}" ]] &&
+      [[ -f "${CAPTURE_QOE_SUMMARY}" ]] &&
+      [[ "$(kv_value "${CAPTURE_QOE_SUMMARY}" capture_qoe_verification)" == "skipped_by_policy" ]]; then
+    audit_pass capture_library "policy=skipped_by_p5_no_production_data summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV} qoe_summary=${CAPTURE_QOE_SUMMARY}"
+  else
+    audit_fail capture_library "missing_policy_skip_summary summary=${CAPTURE_MANIFEST_SUMMARY} qoe_csv=${CAPTURE_QOE_CSV} qoe_summary=${CAPTURE_QOE_SUMMARY}"
+  fi
+elif [[ -f "${CAPTURE_MANIFEST_SUMMARY}" ]]; then
   capture_verified="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest_verification)"
   capture_dir="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_library_dir)"
   capture_manifest="$(kv_value "${CAPTURE_MANIFEST_SUMMARY}" capture_manifest)"
@@ -500,7 +520,7 @@ if [[ "${failures}" -eq 0 ]]; then
   exit 0
 fi
 
-audit_warn next_required_actions "run_VERIFY_LEVEL_production_with_SOAK_MINUTES_ge_120_REQUIRE_REAL_RENDERER_1_REQUIRE_CAPTURE_LIBRARY_1"
+audit_warn next_required_actions "run_VERIFY_LEVEL_production_with_SOAK_MINUTES_ge_120_and_real_renderer_capture_evidence_or_explicit_P5_SKIP_POLICY"
 write_summary "phase2_completion_audit=fail"
 write_summary "phase2_completion_status=incomplete"
 write_summary "failure_count=${failures}"

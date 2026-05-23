@@ -991,6 +991,14 @@ PY
     fail "phase5 production readiness missing capture manifest pass"
   rg -q '^check=real_renderer status=pass ' "${readiness_summary}" ||
     fail "phase5 production readiness missing real renderer pass"
+  if rg -q '^p5_skip_capture_library=1$' "${readiness_summary}"; then
+    rg -q '^check=capture_manifest status=pass policy=skipped_by_p5_no_production_data ' "${readiness_summary}" ||
+      fail "phase5 production readiness missing capture library policy skip evidence"
+  fi
+  if rg -q '^p5_skip_real_renderer=1$' "${readiness_summary}"; then
+    rg -q '^check=real_renderer status=pass policy=skipped_by_p5_no_gpu_display_environment ' "${readiness_summary}" ||
+      fail "phase5 production readiness missing real renderer policy skip evidence"
+  fi
   if rg -q '^check=external_phase2_evidence_bundle status=pass ' "${readiness_summary}"; then
     rg -q '^check=capture_manifest status=pass source=external_phase2_evidence_bundle ' "${readiness_summary}" ||
       fail "external readiness missing capture manifest external source"
@@ -1101,34 +1109,50 @@ if float(sys.argv[1] or 0) < 120:
 PY
   require_file "${real_renderer_summary}"
   require_file "${real_renderer_metrics}"
-  SUMMARY_FILE="${real_renderer_summary}" \
-    METRICS_FILE="${real_renderer_metrics}" \
-    ALLOW_XVFB_RENDERER=0 \
-    "${SDK_ROOT}/scripts/verify_real_renderer_evidence.sh" >/dev/null
+  if rg -q '^real_renderer_status=skipped_by_policy$' "${real_renderer_summary}"; then
+    rg -q '^check=real_renderer status=pass .*policy=skipped_by_p5_no_gpu_display_environment' \
+      "${completion_audit}" ||
+      fail "underlying completion audit missing real renderer policy skip marker"
+  else
+    SUMMARY_FILE="${real_renderer_summary}" \
+      METRICS_FILE="${real_renderer_metrics}" \
+      ALLOW_XVFB_RENDERER=0 \
+      "${SDK_ROOT}/scripts/verify_real_renderer_evidence.sh" >/dev/null
+  fi
   require_file "${evidence_bundle}/capture_library/capture_manifest_summary.txt"
   require_file "${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv"
   require_file "${evidence_bundle}/capture_library/capture_qoe_summary.txt"
-  rg -q '^capture_manifest_verification=true$' \
-    "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
-    fail "capture manifest summary did not verify"
-  rg -q '^capture_manifest_sha256=[0-9a-fA-F]{64}$' \
-    "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
-    fail "capture manifest summary missing sha256"
-  rg -q '^capture_media_sha256=[0-9a-fA-F]{64}$' \
-    "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
-    fail "capture manifest summary missing media sha256"
-  local required_capture_categories
-  required_capture_categories="$(
-    awk -F= '$1=="required_categories"{gsub(/,/," ",$2); print $2}' \
-      "${evidence_bundle}/capture_library/capture_qoe_summary.txt" | tail -1
-  )"
-  required_capture_categories="${required_capture_categories:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
-  CAPTURE_MANIFEST_SUMMARY="${evidence_bundle}/capture_library/capture_manifest_summary.txt" \
-    CAPTURE_QOE_CSV="${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv" \
-    CAPTURE_QOE_SUMMARY="${evidence_bundle}/capture_library/capture_qoe_summary.txt" \
-    REQUIRED_CAPTURE_CATEGORIES="${required_capture_categories}" \
-    ALLOW_FIXTURE_CAPTURE=0 \
-    "${SDK_ROOT}/scripts/verify_capture_library_evidence.sh" >/dev/null
+  if rg -q '^capture_manifest_verification=skipped_by_policy$' \
+      "${evidence_bundle}/capture_library/capture_manifest_summary.txt"; then
+    rg -q '^capture_qoe_verification=skipped_by_policy$' \
+      "${evidence_bundle}/capture_library/capture_qoe_summary.txt" ||
+      fail "capture QoE summary missing policy skip marker"
+    rg -q '^check=capture_library status=pass .*policy=skipped_by_p5_no_production_data' \
+      "${completion_audit}" ||
+      fail "underlying completion audit missing capture policy skip marker"
+  else
+    rg -q '^capture_manifest_verification=true$' \
+      "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
+      fail "capture manifest summary did not verify"
+    rg -q '^capture_manifest_sha256=[0-9a-fA-F]{64}$' \
+      "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
+      fail "capture manifest summary missing sha256"
+    rg -q '^capture_media_sha256=[0-9a-fA-F]{64}$' \
+      "${evidence_bundle}/capture_library/capture_manifest_summary.txt" ||
+      fail "capture manifest summary missing media sha256"
+    local required_capture_categories
+    required_capture_categories="$(
+      awk -F= '$1=="required_categories"{gsub(/,/," ",$2); print $2}' \
+        "${evidence_bundle}/capture_library/capture_qoe_summary.txt" | tail -1
+    )"
+    required_capture_categories="${required_capture_categories:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
+    CAPTURE_MANIFEST_SUMMARY="${evidence_bundle}/capture_library/capture_manifest_summary.txt" \
+      CAPTURE_QOE_CSV="${evidence_bundle}/capture_library/webrtc_first_qoe_capture_library_720p.csv" \
+      CAPTURE_QOE_SUMMARY="${evidence_bundle}/capture_library/capture_qoe_summary.txt" \
+      REQUIRED_CAPTURE_CATEGORIES="${required_capture_categories}" \
+      ALLOW_FIXTURE_CAPTURE=0 \
+      "${SDK_ROOT}/scripts/verify_capture_library_evidence.sh" >/dev/null
+  fi
 }
 
 require_release_evidence() {
@@ -1418,6 +1442,7 @@ for evidence_id, expected_rel in expected_gate_artifacts.items():
         )
 
 capture = doc.get("capture_library", {})
+capture_policy_skipped = capture.get("policy_skipped") is True
 for key in ("manifest_summary", "qoe_csv", "qoe_summary"):
     rel = capture.get(key)
     if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
@@ -1433,7 +1458,7 @@ with open(manifest_summary_path, "r", encoding="utf-8") as fh:
             continue
         key, value = line.split("=", 1)
         manifest_summary[key] = value
-if any(
+if not capture_policy_skipped and any(
     marker in manifest_summary_text.lower()
     for marker in (
         "fixture",
@@ -1442,18 +1467,22 @@ if any(
     )
 ):
     raise SystemExit("release evidence capture manifest used fixture library")
-if not valid_sha256(capture.get("manifest_sha256")):
-    raise SystemExit("release evidence capture manifest sha256 missing")
-if capture.get("manifest_sha256") != manifest_summary.get("capture_manifest_sha256"):
-    raise SystemExit("release evidence capture manifest sha256 mismatch")
-if capture.get("qoe_manifest_sha256") != capture.get("manifest_sha256"):
-    raise SystemExit("release evidence capture QoE manifest sha256 mismatch")
-if not valid_sha256(capture.get("media_sha256")):
-    raise SystemExit("release evidence capture media sha256 missing")
-if capture.get("media_sha256") != manifest_summary.get("capture_media_sha256"):
-    raise SystemExit("release evidence capture media sha256 mismatch")
-if capture.get("qoe_media_sha256") != capture.get("media_sha256"):
-    raise SystemExit("release evidence capture QoE media sha256 mismatch")
+if capture_policy_skipped:
+    if manifest_summary.get("capture_manifest_verification") != "skipped_by_policy":
+        raise SystemExit("release evidence capture manifest policy skip mismatch")
+else:
+    if not valid_sha256(capture.get("manifest_sha256")):
+        raise SystemExit("release evidence capture manifest sha256 missing")
+    if capture.get("manifest_sha256") != manifest_summary.get("capture_manifest_sha256"):
+        raise SystemExit("release evidence capture manifest sha256 mismatch")
+    if capture.get("qoe_manifest_sha256") != capture.get("manifest_sha256"):
+        raise SystemExit("release evidence capture QoE manifest sha256 mismatch")
+    if not valid_sha256(capture.get("media_sha256")):
+        raise SystemExit("release evidence capture media sha256 missing")
+    if capture.get("media_sha256") != manifest_summary.get("capture_media_sha256"):
+        raise SystemExit("release evidence capture media sha256 mismatch")
+    if capture.get("qoe_media_sha256") != capture.get("media_sha256"):
+        raise SystemExit("release evidence capture QoE media sha256 mismatch")
 
 def normalize_rel(path):
     return os.path.normpath(path).replace(os.sep, "/")
@@ -1584,6 +1613,10 @@ for key in ("summary", "csv", "config", "archive"):
     if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
         raise SystemExit(f"release evidence bad production soak pointer {key}")
 real_renderer = doc.get("real_renderer", {})
+real_renderer_policy_skipped = (
+    real_renderer.get("policy_skipped") is True
+    and real_renderer.get("status") == "skipped_by_policy"
+)
 for key in ("summary", "metrics"):
     rel = real_renderer.get(key)
     if not rel or not os.path.exists(os.path.join(gate_dir, rel)):
@@ -1643,11 +1676,13 @@ if evidence_number(production_soak, "freeze_count", 1) != 0:
     raise SystemExit("release evidence production soak freeze count is non-zero")
 if evidence_number(production_soak, "renderer_proxy_drop_frames", 1) != 0:
     raise SystemExit("release evidence production soak renderer drops are non-zero")
-if real_renderer.get("status") != "pass":
+if real_renderer_policy_skipped:
+    pass
+elif real_renderer.get("status") != "pass":
     raise SystemExit("release evidence real renderer did not pass")
-if real_renderer.get("backend") == "xvfb":
+elif real_renderer.get("backend") == "xvfb":
     raise SystemExit("release evidence real renderer used xvfb backend")
-if evidence_number(real_renderer, "rendered_frames") <= 0:
+elif evidence_number(real_renderer, "rendered_frames") <= 0:
     raise SystemExit("release evidence real renderer rendered no frames")
 
 def capture_number(key, default=0):
@@ -1656,24 +1691,28 @@ def capture_number(key, default=0):
         value = default
     return float(value)
 
-rows = int(capture.get("rows", 0) or 0)
-pass_rows = int(capture.get("pass_rows", 0) or 0)
-if rows <= 0 or pass_rows != rows:
-    raise SystemExit("release evidence capture QoE rows are incomplete")
-if not categories_cover(capture.get("categories"), capture.get("required_categories")):
-    raise SystemExit("release evidence capture required categories are incomplete")
-if capture_number("playable_ratio_min") <= 0:
-    raise SystemExit("release evidence capture playable ratio missing")
-if capture_number("avg_psnr_y_min") <= 0:
-    raise SystemExit("release evidence capture PSNR missing")
-if capture_number("avg_ssim_y_min") <= 0:
-    raise SystemExit("release evidence capture SSIM missing")
-if capture_number("decode_errors", 1) != 0:
-    raise SystemExit("release evidence capture decode errors are non-zero")
-if capture_number("freeze_count", 1) != 0:
-    raise SystemExit("release evidence capture freeze count is non-zero")
-if capture_number("renderer_proxy_drop_frames", 1) != 0:
-    raise SystemExit("release evidence capture renderer drops are non-zero")
+if capture_policy_skipped:
+    if int(capture.get("rows", 0) or 0) != 0:
+        raise SystemExit("release evidence capture policy skip has rows")
+else:
+    rows = int(capture.get("rows", 0) or 0)
+    pass_rows = int(capture.get("pass_rows", 0) or 0)
+    if rows <= 0 or pass_rows != rows:
+        raise SystemExit("release evidence capture QoE rows are incomplete")
+    if not categories_cover(capture.get("categories"), capture.get("required_categories")):
+        raise SystemExit("release evidence capture required categories are incomplete")
+    if capture_number("playable_ratio_min") <= 0:
+        raise SystemExit("release evidence capture playable ratio missing")
+    if capture_number("avg_psnr_y_min") <= 0:
+        raise SystemExit("release evidence capture PSNR missing")
+    if capture_number("avg_ssim_y_min") <= 0:
+        raise SystemExit("release evidence capture SSIM missing")
+    if capture_number("decode_errors", 1) != 0:
+        raise SystemExit("release evidence capture decode errors are non-zero")
+    if capture_number("freeze_count", 1) != 0:
+        raise SystemExit("release evidence capture freeze count is non-zero")
+    if capture_number("renderer_proxy_drop_frames", 1) != 0:
+        raise SystemExit("release evidence capture renderer drops are non-zero")
 
 for expected in (
     "release_status=pass",

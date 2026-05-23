@@ -33,6 +33,8 @@ RUN_PHASE5_READINESS="${RUN_PHASE5_READINESS:-1}"
 RUN_PHASE5_DEBUG_BUNDLE="${RUN_PHASE5_DEBUG_BUNDLE:-1}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB:-$([[ "${ALLOW_XVFB_RENDERER}" == "1" ]] && echo auto || echo 0)}"
+P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER:-1}"
+P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY:-1}"
 
 FACADE_FRAMES="${FACADE_FRAMES:-120}"
 PHASE5_IMPLEMENTATION_FRAMES="${PHASE5_IMPLEMENTATION_FRAMES:-36}"
@@ -271,6 +273,8 @@ write_release_evidence() {
     "${MIN_PRODUCTION_SOAK_MINUTES}" \
     "${ALLOW_XVFB_RENDERER}" \
     "${REAL_RENDERER_USE_XVFB}" \
+    "${P5_SKIP_REAL_RENDERER}" \
+    "${P5_SKIP_CAPTURE_LIBRARY}" \
     "${CAPTURE_LIBRARY_DIR}" \
     "${CAPTURE_LIBRARY_MANIFEST}" <<'PY'
 import json
@@ -295,9 +299,11 @@ import sys
     min_soak_minutes,
     allow_xvfb_renderer,
     real_renderer_use_xvfb,
+    p5_skip_real_renderer,
+    p5_skip_capture_library,
     capture_library_dir,
     capture_library_manifest,
-) = sys.argv[1:20]
+) = sys.argv[1:22]
 
 
 def rel(path):
@@ -501,14 +507,28 @@ production_soak_runtime = kv_summary(production_soak_config)
 real_renderer = kv_summary(real_renderer_summary)
 capture_manifest = kv_summary(capture_manifest_summary)
 capture_qoe = kv_summary(capture_qoe_summary)
+p5_skip_real_renderer_enabled = p5_skip_real_renderer == "1"
+p5_skip_capture_library_enabled = p5_skip_capture_library == "1"
+real_renderer_policy_skipped = (
+    p5_skip_real_renderer_enabled
+    and real_renderer.get("real_renderer_status") == "skipped_by_policy"
+)
+capture_library_policy_skipped = (
+    p5_skip_capture_library_enabled
+    and capture_manifest.get("capture_manifest_verification") == "skipped_by_policy"
+    and capture_qoe.get("capture_qoe_verification") == "skipped_by_policy"
+)
 capture_fixture_marker = has_capture_fixture_marker(capture_manifest_summary)
 capture_manifest_complete = (
     capture_manifest.get("capture_manifest_verification") == "true"
     and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
     and valid_sha256(capture_manifest.get("capture_media_sha256"))
     and not capture_fixture_marker
+) or capture_library_policy_skipped
+capture_qoe_complete = (
+    capture_qoe_summary_complete(capture_qoe, capture_manifest)
+    or capture_library_policy_skipped
 )
-capture_qoe_complete = capture_qoe_summary_complete(capture_qoe, capture_manifest)
 slo_status = "missing"
 if os.path.exists(debug_slo):
     with open(debug_slo, "r", encoding="utf-8") as fh:
@@ -553,17 +573,25 @@ checks = {
     "phase2_completion_audit_metrics": has_file(phase2_audit_metrics),
     "production_soak": has_prefix(phase2_audit_summary, "check=production_soak status=pass "),
     "real_renderer": has_prefix(phase2_audit_summary, "check=real_renderer status=pass ")
-    and real_renderer.get("real_renderer_status") == "pass"
-    and real_renderer.get("renderer_backend") != "xvfb"
-    and number_value(real_renderer, "rendered_frames") > 0,
+    and (
+        (
+            real_renderer.get("real_renderer_status") == "pass"
+            and real_renderer.get("renderer_backend") != "xvfb"
+            and number_value(real_renderer, "rendered_frames") > 0
+        )
+        or real_renderer_policy_skipped
+    ),
     "production_soak_summary": has_file(production_soak_summary)
     and production_soak.get("rows", "0") != "0"
     and production_soak.get("rows") == production_soak.get("pass_rows"),
     "production_soak_csv": has_file(production_soak_csv),
     "production_soak_config": has_file(production_soak_config),
     "production_soak_archive": has_file(production_soak_archive),
-    "real_renderer_summary": real_renderer.get("real_renderer_status") == "pass"
-    and real_renderer.get("renderer_backend") != "xvfb",
+    "real_renderer_summary": (
+        real_renderer.get("real_renderer_status") == "pass"
+        and real_renderer.get("renderer_backend") != "xvfb"
+    )
+    or real_renderer_policy_skipped,
     "real_renderer_metrics": has_file(real_renderer_metrics),
     "capture_library": has_prefix(
         phase2_audit_summary, "check=capture_library status=pass "
@@ -811,6 +839,8 @@ doc = {
         "min_production_soak_minutes": parse_number(min_soak_minutes),
         "allow_xvfb_renderer": allow_xvfb_renderer == "1",
         "real_renderer_use_xvfb": real_renderer_use_xvfb,
+        "p5_skip_real_renderer": p5_skip_real_renderer_enabled,
+        "p5_skip_capture_library": p5_skip_capture_library_enabled,
         "git_head": metadata_value(metadata_file, "GIT_HEAD", ""),
         "git_branch": metadata_value(metadata_file, "GIT_BRANCH", ""),
         "git_tracked_worktree_clean": metadata.get("GIT_TRACKED_WORKTREE_CLEAN")
@@ -864,6 +894,7 @@ doc = {
         "summary": rel(real_renderer_summary),
         "metrics": rel(real_renderer_metrics),
         "status": real_renderer.get("real_renderer_status", ""),
+        "policy_skipped": real_renderer_policy_skipped,
         "backend": real_renderer.get("renderer_backend", ""),
         "rendered_frames": parse_number(real_renderer.get("rendered_frames", "0")),
         "late_frames": parse_number(real_renderer.get("late_frames", "0")),
@@ -876,6 +907,7 @@ doc = {
     },
     "capture_library": {
         "manifest_summary": rel(capture_manifest_summary),
+        "policy_skipped": capture_library_policy_skipped,
         "qoe_csv": rel(capture_qoe_csv),
         "qoe_summary": rel(capture_qoe_summary),
         "categories": capture_qoe.get(
@@ -1101,6 +1133,8 @@ require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.
   printf 'PHASE5_IMPLEMENTATION_FRAMES=%s\n' "${PHASE5_IMPLEMENTATION_FRAMES}"
   printf 'ALLOW_XVFB_RENDERER=%s\n' "${ALLOW_XVFB_RENDERER}"
   printf 'REAL_RENDERER_USE_XVFB=%s\n' "${REAL_RENDERER_USE_XVFB}"
+  printf 'P5_SKIP_REAL_RENDERER=%s\n' "${P5_SKIP_REAL_RENDERER}"
+  printf 'P5_SKIP_CAPTURE_LIBRARY=%s\n' "${P5_SKIP_CAPTURE_LIBRARY}"
   printf 'CAPTURE_LIBRARY_DIR=%s\n' "${CAPTURE_LIBRARY_DIR}"
   printf 'CAPTURE_LIBRARY_MANIFEST=%s\n' "${CAPTURE_LIBRARY_MANIFEST}"
   printf 'COLLECTED_AT_UTC=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1166,6 +1200,8 @@ if [[ "${RUN_PHASE5_READINESS}" == "1" ]]; then
       MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
       ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
       REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB}" \
+      P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER}" \
+      P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY}" \
       CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR}" \
       CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST}" \
       CAPTURE_WIDTH="${CAPTURE_WIDTH}" \
@@ -1198,6 +1234,8 @@ if [[ -n "${PHASE2_EVIDENCE_BUNDLE_DIR}" ]]; then
       PHASE2_EVIDENCE_BUNDLE_DIR="${PHASE2_EVIDENCE_BUNDLE_DIR}" \
       MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
       ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
+      P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER}" \
+      P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY}" \
       ALLOW_FIXTURE_CAPTURE=0 \
       REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
       "${SDK_ROOT}/scripts/import_phase5_phase2_evidence_bundle.sh"
@@ -1211,6 +1249,8 @@ else
       PREFLIGHT_ONLY="${PREFLIGHT_ONLY}" \
       ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
       REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB}" \
+      P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER}" \
+      P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY}" \
       FACADE_FRAMES="${FACADE_FRAMES}" \
       QOE_FRAMES="${QOE_FRAMES}" QOE_WIDTH="${QOE_WIDTH}" \
       QOE_HEIGHT="${QOE_HEIGHT}" QOE_CONTENT_MODE="${QOE_CONTENT_MODE}" \

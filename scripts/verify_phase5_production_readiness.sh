@@ -23,6 +23,8 @@ SOAK_MINUTES="${SOAK_MINUTES:-120}"
 MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB:-$([[ "${ALLOW_XVFB_RENDERER}" == "1" ]] && echo auto || echo 0)}"
+P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER:-1}"
+P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY:-1}"
 CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR:-${SDK_ROOT}/capture_library}"
 CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST:-${CAPTURE_LIBRARY_DIR}/manifest.csv}"
 CAPTURE_WIDTH="${CAPTURE_WIDTH:-1280}"
@@ -360,7 +362,9 @@ write_readiness_reports() {
     "${CAPTURE_LIBRARY_DIR}" \
     "${CAPTURE_LIBRARY_MANIFEST}" \
     "${REQUIRE_READY}" \
-    "${PHASE2_EVIDENCE_BUNDLE_DIR}" <<'PY'
+    "${PHASE2_EVIDENCE_BUNDLE_DIR}" \
+    "${P5_SKIP_REAL_RENDERER}" \
+    "${P5_SKIP_CAPTURE_LIBRARY}" <<'PY'
 import json
 import os
 import sys
@@ -387,7 +391,9 @@ import sys
     capture_library_manifest,
     require_ready,
     phase2_evidence_bundle_dir,
-) = sys.argv[1:22]
+    p5_skip_real_renderer,
+    p5_skip_capture_library,
+) = sys.argv[1:24]
 
 
 def read_jsonl(path):
@@ -613,8 +619,8 @@ risks = [
         "name": "production_environment_dependency",
         "status": risk_environment_status,
         "mitigation": [
-            "readiness gate records missing formal environment evidence",
-            "production gate requires formal capture manifest and real renderer",
+            "readiness gate records missing formal environment evidence or explicit P5 policy skip",
+            "production gate requires production soak and either real renderer/capture evidence or policy skip evidence",
             "completion audit requires passed production evidence",
         ],
         "evidence": check_evidence(production_checks),
@@ -678,6 +684,8 @@ report = {
         "min_production_soak_minutes": parse_number(min_soak_minutes),
         "allow_xvfb_renderer": allow_xvfb_renderer == "1",
         "real_renderer_use_xvfb": real_renderer_use_xvfb,
+        "p5_skip_real_renderer": p5_skip_real_renderer == "1",
+        "p5_skip_capture_library": p5_skip_capture_library == "1",
         "capture_library_dir": capture_library_dir,
         "capture_library_manifest": capture_library_manifest,
         "phase2_evidence_bundle_dir": phase2_evidence_bundle_dir,
@@ -819,6 +827,8 @@ write_summary "soak_minutes=${SOAK_MINUTES}"
 write_summary "min_production_soak_minutes=${MIN_PRODUCTION_SOAK_MINUTES}"
 write_summary "allow_xvfb_renderer=${ALLOW_XVFB_RENDERER}"
 write_summary "real_renderer_use_xvfb=${REAL_RENDERER_USE_XVFB}"
+write_summary "p5_skip_real_renderer=${P5_SKIP_REAL_RENDERER}"
+write_summary "p5_skip_capture_library=${P5_SKIP_CAPTURE_LIBRARY}"
 write_summary "capture_library_dir=${CAPTURE_LIBRARY_DIR}"
 write_summary "capture_library_manifest=${CAPTURE_LIBRARY_MANIFEST}"
 write_summary "phase2_evidence_bundle_dir=${PHASE2_EVIDENCE_BUNDLE_DIR}"
@@ -936,7 +946,13 @@ if [[ -n "${PHASE2_EVIDENCE_BUNDLE_DIR}" ]]; then
       "exit=${external_phase2_status} log=${external_phase2_import_log}"
   fi
 else
-  if [[ "${RUN_CAPTURE_MANIFEST}" == "1" ]]; then
+  if [[ "${P5_SKIP_CAPTURE_LIBRARY}" == "1" ]]; then
+    capture_manifest_log="${LOG_DIR}/capture_manifest.log"
+    printf 'capture_manifest_status=skipped_by_policy\npolicy=p5_no_production_capture_data\n' \
+      >"${capture_manifest_log}"
+    record_pass "capture_manifest" \
+      "policy=skipped_by_p5_no_production_data log=${capture_manifest_log}"
+  elif [[ "${RUN_CAPTURE_MANIFEST}" == "1" ]]; then
     run_check "capture_manifest" \
       env SDK_ROOT="${SDK_ROOT}" \
         CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR}" \
@@ -951,7 +967,13 @@ else
     record_skip "capture_manifest" "RUN_CAPTURE_MANIFEST=${RUN_CAPTURE_MANIFEST}"
   fi
 
-  if [[ "${RUN_REAL_RENDERER}" == "1" ]]; then
+  if [[ "${P5_SKIP_REAL_RENDERER}" == "1" ]]; then
+    real_renderer_log="${LOG_DIR}/real_renderer.log"
+    printf 'real_renderer_status=skipped_by_policy\npolicy=p5_no_gpu_display_environment\n' \
+      >"${real_renderer_log}"
+    record_pass "real_renderer" \
+      "policy=skipped_by_p5_no_gpu_display_environment log=${real_renderer_log}"
+  elif [[ "${RUN_REAL_RENDERER}" == "1" ]]; then
     run_check "real_renderer" \
       env SDK_ROOT="${SDK_ROOT}" \
         OUTPUT_DIR="${OUTPUT_DIR}/real_renderer" \

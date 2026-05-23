@@ -49,8 +49,9 @@ VideoPushClient -> UDP -> ServerQosRouter -> UDP -> VideoPlayClient
 
 但离生产集成还差这些能力：
 
-- 正式验收证据还没闭合：`SOAK_MINUTES>=120` production soak、真实 renderer、
-  正式 capture library 仍缺正式结果。
+- P5 默认按无显卡/无真实生产素材环境收口：`P5_SKIP_REAL_RENDERER=1` 和
+  `P5_SKIP_CAPTURE_LIBRARY=1` 会生成显式 `skipped_by_policy` 证据；仍要求
+  `SOAK_MINUTES>=120` production soak。严格实机/业务素材验收可把这两个变量设为 `0`。
 - demo 和验证脚本里大量运行信息直接写 `std::cout` / `std::cerr`，不适合作为
   SDK 生产日志。
 - 运行时缺统一日志格式、日志级别、日志文件轮转、上下文字段和错误事件归档。
@@ -76,8 +77,7 @@ Phase-5 的完成标准：
 工程目标：
 
 - **生产验收闭环**
-  跑出正式 `SOAK_MINUTES>=120` production soak、真实 renderer pass、正式
-  capture library QoE pass，并生成可离线 audit 的 evidence bundle。
+  跑出正式 `SOAK_MINUTES>=120` production soak；P5 默认用 policy skip 记录无显卡/无真实生产素材环境下的 renderer/capture 豁免，并生成可离线 audit 的 evidence bundle。严格模式可关闭 skip，要求真实 renderer pass 和正式 capture library QoE pass。
 
 - **正式日志系统**
   SDK 和 demo 不再依赖散落的 `std::cout` 作为运行日志。引入统一 logger，支持
@@ -121,13 +121,13 @@ Phase-5 不做以下事情：
 
 #### 当前问题
 
-仓库内已有 smoke/qoe/production 短时 runner，但正式验收仍缺三类证据：
+仓库内已有 smoke/qoe/production 短时 runner。P5 当前只把长时 soak 作为必须证据，renderer/capture 在无对应环境或素材时走显式 policy skip：
 
 - `SOAK_MINUTES>=120` 的 production soak archive。
-- 真实 renderer `pass`。
-- 正式 `capture_library/manifest.csv` 和业务素材库 QoE pass。
+- 默认 `P5_SKIP_REAL_RENDERER=1`，记录真实 renderer `skipped_by_policy`。
+- 默认 `P5_SKIP_CAPTURE_LIBRARY=1`，记录 capture library `skipped_by_policy`。
 
-这些不是新的媒体功能，但它们决定 SDK 能不能对外描述成“生产可接入”。
+这些不是新的媒体功能。严格实机/业务素材验收时可把两个 skip 设为 `0`，恢复真实 renderer 和正式 capture library 的硬门禁。
 
 #### 设计方案
 
@@ -178,8 +178,8 @@ alerts 产物、debug bundle manifest、顶层 `.prom` 指标、`files.txt` /
 completion audit 只靠脚本存在和文档 pattern。
 
 `verify_phase5_production_readiness.sh` 是正式验收前的轻量 preflight。它不跑长时
-soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、正式 capture manifest、
-tracked worktree 是否干净、真实 renderer 可用性和 Phase-5 gate/audit 脚本是否齐全，并输出带 manifest 的
+soak，只检查 WebRTC module prefix、`SOAK_MINUTES` 配置、tracked worktree 是否干净、
+可选真实 renderer、可选 capture manifest 和 Phase-5 gate/audit 脚本是否齐全，并输出带 manifest 的
 readiness 报告、`readiness_report.json`、`next_required_actions.json` 和
 `risk_milestone_report.json`、`risk_milestone_summary.txt`、
 `phase5_production_readiness_metrics.prom`、`next_required_actions.txt`。
@@ -188,14 +188,14 @@ JSON 报告记录每个 check、失败/跳过原因、机器可消费的 remedia
 readiness 状态、失败/跳过/action 数、SOAK_MINUTES、check status、M1-M6、R1-R5 和
 remediation action，供 CI、监控告警和发布系统直接解析；文本文件用于人工排查。
 M6 fanout 在 P5 基础范围内固定为 deferred，正式完成状态仍要求 passed Phase-5
-production gate。
-默认本地缺正式素材或真实 renderer 时只生成 not-ready 报告；正式 CI 可设置
-`REQUIRE_READY=1` 作为硬门禁。
+production gate。默认 `P5_SKIP_REAL_RENDERER=1`、`P5_SKIP_CAPTURE_LIBRARY=1`，
+没有显卡/显示环境或没有真实生产素材时会生成 `skipped_by_policy` 证据并作为 P5
+范围内的 pass；严格实机/业务素材验收时把两个 skip 设为 `0`，恢复硬门禁。
 
 wrapper 会先跑并复验 Phase-5 implementation gate，再跑 release contract、production
 readiness 和 debug bundle 门禁，然后调用底层
-`run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、真实 renderer、
-正式 capture library、evidence bundle 和 completion audit。默认输出目录为
+`run_webrtc_first_phase2_production_gate.sh` 完成正式 production soak、可选真实 renderer、
+可选 capture library、evidence bundle 和 completion audit。默认输出目录为
 `artifacts/phase5_production_gate/<utc_build_id>/`，并生成 metadata、summary、logs、
 `git_tracked_status.txt`、`phase5_release_evidence.json`、`phase5_release_evidence.txt`、
 `phase5_production_gate_metrics.prom`、`files.txt` 和 `manifest.sha256`；
@@ -208,8 +208,9 @@ readiness 和 debug bundle 门禁，然后调用底层
 `MIN_PRODUCTION_SOAK_MINUTES` 降到 `120` 以下，防止绕过顶层 gate 生成弱生产证据。
 release evidence summary 会写出 `min_production_soak_minutes`，verifier 会确认声明最低值
 不低于 120，且实际 production soak 分钟数不低于该声明最低值。
-release evidence 生成阶段也会拒绝 `renderer_backend=xvfb` 或没有实际 rendered frames
-的 renderer 结果，避免正式 gate 先声明弱 renderer 证据 pass。
+严格模式下 release evidence 生成阶段会拒绝 `renderer_backend=xvfb` 或没有实际
+rendered frames 的 renderer 结果；默认 policy skip 模式则要求 renderer/capture
+写出 `skipped_by_policy`，避免把环境缺失伪装成真实通过。
 `phase5_production_gate_metrics.prom` 是顶层 gate 的 Prometheus/textfile 指标出口：
 导出 pass/fail/dry_run、各 step 状态、failure debug bundle 状态和 release evidence
 状态，并按 pass/fail/missing/invalid 聚合 release evidence item 计数，供 CI、监控告警和发布系统直接解析。`phase5_release_evidence.json` 是正式发布证据索引，必须列出
@@ -217,8 +218,8 @@ release evidence 生成阶段也会拒绝 `renderer_backend=xvfb` 或没有实�
 implementation gate、implementation gate `.prom` 指标、clean tracked worktree、production readiness summary、
 readiness report、next required actions、risk milestone report、readiness `.prom` 指标、readiness check records、debug bundle
 manifest、runtime config、health/SLO report、monitoring metrics、alert policy、incident report/runbook、timeline、first problem、alerts summary、底层 Phase-2
-production gate、底层 Phase-2 completion audit `.prom` 指标、production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、
-正式 capture library、capture manifest summary、capture manifest/media sha256、capture QoE CSV、capture QoE summary、
+production gate、底层 Phase-2 completion audit `.prom` 指标、production soak 原始 summary/CSV/archive、真实 renderer summary/metrics 或 policy skip summary/metrics、
+正式 capture library 或 policy skip、capture manifest summary、capture manifest/media sha256、capture QoE CSV、capture QoE summary、
 evidence bundle 和 completion audit 的 pass 状态及相对 artifact 路径，同时记录
 production soak rows、real renderer backend、readiness report/metrics/risk milestone 指针、debug health/monitoring/incident 指针、顶层 gate 文件清单/sha256 manifest/metrics 指针、release evidence 自身指针、capture QoE rows/minima 和
 `multi_receiver_fanout=deferred_before_p5_completion`。release evidence verifier 会按固定
@@ -239,10 +240,10 @@ readiness `.prom` 指标、clean tracked worktree 证据，并直接复验顶层
 `manifest.sha256` 文件集合一致、底层 Phase-2 evidence bundle manifest、
 `phase2_completion_audit=pass` 和
 `phase2_completion_status=complete`、`phase2_completion_audit_metrics.prom`，同时强制复验 `phase5_release_evidence.json` 和
-release evidence 里索引的自身 JSON/summary、production soak archive、真实 renderer summary/metrics、capture manifest/media sha256 和 capture QoE
-CSV；production soak 证据会通过 `verify_webrtc_first_qoe_production_soak_evidence.sh`
+release evidence 里索引的自身 JSON/summary、production soak archive、renderer summary/metrics、
+capture manifest/QoE 等证据；production soak 证据会通过 `verify_webrtc_first_qoe_production_soak_evidence.sh`
 复验 `SOAK_MINUTES>=120`、summary/CSV/config/archive 一致性、clean tracked worktree
-metadata、弱网低发送预算和恢复时间分布，真实 renderer 证据会通过
+metadata、弱网低发送预算和恢复时间分布；严格模式下真实 renderer 证据会通过
 `verify_real_renderer_evidence.sh` 复验非 Xvfb backend、实际 rendered frames、late/gap/jitter 预算，避免只相信 summary。
 本地可用 `PHASE5_DRY_RUN=1` 验证 gate 结构，但 dry-run 不代表生产证据完成。
 
@@ -257,7 +258,7 @@ P5 正式审计不直接信任 archive verifier 的单点结果，还会调用
 `SOAK_MINUTES` 不低于声明最低值和 P5 120 分钟下限、QoE 下限、hard failure 计数、
 弱网低发送预算和 archive 指针。
 
-如果真实 renderer、正式 capture library 和 `SOAK_MINUTES>=120` 是在专用测试机跑出的，
+如果严格模式的真实 renderer、正式 capture library 和 `SOAK_MINUTES>=120` 是在专用测试机跑出的，
 P5 顶层 gate 支持导入该机器收集的 Phase-2 evidence bundle：
 
 ```bash
@@ -269,10 +270,10 @@ PHASE2_EVIDENCE_BUNDLE_DIR=/path/to/phase2_evidence_bundle \
 bundle 到 P5 gate 目录内，复验源 bundle、复制后 bundle 和导入目录的 `files.txt` /
 `manifest.sha256` / 实际文件集合一致性，重新运行
 `verify_webrtc_first_phase2_completion_audit.sh`，要求 production soak、真实 renderer、
-正式 capture library manifest、capture QoE CSV、completion audit `.prom` 指标和 evidence bundle 全部 pass，并默认要求
+正式 capture library、completion audit `.prom` 指标和 evidence bundle 全部 pass，并默认要求
 bundle 里的 git head 与当前 P5 gate 的 git head 一致，且 bundle metadata 证明外部测试机
 tracked worktree clean。导入报告还必须索引原始证据：
-production soak summary/CSV/config/archive、真实 renderer summary/metrics、capture
+production soak summary/CSV/config/archive、renderer summary/metrics、capture
 manifest summary、capture manifest/media sha256、capture QoE CSV/summary，并输出 `production_soak_evidence`、`production_soak_raw_evidence`、
 `real_renderer_raw_evidence`、`real_renderer_rendered_frames`、`capture_qoe_raw_evidence` 检查项；导入时会调用
 `verify_webrtc_first_qoe_production_soak_evidence.sh` 复验 production soak summary/CSV/config/archive，
@@ -320,8 +321,8 @@ evidence 状态和 next required action，供 CI、监控告警和发布系统�
 - implementation gate 必须输出并离线复验 `phase5_implementation_gate_metrics.prom`，
   覆盖 gate status、step status 和 debug bundle status。
 - `SOAK_MINUTES>=120` production soak 通过。
-- 真实 renderer summary 为 `pass`，不是 skipped。
-- 正式 capture library 覆盖所需类别，manifest 校验通过，QoE 通过。
+- 默认 renderer/capture policy skip 证据通过；严格模式下真实 renderer summary 为
+  `pass`，正式 capture library 覆盖所需类别，manifest 校验通过，QoE 通过。
 - evidence bundle 可离线 audit 通过。
 - README 当前状态从“缺正式验收闭环”更新为“Phase-5 已补齐正式证据”。
 
@@ -1443,13 +1444,11 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 - 成功路径必须离线复验 `phase5_debug_bundle/`，确认日志、metrics、alerts、
   timeline 和 runtime config 都可用。
 - 成功路径必须生成并离线复验 `phase5_release_evidence.json`，确认 production soak、
-  production soak 原始 summary/CSV/archive、真实 renderer summary/metrics、正式
-  capture library、capture manifest/media sha256、capture QoE CSV、evidence bundle 和 completion audit 都有 pass
+  production soak 原始 summary/CSV/archive、renderer/capture 的真实证据或 policy skip 证据、evidence bundle 和 completion audit 都有 pass
   证据指针，且 release evidence JSON/summary 自身已被最终顶层 `manifest.sha256` 覆盖，并通过 `verify_webrtc_first_qoe_production_soak_evidence.sh` 确认长时 soak
-  summary/CSV/config/archive 一致且满足 P5 下限，通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，通过 `verify_capture_library_evidence.sh` 确认 capture manifest/QoE 绑定和质量门槛均通过，同时写出 production soak rows、real renderer backend 和 capture QoE
-  rows/minima 供排障。
+  summary/CSV/config/archive 一致且满足 P5 下限。严格模式下再通过 `verify_real_renderer_evidence.sh` 确认真实 renderer 非 Xvfb、实际 rendered frames 和 present 预算均通过，通过 `verify_capture_library_evidence.sh` 确认 capture manifest/QoE 绑定和质量门槛均通过。
 - 成功路径必须离线复验底层 Phase-2 evidence bundle 和 completion audit，确认
-  production soak、真实 renderer、正式 capture library 均为 pass，且 `.prom`
+  production soak 以及 renderer/capture 的真实证据或 policy skip 证据均为 pass，且 `.prom`
   指标中的生产证据状态也是 pass。
 - 非 dry-run 失败时自动输出 verified `failure_debug_bundle/`，并由顶层 verifier
   强制校验。
@@ -1473,9 +1472,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 
 ### M1：生产证据闭环
 
-- 准备正式 capture library。
-- 在有真实显示环境的机器跑 renderer。
-- 跑 `SOAK_MINUTES>=120` production gate。
+- 默认 P5：保留 renderer/capture policy skip，跑 `SOAK_MINUTES>=120` production gate。
+- 严格验收：准备正式 capture library，并在有真实显示环境的机器跑 renderer。
 - 收集 evidence bundle 并 audit 通过。
 
 ### M2：日志文件化
@@ -1549,11 +1547,11 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 
 ### 8.4 生产证据依赖环境
 
-风险：真实 renderer 和正式 capture library 不是本机一定能完成。
+风险：真实 renderer 和正式 capture library 不是本机一定能完成，也没有生产素材时不能伪造数据。
 
 取舍：
 
-- 把环境要求写进 release gate。
+- 把环境要求和 P5 policy skip 写进 release gate。
 - 本机短时 smoke 不能冒充正式验收。
 - evidence bundle 必须记录环境信息。
 
