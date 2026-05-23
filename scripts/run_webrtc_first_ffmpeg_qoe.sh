@@ -3,9 +3,15 @@ set -euo pipefail
 
 SDK_ROOT="${SDK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 WEBRTC_PREFIX="${WEBRTC_PREFIX:-${SDK_ROOT}/dist/linux-x86_64}"
-WORK_DIR="${WORK_DIR:-/tmp/webrtc_qos_ffmpeg_qoe.$$}"
+REQUESTED_WORK_DIR="${WORK_DIR:-}"
+WORK_DIR="${REQUESTED_WORK_DIR:-/tmp/webrtc_qos_ffmpeg_qoe.$$}"
 REQUESTED_PREFIX="${QOE_PREFIX:-${PREFIX:-}}"
 PREFIX="${REQUESTED_PREFIX:-/tmp/webrtc_qos_ffmpeg_qoe_prefix.$$}"
+PREFIX_IS_TEMP=0
+if [[ -z "${REQUESTED_PREFIX}" ]]; then
+  PREFIX_IS_TEMP=1
+fi
+CLEANUP_WORK_DIR="${CLEANUP_WORK_DIR:-1}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SDK_ROOT}/artifacts/webrtc_first_ffmpeg_qoe}"
 OUTPUT_BASENAME="${OUTPUT_BASENAME:-webrtc_first_ffmpeg_qoe}"
 FRAMES="${FRAMES:-30}"
@@ -39,6 +45,7 @@ PREFIX_ABS="$(readlink -m "${PREFIX}")"
 SDK_ROOT_ABS="$(readlink -m "${SDK_ROOT}")"
 if [[ "${PREFIX_ABS}" == "${WEBRTC_PREFIX_ABS}" ]]; then
   PREFIX="/tmp/webrtc_qos_ffmpeg_qoe_prefix.$$"
+  PREFIX_IS_TEMP=1
   PREFIX_ABS="$(readlink -m "${PREFIX}")"
 fi
 if [[ -z "${PREFIX_ABS}" || "${PREFIX_ABS}" == "/" ||
@@ -48,7 +55,25 @@ if [[ -z "${PREFIX_ABS}" || "${PREFIX_ABS}" == "/" ||
   exit 2
 fi
 
-rm -rf "${WORK_DIR}" "${PREFIX}"
+cleanup_qoe_tmp() {
+  local status=$?
+  trap - EXIT
+  if [[ "${CLEANUP_WORK_DIR}" == "1" && -z "${REQUESTED_WORK_DIR}" &&
+        "${WORK_DIR}" == /tmp/webrtc_qos_ffmpeg_qoe.* ]]; then
+    rm -rf -- "${WORK_DIR}"
+  fi
+  if [[ "${CLEANUP_WORK_DIR}" == "1" && "${PREFIX_IS_TEMP}" == "1" &&
+        "${PREFIX}" == /tmp/webrtc_qos_ffmpeg_qoe_prefix.* ]]; then
+    rm -rf -- "${PREFIX}"
+  fi
+  exit "${status}"
+}
+trap cleanup_qoe_tmp EXIT
+
+rm -rf "${WORK_DIR}"
+if [[ "${PREFIX_IS_TEMP}" == "1" ]]; then
+  rm -rf "${PREFIX}"
+fi
 mkdir -p "${WORK_DIR}" "${OUTPUT_DIR}" "${PREFIX}"
 cp -a "${WEBRTC_PREFIX}/." "${PREFIX}/"
 
