@@ -1015,19 +1015,42 @@ PY
     fail "phase5 production readiness missing capture manifest pass"
   rg -q '^check=real_renderer status=pass ' "${readiness_summary}" ||
     fail "phase5 production readiness missing real renderer pass"
-  if rg -q '^p5_skip_capture_library=1$' "${readiness_summary}"; then
-    rg -q '^check=capture_manifest status=pass policy=skipped_by_p5_no_production_data ' "${readiness_summary}" ||
-      fail "phase5 production readiness missing capture library policy skip evidence"
-  fi
-  if rg -q '^p5_skip_real_renderer=1$' "${readiness_summary}"; then
-    rg -q '^check=real_renderer status=pass policy=skipped_by_p5_no_gpu_display_environment ' "${readiness_summary}" ||
-      fail "phase5 production readiness missing real renderer policy skip evidence"
-  fi
   if rg -q '^check=external_phase2_evidence_bundle status=pass ' "${readiness_summary}"; then
     rg -q '^check=capture_manifest status=pass source=external_phase2_evidence_bundle ' "${readiness_summary}" ||
       fail "external readiness missing capture manifest external source"
     rg -q '^check=real_renderer status=pass source=external_phase2_evidence_bundle ' "${readiness_summary}" ||
       fail "external readiness missing real renderer external source"
+    if rg -q '^p5_skip_capture_library=1$' "${readiness_summary}"; then
+      python3 - "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    report = json.load(fh)
+if report.get("capture_library", {}).get("policy_skipped") is not True:
+    raise SystemExit("external readiness import missing capture policy skip")
+PY
+    fi
+    if rg -q '^p5_skip_real_renderer=1$' "${readiness_summary}"; then
+      python3 - "${readiness_dir}/external_phase2_evidence_import/phase2_external_evidence_import.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    report = json.load(fh)
+if report.get("real_renderer", {}).get("policy_skipped") is not True:
+    raise SystemExit("external readiness import missing real renderer policy skip")
+PY
+    fi
+  else
+    if rg -q '^p5_skip_capture_library=1$' "${readiness_summary}"; then
+      rg -q '^check=capture_manifest status=pass policy=skipped_by_p5_no_production_data ' "${readiness_summary}" ||
+        fail "phase5 production readiness missing capture library policy skip evidence"
+    fi
+    if rg -q '^p5_skip_real_renderer=1$' "${readiness_summary}"; then
+      rg -q '^check=real_renderer status=pass policy=skipped_by_p5_no_gpu_display_environment ' "${readiness_summary}" ||
+        fail "phase5 production readiness missing real renderer policy skip evidence"
+    fi
   fi
   verify_readiness_json "${readiness_dir}" "ready"
   verify_readiness_metrics "${readiness_dir}" "ready"
