@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -31,6 +32,12 @@ constexpr uint32_t kSenderPacketHistoryHopId = 0;
 constexpr int64_t kSentPacketStateMinHoldUs = 5 * 1000 * 1000;
 constexpr uint32_t kSenderHistoryHoldMs = 3000;
 constexpr uint32_t kSenderHistoryMaxHoldMs = 10000;
+constexpr int64_t kRecoveryLowTargetHoldUs = 3 * 1000 * 1000;
+constexpr int64_t kRecoveryProbeCooldownUs = 5 * 1000 * 1000;
+constexpr int64_t kRecoveryFeedbackFreshUs = 2 * 1000 * 1000;
+constexpr uint32_t kRecoveryLowTargetSlackBps = 50000;
+constexpr uint32_t kRecoverySevereRttMs = 1000;
+constexpr uint32_t kRecoveryRecoveredRttMs = 250;
 
 Status InvalidArgument(const char* message) {
   return Status::Error(StatusCode::kInvalidArgument, message);
@@ -145,6 +152,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
       return drain_status;
     }
     googcc_.OnProcessInterval(now_us);
+    MaybeRefreshRecoveryProbe(now_us);
     ApplyProbeClusters();
     ApplyGoogCcRates(now_us);
     Status rtcp_status = MaybeSendSenderReports(now_us);
@@ -266,6 +274,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
             -> Status {
           if (parsed.type == RtcpAdapterPacketType::kTransportFeedback) {
             ++snapshot_.transport_feedback_count;
+            NoteFeedbackProgress(receive_time_us);
             std::vector<GoogCcPacketFeedback> feedback;
             feedback.reserve(parsed.transport_feedback.packets.size());
             for (const auto& packet : parsed.transport_feedback.packets) {
@@ -299,6 +308,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
           }
           if (parsed.type == RtcpAdapterPacketType::kReceiverReport) {
             ++snapshot_.receiver_report_count;
+            NoteFeedbackProgress(receive_time_us);
             uint32_t max_rtt_ms = 0;
             for (const auto& block : parsed.receiver_report.report_blocks) {
               TrackState* track = FindTrackBySenderSsrc(block.media_ssrc);
@@ -631,6 +641,68 @@ class WebRtcVideoPushClient final : public VideoPushClient {
 
   void ApplyGoogCcRates(int64_t now_us) {
     pacer_->SetRates(EffectivePacingBps(now_us), 0);
+  }
+
+  void NoteFeedbackProgress(int64_t receive_time_us) {
+    last_recovery_feedback_time_us_ = receive_time_us;
+  }
+
+  void MaybeRefreshRecoveryProbe(int64_t now_us) {
+    const uint32_t final_target_bps = FinalTargetBps(now_us);
+    const uint32_t low_target_threshold_bps =
+        config_.session.min_bitrate_bps + kRecoveryLowTargetSlackBps;
+
+    if (latest_rtt_ms_ >= kRecoverySevereRttMs) {
+      recovery_saw_congested_rtt_ = true;
+    }
+
+    if (final_target_bps > low_target_threshold_bps) {
+      recovery_low_target_since_us_ = -1;
+      recovery_saw_congested_rtt_ = false;
+      return;
+    }
+
+    if (recovery_low_target_since_us_ < 0) {
+      recovery_low_target_since_us_ = now_us;
+      return;
+    }
+
+    const bool low_target_held =
+        now_us - recovery_low_target_since_us_ >= kRecoveryLowTargetHoldUs;
+    const bool rtt_recovered =
+        recovery_saw_congested_rtt_ && latest_rtt_ms_ > 0 &&
+        latest_rtt_ms_ <= kRecoveryRecoveredRttMs;
+    const bool feedback_recent =
+        last_recovery_feedback_time_us_ >= 0 &&
+        now_us - last_recovery_feedback_time_us_ <= kRecoveryFeedbackFreshUs;
+    const bool cooldown_elapsed =
+        last_recovery_probe_time_us_ < 0 ||
+        now_us - last_recovery_probe_time_us_ >= kRecoveryProbeCooldownUs;
+    if (!low_target_held || !rtt_recovered || !feedback_recent ||
+        !cooldown_elapsed) {
+      return;
+    }
+
+    const uint32_t before_target_bps = final_target_bps;
+    googcc_.OnNetworkRouteChange(config_.session.start_bitrate_bps,
+                                 config_.session.min_bitrate_bps,
+                                 config_.session.max_bitrate_bps, now_us);
+    googcc_.OnProcessInterval(now_us);
+    ResetPacerQueue(now_us);
+    ApplyProbeClusters();
+    ApplyGoogCcRates(now_us);
+    last_recovery_probe_time_us_ = now_us;
+    recovery_low_target_since_us_ = now_us;
+    recovery_saw_congested_rtt_ = false;
+
+    logger_.Info(
+        "sender_recovery_probe", config_.session.ids,
+        std::string("\"before_target_bps\":") +
+            std::to_string(before_target_bps) +
+            ",\"after_target_bps\":" + std::to_string(FinalTargetBps(now_us)) +
+            ",\"latest_rtt_ms\":" + std::to_string(latest_rtt_ms_) +
+            ",\"feedback_age_us\":" +
+            std::to_string(now_us - last_recovery_feedback_time_us_));
   }
 
   void ApplyProbeClusters() {
@@ -1122,6 +1194,10 @@ class WebRtcVideoPushClient final : public VideoPushClient {
   uint32_t latest_rtt_ms_ = 0;
   int64_t last_process_tick_time_us_ = -1;
   int64_t last_rtp_output_time_us_ = -1;
+  int64_t recovery_low_target_since_us_ = -1;
+  int64_t last_recovery_probe_time_us_ = -1;
+  int64_t last_recovery_feedback_time_us_ = -1;
+  bool recovery_saw_congested_rtt_ = false;
 };
 
 }  // namespace
