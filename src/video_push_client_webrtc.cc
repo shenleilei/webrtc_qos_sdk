@@ -234,31 +234,16 @@ class WebRtcVideoPushClient final : public VideoPushClient {
     const auto pacer_stats = pacer_->stats();
     if (pacer_stats.queue_bytes + access_unit_bytes > kMaxPacingQueueBytes) {
       ++track->snapshot.dropped_frames;
-      Status status = Status::Error(
-          StatusCode::kQueueFull,
-          "WebRTC pacing adapter queue bytes would overflow");
-      logger_.Warn("pacer_enqueue_failed", track->config.ids, status);
-      if (alert_writer_.config().alert_on_media_failure) {
-        alert_writer_.Error("pacer_enqueue_failed", "media_quality",
-                            track->config.ids, access_unit.capture_time_us,
-                            status);
-      }
-      return status;
+      logger_.Info("pacer_backpressure_drop", track->config.ids);
+      return Status::Ok();
     }
 
     for (auto& pending : pending_packets) {
       if (!pacer_->EnqueuePacket(pending.packet)) {
         ResetPacerQueue(access_unit.capture_time_us);
         ++track->snapshot.dropped_frames;
-        Status status = Status::Error(StatusCode::kQueueFull,
-                                      "WebRTC pacing adapter rejected RTP packet");
-        logger_.Warn("pacer_enqueue_failed", track->config.ids, status);
-        if (alert_writer_.config().alert_on_media_failure) {
-          alert_writer_.Error("pacer_enqueue_failed", "media_quality",
-                              track->config.ids, access_unit.capture_time_us,
-                              status);
-        }
-        return status;
+        logger_.Info("pacer_backpressure_drop", track->config.ids);
+        return Status::Ok();
       }
     }
     track->next_rtp_sequence_number = rtp_sequence_number;
