@@ -43,23 +43,17 @@ P5 生产门禁已经完成，最终状态：
 - `phase5_completion_status=complete`
 - `phase5_completion_audit=pass`
 
-弱网稳定性结果：
+核心弱网效果：
 
-- soak 配置：`SOAK_MINUTES=10`
-- 场景：`baseline`、`weak_network_low_rps_low_bitrate`
-- 内容：`block_motion`、`camera_pan`、`scene_cut`、`low_light_noise`
-- 结果：`8` 轮，`64` 行 QoE 结果，`64/64 pass`
-- `playable_ratio_min=0.9625`
-- `avg_psnr_y_min=31.749`
-- `avg_ssim_y_min=0.813671`
-- `decode_errors=0`
-- `freeze_count=0`
-- `renderer_proxy_late_frames=0`
-- `renderer_proxy_drop_frames=0`
-- `push_queue_full=0`
-- 弱网低发送预算：`bad_send_rps_max=10.3279`，`bad_rtp_pps_max=109.672`
-- 弱网降级上限：`target_bps<=750000`，`encoder_fps<=10`
-- 恢复时间：`full_recovery_time_ms_max=0`
+| 场景 | QoS 表现 | QoE 表现 |
+| --- | --- | --- |
+| 720p baseline | RTP drop / NACK / retransmission 都为 `0`，renderer proxy max latency `350ms` | `32/32 pass`，`playable_ratio_min=0.9833`，`avg_psnr_y_min=31.749`，`avg_ssim_y_min=0.8137` |
+| 720p 弱网降级恢复 | 弱网窗口内降到 `10.3279 AU/s`、`109.672 RTP pps`、`<=750kbps`、`10fps`，恢复时间 `0ms` | `32/32 pass`，`playable_ratio_min=0.9625`，`avg_psnr_y_min=31.815`，`avg_ssim_y_min=0.8166`，decode/freeze/render drop 都为 `0` |
+| RTP 丢包恢复矩阵 | burst loss：`19` 个 RTP drop 触发 `19` 个 NACK 和 `19` 次重传；dead-zone：`33` 个 RTP drop 后仍恢复 | protocol/facade 层 `playable_ratio=1`，用于证明 NACK/重传链路有效 |
+
+完整场景参数、延迟、丢包、抖动和 QoS/QoE 明细见：
+
+- [弱网场景 QoS/QoE 结果](docs/weak_network_qos_qoe_results.md)
 
 当前机器没有 GPU / 显示环境，也没有真实生产采集素材库，所以 P5 对 real renderer 和 capture library 使用显式 policy skip：
 
@@ -164,6 +158,7 @@ scripts/verify_phase5_completion_audit.sh
 ## 详细文档
 
 - [完整实现说明](IMPLEMENTATION_GUIDE.md)
+- [弱网场景 QoS/QoE 结果](docs/weak_network_qos_qoe_results.md)
 - [WebRTC QoS 总览与 SDK 设计说明](docs/webrtc_qos_overview.md)
 - [WebRTC 边界声明](docs/webrtc_boundary_statement.md)
 - [QoS 测试与验证方法](docs/qos_test_validation_methodology.md)
