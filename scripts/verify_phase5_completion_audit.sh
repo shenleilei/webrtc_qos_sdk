@@ -319,17 +319,18 @@ require_script run_phase5_production_gate.sh production_gate_wrapper
 require_script verify_phase5_production_gate.sh production_gate_verifier
 require_script verify_no_selfmade_media_stack.sh no_selfmade_media_stack_gate
 
-require_doc_pattern README.md 'verify_phase5_logging.sh' readme_logging
-require_doc_pattern README.md 'log-max-file-bytes' readme_log_rotation
-require_doc_pattern README.md 'verify_phase5_metrics.sh' readme_metrics
-require_doc_pattern README.md 'metrics-max-file-bytes' readme_metrics_rotation
-require_doc_pattern README.md 'verify_phase5_alerts.sh' readme_alerts
-require_doc_pattern README.md 'alerts-max-file-bytes' readme_alerts_rotation
-require_doc_pattern README.md 'verify_phase5_error_contract.sh' readme_error_contract
-require_doc_pattern README.md 'verify_phase5_release_contract.sh' readme_release_contract
-require_doc_pattern README.md 'run_phase5_implementation_gate.sh' readme_implementation_gate
-require_doc_pattern README.md 'run_phase5_production_gate.sh' readme_production_gate
-require_doc_pattern README.md 'verify_phase5_production_readiness.sh' readme_production_readiness
+require_doc_pattern README.md 'IMPLEMENTATION_GUIDE.md' readme_implementation_guide_link
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'verify_phase5_logging.sh' implementation_guide_logging
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'log-max-file-bytes' implementation_guide_log_rotation
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'verify_phase5_metrics.sh' implementation_guide_metrics
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'metrics-max-file-bytes' implementation_guide_metrics_rotation
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'verify_phase5_alerts.sh' implementation_guide_alerts
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'alerts-max-file-bytes' implementation_guide_alerts_rotation
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'verify_phase5_error_contract.sh' implementation_guide_error_contract
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'verify_phase5_release_contract.sh' implementation_guide_release_contract
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'run_phase5_implementation_gate.sh' implementation_guide_implementation_gate
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'run_phase5_production_gate.sh' implementation_guide_production_gate
+require_doc_pattern IMPLEMENTATION_GUIDE.md 'verify_phase5_production_readiness.sh' implementation_guide_production_readiness
 require_doc_pattern docs/minimal_udp_integration_best_practice.md \
   'runtime_config.json' minimal_udp_runtime_config
 require_doc_pattern docs/minimal_udp_integration_best_practice.md \
