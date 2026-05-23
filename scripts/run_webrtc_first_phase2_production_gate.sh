@@ -25,6 +25,9 @@ QOE_FRAMES="${QOE_FRAMES:-120}"
 QOE_WIDTH="${QOE_WIDTH:-1280}"
 QOE_HEIGHT="${QOE_HEIGHT:-720}"
 QOE_CONTENT_MODE="${QOE_CONTENT_MODE:-block_motion}"
+PRODUCTION_SOAK_CONTENT_MODES="${PRODUCTION_SOAK_CONTENT_MODES:-block_motion camera_pan scene_cut low_light_noise}"
+PRODUCTION_SOAK_SCENARIOS="${PRODUCTION_SOAK_SCENARIOS:-baseline weak_network_low_rps_low_bitrate}"
+PRODUCTION_SOAK_SEEDS="${PRODUCTION_SOAK_SEEDS:-1}"
 
 CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR:-${SDK_ROOT}/capture_library}"
 CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST:-${CAPTURE_LIBRARY_DIR}/manifest.csv}"
@@ -110,6 +113,9 @@ log_summary "allow_xvfb_renderer=${ALLOW_XVFB_RENDERER}"
 log_summary "real_renderer_use_xvfb=${REAL_RENDERER_USE_XVFB}"
 log_summary "p5_skip_real_renderer=${P5_SKIP_REAL_RENDERER}"
 log_summary "p5_skip_capture_library=${P5_SKIP_CAPTURE_LIBRARY}"
+log_summary "production_soak_content_modes=${PRODUCTION_SOAK_CONTENT_MODES}"
+log_summary "production_soak_scenarios=${PRODUCTION_SOAK_SCENARIOS}"
+log_summary "production_soak_seeds=${PRODUCTION_SOAK_SEEDS}"
 log_summary "capture_library_dir=${CAPTURE_LIBRARY_DIR}"
 log_summary "capture_library_manifest=${CAPTURE_LIBRARY_MANIFEST}"
 
@@ -175,6 +181,9 @@ run_step phase2_verify_production \
     FACADE_FRAMES="${FACADE_FRAMES}" \
     QOE_FRAMES="${QOE_FRAMES}" QOE_WIDTH="${QOE_WIDTH}" \
     QOE_HEIGHT="${QOE_HEIGHT}" QOE_CONTENT_MODE="${QOE_CONTENT_MODE}" \
+    PRODUCTION_SOAK_CONTENT_MODES="${PRODUCTION_SOAK_CONTENT_MODES}" \
+    PRODUCTION_SOAK_SCENARIOS="${PRODUCTION_SOAK_SCENARIOS}" \
+    PRODUCTION_SOAK_SEEDS="${PRODUCTION_SOAK_SEEDS}" \
     SOAK_CYCLES="${SOAK_CYCLES}" SOAK_MINUTES="${SOAK_MINUTES}" \
     PRODUCTION_SOAK_MINUTES="${SOAK_MINUTES}" \
     RUN_REAL_RENDERER="${phase2_run_real_renderer}" \

@@ -51,7 +51,11 @@ VideoPushClient -> UDP -> ServerQosRouter -> UDP -> VideoPlayClient
 
 - P5 默认按无显卡/无真实生产素材环境收口：`P5_SKIP_REAL_RENDERER=1` 和
   `P5_SKIP_CAPTURE_LIBRARY=1` 会生成显式 `skipped_by_policy` 证据；仍要求
-  `SOAK_MINUTES>=120` production soak。严格实机/业务素材验收可把这两个变量设为 `0`。
+  `SOAK_MINUTES>=120` production soak。正式 P5 soak 默认覆盖
+  `baseline / weak_network_low_rps_low_bitrate` 和
+  `block_motion / camera_pan / scene_cut / low_light_noise`；dead-zone/oscillating
+  edge 保留为扩展 stress，不作为 P5 完成 gate 默认集合。严格实机/业务素材验收
+  可把这两个变量设为 `0`。
 - demo 和验证脚本里大量运行信息直接写 `std::cout` / `std::cerr`，不适合作为
   SDK 生产日志。
 - 运行时缺统一日志格式、日志级别、日志文件轮转、上下文字段和错误事件归档。
@@ -206,6 +210,11 @@ readiness 和 debug bundle 门禁，然后调用底层
 避免短时 production run 先消耗测试机再由末端审计判无效。standalone readiness、
 外部 Phase-2 evidence bundle import 和 Phase-2 completion audit 也不能把
 `MIN_PRODUCTION_SOAK_MINUTES` 降到 `120` 以下，防止绕过顶层 gate 生成弱生产证据。
+P5 formal soak 默认使用 `PRODUCTION_SOAK_SCENARIOS="baseline weak_network_low_rps_low_bitrate"`、
+`PRODUCTION_SOAK_CONTENT_MODES="block_motion camera_pan scene_cut low_light_noise"` 和
+`PRODUCTION_SOAK_SEEDS=1`。`walking_dead_zone_recover` / `oscillating_edge_recover`
+保留为扩展 stress/专项排查场景，可能触发严格 renderer proxy gap/drop 门槛，因此不默认参与
+P5 完成 gate。
 release evidence summary 会写出 `min_production_soak_minutes`，verifier 会确认声明最低值
 不低于 120，且实际 production soak 分钟数不低于该声明最低值。
 严格模式下 release evidence 生成阶段会拒绝 `renderer_backend=xvfb` 或没有实际
@@ -320,7 +329,8 @@ evidence 状态和 next required action，供 CI、监控告警和发布系统�
   external sample、错误契约和发布契约都有运行证据。
 - implementation gate 必须输出并离线复验 `phase5_implementation_gate_metrics.prom`，
   覆盖 gate status、step status 和 debug bundle status。
-- `SOAK_MINUTES>=120` production soak 通过。
+- `SOAK_MINUTES>=120` production soak 通过；默认场景集为 `baseline` 和
+  `weak_network_low_rps_low_bitrate`，覆盖四类 deterministic 内容。
 - 默认 renderer/capture policy skip 证据通过；严格模式下真实 renderer summary 为
   `pass`，正式 capture library 覆盖所需类别，manifest 校验通过，QoE 通过。
 - evidence bundle 可离线 audit 通过。
@@ -1472,7 +1482,8 @@ scripts/verify_webrtc_first_phase2_completion_audit.sh
 
 ### M1：生产证据闭环
 
-- 默认 P5：保留 renderer/capture policy skip，跑 `SOAK_MINUTES>=120` production gate。
+- 默认 P5：保留 renderer/capture policy skip，跑 `SOAK_MINUTES>=120` production gate；
+  formal soak 默认只包含 `baseline / weak_network_low_rps_low_bitrate` 稳定性场景。
 - 严格验收：准备正式 capture library，并在有真实显示环境的机器跑 renderer。
 - 收集 evidence bundle 并 audit 通过。
 

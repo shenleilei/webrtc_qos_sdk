@@ -42,6 +42,9 @@ QOE_FRAMES="${QOE_FRAMES:-120}"
 QOE_WIDTH="${QOE_WIDTH:-1280}"
 QOE_HEIGHT="${QOE_HEIGHT:-720}"
 QOE_CONTENT_MODE="${QOE_CONTENT_MODE:-block_motion}"
+PRODUCTION_SOAK_CONTENT_MODES="${PRODUCTION_SOAK_CONTENT_MODES:-block_motion camera_pan scene_cut low_light_noise}"
+PRODUCTION_SOAK_SCENARIOS="${PRODUCTION_SOAK_SCENARIOS:-baseline weak_network_low_rps_low_bitrate}"
+PRODUCTION_SOAK_SEEDS="${PRODUCTION_SOAK_SEEDS:-1}"
 
 CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR:-${SDK_ROOT}/capture_library}"
 CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST:-${CAPTURE_LIBRARY_DIR}/manifest.csv}"
@@ -876,6 +879,9 @@ doc = {
         "config": rel(production_soak_config),
         "archive": rel(production_soak_archive),
         "soak_minutes": parse_number(production_soak_runtime.get("SOAK_MINUTES", "0")),
+        "content_modes": production_soak_runtime.get("CONTENT_MODES", ""),
+        "scenarios": production_soak_runtime.get("SCENARIOS", ""),
+        "seeds": production_soak_runtime.get("SEEDS", ""),
         "cycles": parse_number(production_soak.get("cycles", "0")),
         "rows": parse_number(production_soak.get("rows", "0")),
         "pass_rows": parse_number(production_soak.get("pass_rows", "0")),
@@ -1019,6 +1025,9 @@ with open(release_summary, "w", encoding="utf-8") as fh:
     fh.write(f"production_soak_csv={rel(production_soak_csv)}\n")
     fh.write(f"production_soak_archive={rel(production_soak_archive)}\n")
     fh.write(f"production_soak_minutes={doc['production_soak']['soak_minutes']}\n")
+    fh.write(f"production_soak_content_modes={doc['production_soak']['content_modes']}\n")
+    fh.write(f"production_soak_scenarios={doc['production_soak']['scenarios']}\n")
+    fh.write(f"production_soak_seeds={doc['production_soak']['seeds']}\n")
     fh.write(f"production_soak_rows={doc['production_soak']['rows']}\n")
     fh.write(f"real_renderer_summary={rel(real_renderer_summary)}\n")
     fh.write(f"real_renderer_backend={doc['real_renderer']['backend']}\n")
@@ -1131,6 +1140,9 @@ require_script "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.
   printf 'RUN_PHASE5_READINESS=%s\n' "${RUN_PHASE5_READINESS}"
   printf 'RUN_PHASE5_DEBUG_BUNDLE=%s\n' "${RUN_PHASE5_DEBUG_BUNDLE}"
   printf 'PHASE5_IMPLEMENTATION_FRAMES=%s\n' "${PHASE5_IMPLEMENTATION_FRAMES}"
+  printf 'PRODUCTION_SOAK_CONTENT_MODES=%s\n' "${PRODUCTION_SOAK_CONTENT_MODES}"
+  printf 'PRODUCTION_SOAK_SCENARIOS=%s\n' "${PRODUCTION_SOAK_SCENARIOS}"
+  printf 'PRODUCTION_SOAK_SEEDS=%s\n' "${PRODUCTION_SOAK_SEEDS}"
   printf 'ALLOW_XVFB_RENDERER=%s\n' "${ALLOW_XVFB_RENDERER}"
   printf 'REAL_RENDERER_USE_XVFB=%s\n' "${REAL_RENDERER_USE_XVFB}"
   printf 'P5_SKIP_REAL_RENDERER=%s\n' "${P5_SKIP_REAL_RENDERER}"
@@ -1254,6 +1266,9 @@ else
       FACADE_FRAMES="${FACADE_FRAMES}" \
       QOE_FRAMES="${QOE_FRAMES}" QOE_WIDTH="${QOE_WIDTH}" \
       QOE_HEIGHT="${QOE_HEIGHT}" QOE_CONTENT_MODE="${QOE_CONTENT_MODE}" \
+      PRODUCTION_SOAK_CONTENT_MODES="${PRODUCTION_SOAK_CONTENT_MODES}" \
+      PRODUCTION_SOAK_SCENARIOS="${PRODUCTION_SOAK_SCENARIOS}" \
+      PRODUCTION_SOAK_SEEDS="${PRODUCTION_SOAK_SEEDS}" \
       CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR}" \
       CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST}" \
       CAPTURE_WIDTH="${CAPTURE_WIDTH}" \

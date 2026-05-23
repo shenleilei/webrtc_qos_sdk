@@ -30,6 +30,9 @@ PRODUCTION_SMOKE_HEIGHT="${PRODUCTION_SMOKE_HEIGHT:-${QOE_HEIGHT}}"
 PRODUCTION_SMOKE_CONTENT_MODES="${PRODUCTION_SMOKE_CONTENT_MODES:-block_motion}"
 PRODUCTION_SMOKE_SCENARIOS="${PRODUCTION_SMOKE_SCENARIOS:-weak_network_low_rps_low_bitrate}"
 PRODUCTION_SMOKE_SEEDS="${PRODUCTION_SMOKE_SEEDS:-1}"
+PRODUCTION_SOAK_CONTENT_MODES="${PRODUCTION_SOAK_CONTENT_MODES:-block_motion camera_pan scene_cut low_light_noise}"
+PRODUCTION_SOAK_SCENARIOS="${PRODUCTION_SOAK_SCENARIOS:-baseline weak_network_low_rps_low_bitrate}"
+PRODUCTION_SOAK_SEEDS="${PRODUCTION_SOAK_SEEDS:-1}"
 
 mkdir -p "${OUTPUT_DIR}/logs"
 SUMMARY_FILE="${OUTPUT_DIR}/phase2_verify_summary.txt"
@@ -137,6 +140,9 @@ if [[ "${VERIFY_LEVEL}" == "production" ]]; then
       env SDK_ROOT="${SDK_ROOT}" WEBRTC_PREFIX="${WEBRTC_PREFIX}" \
         OUTPUT_DIR="${OUTPUT_DIR}/production_soak" \
         SOAK_CYCLES="${SOAK_CYCLES}" SOAK_MINUTES="${SOAK_MINUTES}" \
+        CONTENT_MODES="${PRODUCTION_SOAK_CONTENT_MODES}" \
+        SCENARIOS="${PRODUCTION_SOAK_SCENARIOS}" \
+        SEEDS="${PRODUCTION_SOAK_SEEDS}" \
         "${SDK_ROOT}/scripts/run_webrtc_first_qoe_production_soak.sh"
   fi
 

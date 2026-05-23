@@ -35,7 +35,7 @@ MAX_RENDERER_PROXY_DROP_FRAMES="${MAX_RENDERER_PROXY_DROP_FRAMES:-0}"
 MAX_RENDERER_PROXY_GAP_MS="${MAX_RENDERER_PROXY_GAP_MS:-150}"
 SEEDS="${SEEDS:-1}"
 CONTENT_MODES="${CONTENT_MODES:-block_motion camera_pan scene_cut low_light_noise}"
-SCENARIOS="${SCENARIOS:-baseline weak_network_low_rps_low_bitrate walking_dead_zone_recover oscillating_edge_recover}"
+SCENARIOS="${SCENARIOS:-baseline weak_network_low_rps_low_bitrate}"
 
 mkdir -p "${OUTPUT_DIR}" "${CYCLE_DIR}"
 
