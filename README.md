@@ -159,6 +159,7 @@ scripts/verify_phase5_completion_audit.sh
 
 - [完整实现说明](IMPLEMENTATION_GUIDE.md)
 - [弱网场景 QoS/QoE 结果](docs/weak_network_qos_qoe_results.md)
+- [mediasoup-cpp plainclient WebRTC QoS SDK 重构方案](docs/mediasoup_plainclient_webrtc_qos_refactor.md)
 - [WebRTC QoS 总览与 SDK 设计说明](docs/webrtc_qos_overview.md)
 - [WebRTC 边界声明](docs/webrtc_boundary_statement.md)
 - [QoS 测试与验证方法](docs/qos_test_validation_methodology.md)
