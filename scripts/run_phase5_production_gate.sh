@@ -1052,6 +1052,9 @@ if release_status != "pass":
     failed = ",".join(name for name, passed in checks.items() if not passed)
     raise SystemExit(f"phase5 release evidence incomplete: {failed}")
 PY
+  printf 'phase5_release_evidence_written=true\n'
+  printf 'phase5_release_evidence_json=%s\n' "${RELEASE_EVIDENCE_JSON}"
+  printf 'phase5_release_evidence_summary=%s\n' "${RELEASE_EVIDENCE_SUMMARY}"
 }
 
 collect_failure_debug_bundle() {
