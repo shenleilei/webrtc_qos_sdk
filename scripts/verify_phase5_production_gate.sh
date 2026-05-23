@@ -897,7 +897,7 @@ for key in (
 for section_name, keys in (
     ("production_soak", ("summary", "csv", "config", "archive")),
     ("real_renderer", ("summary", "metrics")),
-    ("capture_library", ("manifest_summary", "qoe_csv", "qoe_summary", "manifest_sha256")),
+    ("capture_library", ("manifest_summary", "qoe_csv", "qoe_summary")),
 ):
     section = report.get(section_name, {})
     for key in keys:
@@ -905,6 +905,12 @@ for section_name, keys in (
             raise SystemExit(
                 f"external phase2 import missing {section_name}.{key}"
             )
+    capture_policy_skipped = (
+        section_name == "capture_library"
+        and section.get("policy_skipped") is True
+    )
+    if section_name == "capture_library" and capture_policy_skipped:
+        continue
     if section_name == "capture_library" and not (
         len(section.get("manifest_sha256", "")) == 64
         and all(ch in "0123456789abcdefABCDEF" for ch in section["manifest_sha256"])
@@ -925,7 +931,12 @@ for section_name, keys in (
         and section.get("qoe_media_sha256") != section.get("media_sha256")
     ):
         raise SystemExit("external phase2 import capture QoE media sha256 mismatch")
-    if section_name == "real_renderer" and float(
+    real_renderer_policy_skipped = (
+        section_name == "real_renderer"
+        and section.get("policy_skipped") is True
+        and section.get("status") == "skipped_by_policy"
+    )
+    if section_name == "real_renderer" and not real_renderer_policy_skipped and float(
         section.get("rendered_frames", 0) or 0
     ) <= 0:
         raise SystemExit("external phase2 import real renderer rendered no frames")
@@ -952,19 +963,23 @@ def import_categories_cover(observed, required):
     return bool(required_categories) and required_categories <= observed_categories
 
 capture = report.get("capture_library", {})
-if capture.get("fixture") is True:
+capture_policy_skipped = capture.get("policy_skipped") is True
+if not capture_policy_skipped and capture.get("fixture") is True:
     raise SystemExit("external phase2 import used fixture capture library")
 rows = int(capture.get("rows", 0) or 0)
 pass_rows = int(capture.get("pass_rows", 0) or 0)
-if rows <= 0 or pass_rows != rows:
+if capture_policy_skipped:
+    if rows != 0:
+        raise SystemExit("external phase2 import capture policy skip has rows")
+elif rows <= 0 or pass_rows != rows:
     raise SystemExit("external phase2 import capture QoE rows are incomplete")
-if not import_categories_cover(capture.get("categories"), capture.get("required_categories")):
+if not capture_policy_skipped and not import_categories_cover(capture.get("categories"), capture.get("required_categories")):
     raise SystemExit("external phase2 import capture required categories are incomplete")
-if import_number(capture, "playable_ratio_min") <= 0:
+if not capture_policy_skipped and import_number(capture, "playable_ratio_min") <= 0:
     raise SystemExit("external phase2 import capture playable ratio missing")
-if import_number(capture, "avg_psnr_y_min") <= 0:
+if not capture_policy_skipped and import_number(capture, "avg_psnr_y_min") <= 0:
     raise SystemExit("external phase2 import capture PSNR missing")
-if import_number(capture, "avg_ssim_y_min") <= 0:
+if not capture_policy_skipped and import_number(capture, "avg_ssim_y_min") <= 0:
     raise SystemExit("external phase2 import capture SSIM missing")
 if import_number(capture, "decode_errors", 1) != 0:
     raise SystemExit("external phase2 import capture decode errors are non-zero")

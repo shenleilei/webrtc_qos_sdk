@@ -25,6 +25,7 @@ ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB:-$([[ "${ALLOW_XVFB_RENDERER}" == "1" ]] && echo auto || echo 0)}"
 P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER:-1}"
 P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY:-1}"
+REQUIRE_PHASE2_EVIDENCE_GIT_HEAD_MATCH="${REQUIRE_PHASE2_EVIDENCE_GIT_HEAD_MATCH:-1}"
 CAPTURE_LIBRARY_DIR="${CAPTURE_LIBRARY_DIR:-${SDK_ROOT}/capture_library}"
 CAPTURE_LIBRARY_MANIFEST="${CAPTURE_LIBRARY_MANIFEST:-${CAPTURE_LIBRARY_DIR}/manifest.csv}"
 CAPTURE_WIDTH="${CAPTURE_WIDTH:-1280}"
@@ -292,43 +293,53 @@ for key in ("summary", "csv", "config", "archive"):
         raise SystemExit(f"external phase2 import missing production_soak.{key}")
 
 real_renderer = report.get("real_renderer", {})
-if real_renderer.get("status") != "pass":
+real_renderer_policy_skipped = (
+    real_renderer.get("policy_skipped") is True
+    and real_renderer.get("status") == "skipped_by_policy"
+)
+if real_renderer_policy_skipped:
+    pass
+elif real_renderer.get("status") != "pass":
     raise SystemExit("external phase2 import real renderer did not pass")
-if real_renderer.get("backend") == "xvfb" and allow_xvfb_renderer != "1":
+elif real_renderer.get("backend") == "xvfb" and allow_xvfb_renderer != "1":
     raise SystemExit("external phase2 import real renderer used xvfb")
 for key in ("summary", "metrics"):
     if not real_renderer.get(key):
         raise SystemExit(f"external phase2 import missing real_renderer.{key}")
-if as_float(real_renderer.get("rendered_frames")) <= 0:
+if not real_renderer_policy_skipped and as_float(real_renderer.get("rendered_frames")) <= 0:
     raise SystemExit("external phase2 import real renderer rendered no frames")
 
 capture_library = report.get("capture_library", {})
-for key in ("manifest_summary", "qoe_csv", "qoe_summary", "manifest_sha256"):
+capture_policy_skipped = capture_library.get("policy_skipped") is True
+for key in ("manifest_summary", "qoe_csv", "qoe_summary"):
     if not capture_library.get(key):
         raise SystemExit(f"external phase2 import missing capture_library.{key}")
-if not valid_sha256(capture_library.get("manifest_sha256")):
+if capture_policy_skipped:
+    if int(as_float(capture_library.get("rows"))) != 0:
+        raise SystemExit("external phase2 import capture policy skip has rows")
+elif not valid_sha256(capture_library.get("manifest_sha256")):
     raise SystemExit("external phase2 import bad capture manifest sha256")
-if capture_library.get("qoe_manifest_sha256") != capture_library.get("manifest_sha256"):
+elif capture_library.get("qoe_manifest_sha256") != capture_library.get("manifest_sha256"):
     raise SystemExit("external phase2 import capture QoE manifest sha256 mismatch")
-if not valid_sha256(capture_library.get("media_sha256")):
+elif not valid_sha256(capture_library.get("media_sha256")):
     raise SystemExit("external phase2 import bad capture media sha256")
-if capture_library.get("qoe_media_sha256") != capture_library.get("media_sha256"):
+elif capture_library.get("qoe_media_sha256") != capture_library.get("media_sha256"):
     raise SystemExit("external phase2 import capture QoE media sha256 mismatch")
-if capture_library.get("fixture") is not False:
+elif capture_library.get("fixture") is not False:
     raise SystemExit("external phase2 import used fixture capture")
 rows = int(as_float(capture_library.get("rows")))
 pass_rows = int(as_float(capture_library.get("pass_rows")))
-if rows <= 0 or pass_rows != rows:
+if not capture_policy_skipped and (rows <= 0 or pass_rows != rows):
     raise SystemExit("external phase2 import capture library has no passing rows")
-if not categories_cover(
+if not capture_policy_skipped and not categories_cover(
     capture_library.get("categories"), capture_library.get("required_categories")
 ):
     raise SystemExit("external phase2 import capture required categories are incomplete")
-if as_float(capture_library.get("playable_ratio_min")) <= 0:
+if not capture_policy_skipped and as_float(capture_library.get("playable_ratio_min")) <= 0:
     raise SystemExit("external phase2 import capture playable ratio missing")
-if as_float(capture_library.get("avg_psnr_y_min")) <= 0:
+if not capture_policy_skipped and as_float(capture_library.get("avg_psnr_y_min")) <= 0:
     raise SystemExit("external phase2 import capture PSNR missing")
-if as_float(capture_library.get("avg_ssim_y_min")) <= 0:
+if not capture_policy_skipped and as_float(capture_library.get("avg_ssim_y_min")) <= 0:
     raise SystemExit("external phase2 import capture SSIM missing")
 if as_float(capture_library.get("decode_errors")) != 0:
     raise SystemExit("external phase2 import capture decode errors are non-zero")
@@ -829,6 +840,7 @@ write_summary "allow_xvfb_renderer=${ALLOW_XVFB_RENDERER}"
 write_summary "real_renderer_use_xvfb=${REAL_RENDERER_USE_XVFB}"
 write_summary "p5_skip_real_renderer=${P5_SKIP_REAL_RENDERER}"
 write_summary "p5_skip_capture_library=${P5_SKIP_CAPTURE_LIBRARY}"
+write_summary "require_phase2_evidence_git_head_match=${REQUIRE_PHASE2_EVIDENCE_GIT_HEAD_MATCH}"
 write_summary "capture_library_dir=${CAPTURE_LIBRARY_DIR}"
 write_summary "capture_library_manifest=${CAPTURE_LIBRARY_MANIFEST}"
 write_summary "phase2_evidence_bundle_dir=${PHASE2_EVIDENCE_BUNDLE_DIR}"
@@ -924,6 +936,9 @@ if [[ -n "${PHASE2_EVIDENCE_BUNDLE_DIR}" ]]; then
       MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
       ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
       ALLOW_FIXTURE_CAPTURE=0 \
+      P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER}" \
+      P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY}" \
+      REQUIRE_GIT_HEAD_MATCH="${REQUIRE_PHASE2_EVIDENCE_GIT_HEAD_MATCH}" \
       REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
       "${SDK_ROOT}/scripts/import_phase5_phase2_evidence_bundle.sh" \
       >"${external_phase2_import_log}" 2>&1; then

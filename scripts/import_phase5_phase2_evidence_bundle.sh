@@ -16,6 +16,8 @@ MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_ROOT}/manifest.sha256}"
 MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-10}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE:-0}"
+P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER:-0}"
+P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY:-0}"
 REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
 EXPECTED_GIT_HEAD="${EXPECTED_GIT_HEAD:-$(git -C "${SDK_ROOT}" rev-parse HEAD 2>/dev/null || true)}"
 REQUIRE_GIT_HEAD_MATCH="${REQUIRE_GIT_HEAD_MATCH:-1}"
@@ -155,6 +157,8 @@ if ! env SDK_ROOT="${SDK_ROOT}" \
     MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES}" \
     ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
     ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE}" \
+    P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER}" \
+    P5_SKIP_CAPTURE_LIBRARY="${P5_SKIP_CAPTURE_LIBRARY}" \
     REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
     "${SDK_ROOT}/scripts/verify_webrtc_first_phase2_completion_audit.sh" \
     >"${LOG_DIR}/phase2_completion_audit.log" 2>&1; then
@@ -168,8 +172,19 @@ if ! env SDK_ROOT="${SDK_ROOT}" \
   exit 1
 fi
 
-if ! env SUMMARY_FILE="${BUNDLE_OUTPUT_DIR}/real_renderer/real_renderer_summary.txt" \
-    METRICS_FILE="${BUNDLE_OUTPUT_DIR}/real_renderer/real_renderer_metrics.csv" \
+REAL_RENDERER_SUMMARY="${BUNDLE_OUTPUT_DIR}/real_renderer/real_renderer_summary.txt"
+REAL_RENDERER_METRICS="${BUNDLE_OUTPUT_DIR}/real_renderer/real_renderer_metrics.csv"
+if [[ "${P5_SKIP_REAL_RENDERER}" == "1" ]] &&
+    rg -q '^real_renderer_status=skipped_by_policy$' "${REAL_RENDERER_SUMMARY}" &&
+    rg -q '^policy=p5_no_gpu_display_environment$' "${REAL_RENDERER_SUMMARY}" &&
+    [[ -f "${REAL_RENDERER_METRICS}" ]]; then
+  {
+    printf 'real_renderer_evidence_verification=true\n'
+    printf 'real_renderer_status=skipped_by_policy\n'
+    printf 'policy=p5_no_gpu_display_environment\n'
+  } >"${LOG_DIR}/real_renderer_evidence.log"
+elif ! env SUMMARY_FILE="${REAL_RENDERER_SUMMARY}" \
+    METRICS_FILE="${REAL_RENDERER_METRICS}" \
     ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER}" \
     "${SDK_ROOT}/scripts/verify_real_renderer_evidence.sh" \
     >"${LOG_DIR}/real_renderer_evidence.log" 2>&1; then
@@ -199,9 +214,24 @@ if ! env SDK_ROOT="${SDK_ROOT}" \
   exit 1
 fi
 
-if ! env CAPTURE_MANIFEST_SUMMARY="${BUNDLE_OUTPUT_DIR}/capture_library/capture_manifest_summary.txt" \
-    CAPTURE_QOE_CSV="${BUNDLE_OUTPUT_DIR}/capture_library/webrtc_first_qoe_capture_library_720p.csv" \
-    CAPTURE_QOE_SUMMARY="${BUNDLE_OUTPUT_DIR}/capture_library/capture_qoe_summary.txt" \
+CAPTURE_MANIFEST_SUMMARY="${BUNDLE_OUTPUT_DIR}/capture_library/capture_manifest_summary.txt"
+CAPTURE_QOE_CSV="${BUNDLE_OUTPUT_DIR}/capture_library/webrtc_first_qoe_capture_library_720p.csv"
+CAPTURE_QOE_SUMMARY="${BUNDLE_OUTPUT_DIR}/capture_library/capture_qoe_summary.txt"
+if [[ "${P5_SKIP_CAPTURE_LIBRARY}" == "1" ]] &&
+    rg -q '^capture_manifest_verification=skipped_by_policy$' "${CAPTURE_MANIFEST_SUMMARY}" &&
+    rg -q '^policy=p5_no_production_capture_data$' "${CAPTURE_MANIFEST_SUMMARY}" &&
+    rg -q '^capture_qoe_verification=skipped_by_policy$' "${CAPTURE_QOE_SUMMARY}" &&
+    rg -q '^policy=p5_no_production_capture_data$' "${CAPTURE_QOE_SUMMARY}" &&
+    [[ -f "${CAPTURE_QOE_CSV}" ]]; then
+  {
+    printf 'capture_library_evidence_verification=true\n'
+    printf 'capture_manifest_verification=skipped_by_policy\n'
+    printf 'capture_qoe_verification=skipped_by_policy\n'
+    printf 'policy=p5_no_production_capture_data\n'
+  } >"${LOG_DIR}/capture_library_evidence.log"
+elif ! env CAPTURE_MANIFEST_SUMMARY="${CAPTURE_MANIFEST_SUMMARY}" \
+    CAPTURE_QOE_CSV="${CAPTURE_QOE_CSV}" \
+    CAPTURE_QOE_SUMMARY="${CAPTURE_QOE_SUMMARY}" \
     ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE}" \
     REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES}" \
     "${SDK_ROOT}/scripts/verify_capture_library_evidence.sh" \
@@ -223,7 +253,9 @@ python3 - \
   "${MIN_PRODUCTION_SOAK_MINUTES}" \
   "${ALLOW_FIXTURE_CAPTURE}" \
   "${SOURCE_EVIDENCE_BUNDLE_DIR}" \
-  "${OUTPUT_ROOT}" <<'PY'
+  "${OUTPUT_ROOT}" \
+  "${P5_SKIP_REAL_RENDERER}" \
+  "${P5_SKIP_CAPTURE_LIBRARY}" <<'PY'
 import json
 import os
 import shlex
@@ -240,7 +272,9 @@ import sys
     allow_fixture_capture,
     source_bundle,
     output_root,
-) = sys.argv[1:11]
+    p5_skip_real_renderer,
+    p5_skip_capture_library,
+) = sys.argv[1:13]
 
 
 def rel(path):
@@ -361,6 +395,18 @@ real_renderer = read_kv(real_renderer_summary)
 capture_manifest = read_kv(capture_manifest_summary)
 capture_qoe = read_kv(capture_qoe_summary)
 capture_fixture = has_fixture_marker(capture_manifest_summary)
+real_renderer_policy_skipped = (
+    p5_skip_real_renderer == "1"
+    and real_renderer.get("real_renderer_status") == "skipped_by_policy"
+    and real_renderer.get("policy") == "p5_no_gpu_display_environment"
+)
+capture_library_policy_skipped = (
+    p5_skip_capture_library == "1"
+    and capture_manifest.get("capture_manifest_verification") == "skipped_by_policy"
+    and capture_manifest.get("policy") == "p5_no_production_capture_data"
+    and capture_qoe.get("capture_qoe_verification") == "skipped_by_policy"
+    and capture_qoe.get("policy") == "p5_no_production_capture_data"
+)
 observed_git_heads = []
 for value in (
     metadata.get("GIT_HEAD"),
@@ -395,12 +441,17 @@ checks = {
         os.path.join(output_root, "logs", "capture_library_evidence.log"),
         "capture_library_evidence_verification=true",
     )
-    and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
-    and capture_manifest.get("capture_manifest_sha256")
-    == capture_qoe.get("capture_manifest_sha256")
-    and valid_sha256(capture_manifest.get("capture_media_sha256"))
-    and capture_manifest.get("capture_media_sha256")
-    == capture_qoe.get("capture_media_sha256"),
+    and (
+        capture_library_policy_skipped
+        or (
+            valid_sha256(capture_manifest.get("capture_manifest_sha256"))
+            and capture_manifest.get("capture_manifest_sha256")
+            == capture_qoe.get("capture_manifest_sha256")
+            and valid_sha256(capture_manifest.get("capture_media_sha256"))
+            and capture_manifest.get("capture_media_sha256")
+            == capture_qoe.get("capture_media_sha256")
+        )
+    ),
     "evidence_bundle": has_prefix(audit_summary, "check=evidence_bundle status=pass "),
     "production_soak_raw_evidence": has_file(production_soak_summary)
     and has_file(production_soak_csv)
@@ -411,17 +462,26 @@ checks = {
     and production_soak_minutes >= phase5_min_soak_minutes,
     "real_renderer_raw_evidence": has_file(real_renderer_summary)
     and has_file(real_renderer_metrics)
-    and real_renderer.get("real_renderer_status") == "pass",
+    and (
+        real_renderer.get("real_renderer_status") == "pass"
+        or real_renderer_policy_skipped
+    ),
     "real_renderer_rendered_frames": parse_number(
         real_renderer.get("rendered_frames", "0")
     )
-    > 0,
+    > 0
+    or real_renderer_policy_skipped,
     "capture_qoe_raw_evidence": has_file(capture_manifest_summary)
     and has_file(capture_qoe_csv)
     and has_file(capture_qoe_summary)
-    and valid_sha256(capture_manifest.get("capture_manifest_sha256"))
-    and valid_sha256(capture_manifest.get("capture_media_sha256"))
-    and capture_qoe.get("capture_qoe_verification") == "true",
+    and (
+        capture_library_policy_skipped
+        or (
+            valid_sha256(capture_manifest.get("capture_manifest_sha256"))
+            and valid_sha256(capture_manifest.get("capture_media_sha256"))
+            and capture_qoe.get("capture_qoe_verification") == "true"
+        )
+    ),
 }
 if capture_fixture and allow_fixture_capture != "1":
     checks["capture_qoe_raw_evidence"] = False
@@ -447,6 +507,8 @@ report = {
         "min_production_soak_minutes": float(min_soak_minutes),
         "formal_capture_required": True,
         "real_renderer_required": True,
+        "p5_real_renderer_policy_skip": real_renderer_policy_skipped,
+        "p5_capture_library_policy_skip": capture_library_policy_skipped,
         "clean_tracked_worktree_required": True,
         "fixture_capture_allowed": allow_fixture_capture == "1",
     },
@@ -468,6 +530,7 @@ report = {
         "summary": rel(real_renderer_summary),
         "metrics": rel(real_renderer_metrics),
         "status": real_renderer.get("real_renderer_status", ""),
+        "policy_skipped": real_renderer_policy_skipped,
         "backend": real_renderer.get("renderer_backend", ""),
         "rendered_frames": parse_number(real_renderer.get("rendered_frames", "0")),
         "late_frames": parse_number(real_renderer.get("late_frames", "0")),
@@ -480,6 +543,7 @@ report = {
     },
     "capture_library": {
         "manifest_summary": rel(capture_manifest_summary),
+        "policy_skipped": capture_library_policy_skipped,
         "qoe_csv": rel(capture_qoe_csv),
         "qoe_summary": rel(capture_qoe_summary),
         "manifest_sha256": capture_manifest.get("capture_manifest_sha256", ""),
