@@ -1927,16 +1927,54 @@ index 0000000..c9f7071
 +bool BuildRtcpTransportFeedback(
 +    const RtcpAdapterTransportFeedback& input,
 +    std::vector<uint8_t>* out) {
++  std::vector<RtcpAdapterTransportFeedbackPacket> packets;
++  packets.reserve(input.packets.size());
++  for (const auto& item : input.packets) {
++    if (item.delta_since_base_us >= 0) {
++      packets.push_back(item);
++    }
++  }
++  if (packets.empty()) {
++    return false;
++  }
++
++  const auto sequence_offset = [base = input.base_sequence](uint16_t sequence) {
++    const uint16_t forward = static_cast<uint16_t>(sequence - base);
++    return forward < 0x8000u ? static_cast<int32_t>(forward)
++                             : static_cast<int32_t>(forward) - 0x10000;
++  };
++  std::sort(packets.begin(), packets.end(),
++            [&](const RtcpAdapterTransportFeedbackPacket& left,
++                const RtcpAdapterTransportFeedbackPacket& right) {
++              const int32_t left_offset = sequence_offset(left.sequence_number);
++              const int32_t right_offset =
++                  sequence_offset(right.sequence_number);
++              if (left_offset != right_offset) {
++                return left_offset < right_offset;
++              }
++              return left.delta_since_base_us < right.delta_since_base_us;
++            });
++
++  std::vector<RtcpAdapterTransportFeedbackPacket> compacted;
++  compacted.reserve(packets.size());
++  for (const auto& item : packets) {
++    if (!compacted.empty() &&
++        compacted.back().sequence_number == item.sequence_number) {
++      compacted.back().delta_since_base_us =
++          std::min(compacted.back().delta_since_base_us,
++                   item.delta_since_base_us);
++      continue;
++    }
++    compacted.push_back(item);
++  }
++
 +  webrtc::rtcp::TransportFeedback packet;
 +  packet.SetSenderSsrc(input.sender_ssrc);
 +  packet.SetMediaSsrc(input.media_ssrc);
-+  packet.SetBase(input.base_sequence,
++  packet.SetBase(compacted.front().sequence_number,
 +                 webrtc::Timestamp::Micros(input.base_time_us));
 +  packet.SetFeedbackSequenceNumber(input.feedback_sequence);
-+  for (const auto& item : input.packets) {
-+    if (item.delta_since_base_us < 0) {
-+      continue;
-+    }
++  for (const auto& item : compacted) {
 +    if (!packet.AddReceivedPacket(
 +            item.sequence_number,
 +            webrtc::Timestamp::Micros(input.base_time_us +
@@ -2289,6 +2327,29 @@ index 0000000..a54f520
 +                  parsed_twcc.feedback_sequence == twcc.feedback_sequence &&
 +                  has_missing_1001 && has_received_1002,
 +              "TWCC status vector handles missing packet");
++
++  webrtc_qos::RtcpAdapterTransportFeedback reordered_twcc;
++  reordered_twcc.sender_ssrc = 0x11111111;
++  reordered_twcc.media_ssrc = 0x22222222;
++  reordered_twcc.base_sequence = 2000;
++  reordered_twcc.base_time_us = 7000000;
++  reordered_twcc.feedback_sequence = 10;
++  reordered_twcc.packets.push_back({2002, 2000});
++  reordered_twcc.packets.push_back({2001, 5000});
++  reordered_twcc.packets.push_back({2002, 2500});
++  reordered_twcc.packets.push_back({2000, 4000});
++  ok &= Check(webrtc_qos::BuildRtcpTransportFeedback(reordered_twcc, &bytes),
++              "build reordered TWCC");
++  webrtc_qos::RtcpAdapterTransportFeedback parsed_reordered_twcc;
++  ok &= Check(webrtc_qos::ParseRtcpTransportFeedback(
++                  bytes.data(), bytes.size(), &parsed_reordered_twcc),
++              "parse reordered TWCC");
++  ok &= Check(parsed_reordered_twcc.base_sequence == 2000 &&
++                  parsed_reordered_twcc.packets.size() == 3 &&
++                  parsed_reordered_twcc.packets[0].sequence_number == 2000 &&
++                  parsed_reordered_twcc.packets[1].sequence_number == 2001 &&
++                  parsed_reordered_twcc.packets[2].sequence_number == 2002,
++              "TWCC builder normalizes reordered input");
 +
 +  webrtc_qos::RtcpAdapterParsedPacket parsed_packet;
 +  ok &= Check(webrtc_qos::ParseRtcpPacket(bytes.data(), bytes.size(),
