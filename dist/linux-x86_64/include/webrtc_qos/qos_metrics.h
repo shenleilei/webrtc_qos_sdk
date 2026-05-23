@@ -15,6 +15,8 @@ struct QosSnapshot {
   // retransmissions; play/server report observed or forwarded recovery events.
   uint32_t nack_count = 0;
   uint32_t pli_count = 0;
+  uint32_t receiver_report_count = 0;
+  uint32_t transport_feedback_count = 0;
   uint32_t retransmission_count = 0;
   uint32_t dropped_retransmission_packets = 0;
   uint32_t unsupported_rtcp_packet_count = 0;
@@ -30,6 +32,23 @@ struct QosSnapshot {
   uint64_t emitted_padding_packets = 0;
   uint64_t emitted_padding_bytes = 0;
   int32_t last_probe_cluster_id = -1;
+  // Role worker health. A large tick gap usually means the embedding business
+  // thread stopped calling Process() or the router event loop stalled.
+  uint32_t process_tick_count = 0;
+  uint64_t process_tick_gap_us = 0;
+  uint64_t max_process_tick_gap_us = 0;
+  // Media availability gaps. Push/server update RTP output gaps; play updates
+  // RTP input gaps. A large value means the event loop is alive but media is
+  // not flowing.
+  uint64_t rtp_output_gap_us = 0;
+  uint64_t max_rtp_output_gap_us = 0;
+  uint64_t rtp_input_gap_us = 0;
+  uint64_t max_rtp_input_gap_us = 0;
+  // Transport callback health. Consecutive failures identify persistent
+  // business transport outages separately from transient packet-level errors.
+  uint32_t transport_failure_count = 0;
+  uint32_t consecutive_transport_failures = 0;
+  uint32_t max_consecutive_transport_failures = 0;
 };
 
 }  // namespace webrtc_qos

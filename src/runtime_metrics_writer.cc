@@ -167,6 +167,9 @@ void RuntimeMetricsWriter::Write(const char* scope,
        << ",\"downlink_video_drop_frames\":" << quality.video_drop_frames
        << ",\"nack_count\":" << snapshot.nack_count
        << ",\"pli_count\":" << snapshot.pli_count
+       << ",\"receiver_report_count\":" << snapshot.receiver_report_count
+       << ",\"transport_feedback_count\":"
+       << snapshot.transport_feedback_count
        << ",\"retransmission_count\":" << snapshot.retransmission_count
        << ",\"dropped_retransmission_packets\":"
        << snapshot.dropped_retransmission_packets

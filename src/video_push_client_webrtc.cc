@@ -280,6 +280,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
         [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed)
             -> Status {
           if (parsed.type == RtcpAdapterPacketType::kTransportFeedback) {
+            ++snapshot_.transport_feedback_count;
             std::vector<GoogCcPacketFeedback> feedback;
             feedback.reserve(parsed.transport_feedback.packets.size());
             for (const auto& packet : parsed.transport_feedback.packets) {
@@ -312,6 +313,7 @@ class WebRtcVideoPushClient final : public VideoPushClient {
             return Status::Ok();
           }
           if (parsed.type == RtcpAdapterPacketType::kReceiverReport) {
+            ++snapshot_.receiver_report_count;
             uint32_t max_rtt_ms = 0;
             for (const auto& block : parsed.receiver_report.report_blocks) {
               TrackState* track = FindTrackBySenderSsrc(block.media_ssrc);

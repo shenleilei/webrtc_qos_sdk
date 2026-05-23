@@ -15,6 +15,8 @@ struct QosSnapshot {
   // retransmissions; play/server report observed or forwarded recovery events.
   uint32_t nack_count = 0;
   uint32_t pli_count = 0;
+  uint32_t receiver_report_count = 0;
+  uint32_t transport_feedback_count = 0;
   uint32_t retransmission_count = 0;
   uint32_t dropped_retransmission_packets = 0;
   uint32_t unsupported_rtcp_packet_count = 0;

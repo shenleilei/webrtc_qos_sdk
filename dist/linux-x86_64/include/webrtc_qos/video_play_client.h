@@ -6,6 +6,9 @@
 #include <memory>
 
 #include "webrtc_qos/qos_metrics.h"
+#include "webrtc_qos/runtime_alerts.h"
+#include "webrtc_qos/runtime_logging.h"
+#include "webrtc_qos/runtime_metrics.h"
 #include "webrtc_qos/session_config.h"
 #include "webrtc_qos/status.h"
 #include "webrtc_qos/transport_io.h"
@@ -19,6 +22,9 @@ struct VideoPlayClientConfig {
   SessionConfig session;
   TransportOutput transport_output;
   AnnexBAccessUnitCallback decoded_access_unit_output;
+  RuntimeLogConfig logging;
+  RuntimeMetricsConfig metrics;
+  RuntimeAlertConfig alerts;
 };
 
 class VideoPlayClient {

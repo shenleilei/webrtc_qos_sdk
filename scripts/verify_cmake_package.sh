@@ -473,6 +473,83 @@ int main() {
   if (!play->Process(receive_time_us + 5000)) {
     return 32;
   }
+  bool saw_play_twcc = false;
+  for (const auto& packet : play_rtcp_packets) {
+    webrtc_qos::RtcpAdapterParsedPacket parsed;
+    if (!webrtc_qos::ParseRtcpPacket(packet.data(), packet.size(), &parsed) ||
+        parsed.type != webrtc_qos::RtcpAdapterPacketType::kTransportFeedback) {
+      continue;
+    }
+    saw_play_twcc = true;
+    if (parsed.transport_feedback.sender_ssrc !=
+            session.rtcp.receiver_feedback_ssrc ||
+        parsed.transport_feedback.media_ssrc != session.ids.sender_ssrc ||
+        parsed.transport_feedback.packets.empty()) {
+      return 60;
+    }
+    if (!push->OnTransportFeedback(packet.data(), packet.size(),
+                                   receive_time_us + 10000)) {
+      return 61;
+    }
+  }
+  if (!saw_play_twcc) {
+    return 62;
+  }
+
+  bool delivered_sender_report_to_play = false;
+  for (const auto& packet : push_rtcp_packets) {
+    webrtc_qos::RtcpAdapterParsedPacket parsed;
+    if (!webrtc_qos::ParseRtcpPacket(packet.data(), packet.size(), &parsed) ||
+        parsed.type != webrtc_qos::RtcpAdapterPacketType::kSenderReport) {
+      continue;
+    }
+    delivered_sender_report_to_play = true;
+    if (!play->OnRtcpPacket(packet.data(), packet.size(), 1300000)) {
+      return 63;
+    }
+    break;
+  }
+  if (!delivered_sender_report_to_play) {
+    return 64;
+  }
+  const size_t play_rtcp_count_before_rr = play_rtcp_packets.size();
+  if (!play->Process(1305000)) {
+    return 65;
+  }
+  bool saw_play_rr = false;
+  for (size_t i = play_rtcp_count_before_rr; i < play_rtcp_packets.size(); ++i) {
+    webrtc_qos::RtcpAdapterParsedPacket parsed;
+    if (!webrtc_qos::ParseRtcpPacket(play_rtcp_packets[i].data(),
+                                     play_rtcp_packets[i].size(), &parsed) ||
+        parsed.type != webrtc_qos::RtcpAdapterPacketType::kReceiverReport) {
+      continue;
+    }
+    saw_play_rr = true;
+    if (parsed.receiver_report.sender_ssrc !=
+            session.rtcp.receiver_feedback_ssrc ||
+        parsed.receiver_report.report_blocks.empty() ||
+        parsed.receiver_report.report_blocks[0].media_ssrc !=
+            session.ids.sender_ssrc) {
+      return 66;
+    }
+    if (!push->OnTransportFeedback(play_rtcp_packets[i].data(),
+                                   play_rtcp_packets[i].size(), 1310000)) {
+      return 67;
+    }
+  }
+  if (!saw_play_rr) {
+    return 68;
+  }
+  auto play_feedback_snapshot = play->GetQosSnapshot(1400000);
+  if (play_feedback_snapshot.transport_feedback_count == 0 ||
+      play_feedback_snapshot.receiver_report_count == 0) {
+    return 69;
+  }
+  auto push_feedback_snapshot = push->GetQosSnapshot(1400000);
+  if (push_feedback_snapshot.transport_feedback_count == 0 ||
+      push_feedback_snapshot.receiver_report_count == 0) {
+    return 70;
+  }
   if (decoded_frames != 1) {
     return 5;
   }

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -46,6 +47,8 @@ uint32_t ResolveReceiverFeedbackSsrc(const SessionConfig& session) {
   const uint32_t fallback = session.ids.sender_ssrc ^ 0x00ff00ffu;
   return fallback != 0 ? fallback : 1u;
 }
+
+constexpr size_t kMaxTwccFeedbackPackets = 64;
 
 class WebRtcVideoPlayClient final : public VideoPlayClient {
  public:
@@ -140,6 +143,14 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
         return status;
       }
     }
+    Status twcc_status = MaybeSendTransportFeedback(now_us);
+    if (!twcc_status) {
+      return twcc_status;
+    }
+    Status rr_status = MaybeSendReceiverReport(now_us);
+    if (!rr_status) {
+      return rr_status;
+    }
     MaybeWriteMetrics(now_us);
     MaybeWriteQosAlerts(now_us);
     return Status::Ok();
@@ -179,6 +190,10 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     TrackState& track = EnsureTrackStateForSsrc(parsed.ssrc, parsed.payload_type);
     track.nack_requester->OnReceivedPacket(parsed.sequence_number,
                                            /*is_recovered=*/false);
+    if (parsed.transport_sequence_number.has_value()) {
+      RecordTwccPacket(*parsed.transport_sequence_number, parsed.ssrc,
+                       receive_time_us);
+    }
     Status feedback_status = EmitNackRequesterFeedback(track, receive_time_us);
     if (!feedback_status) {
       return feedback_status;
@@ -228,6 +243,10 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     Status status = ForEachSupportedRtcpPacket(
         rtcp_bytes, rtcp_size,
         [&](const uint8_t*, size_t, const RtcpAdapterParsedPacket& parsed) {
+          if (parsed.type == RtcpAdapterPacketType::kSenderReport) {
+            RecordSenderReport(parsed.sender_report, receive_time_us);
+            return Status::Ok();
+          }
           if (parsed.type != RtcpAdapterPacketType::kReceiverReport) {
             return Status::Ok();
           }
@@ -300,6 +319,11 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
     uint32_t decoded_frames = 0;
     bool has_first_rtp_timestamp = false;
     uint32_t first_rtp_timestamp = 0;
+  };
+
+  struct SenderReportState {
+    uint32_t last_sr_lsr = 0;
+    int64_t receive_time_us = 0;
   };
 
   RtpPacketAdapterConfig LegacyRtpConfig() const {
@@ -436,6 +460,141 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
       }
       RecordTransportSuccess();
     }
+    return Status::Ok();
+  }
+
+  Status EmitRtcpPacket(const std::vector<uint8_t>& rtcp_bytes,
+                        const TransportIds& ids,
+                        int64_t now_us,
+                        const char* success_event) {
+    TransportPacketView view;
+    view.bytes = rtcp_bytes.data();
+    view.size = rtcp_bytes.size();
+    view.metadata.ids = ids;
+    view.metadata.kind = TransportPacketKind::kRtcp;
+    view.metadata.send_time_us = now_us;
+    Status status = config_.transport_output(view);
+    if (!status) {
+      RecordTransportFailure(ids, now_us);
+      logger_.Error("transport_output_failed", ids, status);
+      if (alert_writer_.config().alert_on_transport_failure) {
+        alert_writer_.Error("transport_output_failed", "availability", ids,
+                            now_us, status);
+      }
+      return status;
+    }
+    RecordTransportSuccess();
+    if (success_event != nullptr) {
+      logger_.Info(success_event, ids);
+    }
+    return Status::Ok();
+  }
+
+  void RecordTwccPacket(uint16_t transport_sequence_number,
+                        uint32_t media_ssrc,
+                        int64_t receive_time_us) {
+    if (!twcc_base_sequence_.has_value()) {
+      twcc_base_sequence_ = transport_sequence_number;
+      twcc_base_time_us_ = receive_time_us;
+      twcc_media_ssrc_ = media_ssrc;
+    }
+    RtcpAdapterTransportFeedbackPacket packet;
+    packet.sequence_number = transport_sequence_number;
+    packet.delta_since_base_us =
+        std::max<int64_t>(0, receive_time_us - twcc_base_time_us_);
+    pending_twcc_packets_.push_back(packet);
+  }
+
+  Status MaybeSendTransportFeedback(int64_t now_us) {
+    if (pending_twcc_packets_.empty() || !twcc_base_sequence_.has_value()) {
+      return Status::Ok();
+    }
+    const int64_t interval_us =
+        static_cast<int64_t>(config_.session.twcc.feedback_interval_ms) * 1000;
+    if (last_twcc_send_time_us_ >= 0 &&
+        now_us - last_twcc_send_time_us_ < interval_us &&
+        pending_twcc_packets_.size() < kMaxTwccFeedbackPackets) {
+      return Status::Ok();
+    }
+
+    RtcpAdapterTransportFeedback feedback;
+    feedback.sender_ssrc = ResolveReceiverFeedbackSsrc(config_.session);
+    feedback.media_ssrc = twcc_media_ssrc_;
+    feedback.base_sequence = *twcc_base_sequence_;
+    feedback.base_time_us = twcc_base_time_us_;
+    feedback.feedback_sequence = next_twcc_feedback_sequence_++;
+    feedback.packets = pending_twcc_packets_;
+
+    std::vector<uint8_t> rtcp_bytes;
+    if (!BuildRtcpTransportFeedback(feedback, &rtcp_bytes)) {
+      Status status = Status::Error(StatusCode::kInternalError,
+                                    "failed to build play TWCC feedback");
+      logger_.Error("rtcp_build_failed", config_.session.ids, status);
+      return status;
+    }
+
+    TransportIds ids = config_.session.ids;
+    ids.sender_ssrc = feedback.media_ssrc;
+    Status status = EmitRtcpPacket(rtcp_bytes, ids, now_us, "twcc_generated");
+    if (!status) {
+      return status;
+    }
+    pending_twcc_packets_.clear();
+    twcc_base_sequence_.reset();
+    twcc_base_time_us_ = 0;
+    last_twcc_send_time_us_ = now_us;
+    ++snapshot_.transport_feedback_count;
+    return Status::Ok();
+  }
+
+  void RecordSenderReport(const RtcpAdapterSenderReport& sender_report,
+                          int64_t receive_time_us) {
+    sender_report_states_[sender_report.sender_ssrc] = SenderReportState{
+        ((sender_report.ntp_seconds & 0x0000ffffu) << 16) |
+            (sender_report.ntp_fractions >> 16),
+        receive_time_us};
+  }
+
+  Status MaybeSendReceiverReport(int64_t now_us) {
+    if (sender_report_states_.empty()) {
+      return Status::Ok();
+    }
+    const int64_t interval_us =
+        static_cast<int64_t>(config_.session.rtcp.sr_rr_interval_ms) * 1000;
+    if (last_rr_send_time_us_ >= 0 &&
+        now_us - last_rr_send_time_us_ < interval_us) {
+      return Status::Ok();
+    }
+
+    RtcpAdapterReceiverReport rr;
+    rr.sender_ssrc = ResolveReceiverFeedbackSsrc(config_.session);
+    for (const auto& item : sender_report_states_) {
+      RtcpAdapterReportBlock block;
+      block.media_ssrc = item.first;
+      block.last_sr = item.second.last_sr_lsr;
+      const int64_t delay_us =
+          std::max<int64_t>(0, now_us - item.second.receive_time_us);
+      block.delay_since_last_sr =
+          static_cast<uint32_t>((static_cast<uint64_t>(delay_us) * 65536) /
+                                1000000);
+      rr.report_blocks.push_back(block);
+    }
+
+    std::vector<uint8_t> rtcp_bytes;
+    if (!BuildRtcpReceiverReport(rr, &rtcp_bytes)) {
+      Status status = Status::Error(StatusCode::kInternalError,
+                                    "failed to build play RTCP RR");
+      logger_.Error("rtcp_build_failed", config_.session.ids, status);
+      return status;
+    }
+
+    Status status =
+        EmitRtcpPacket(rtcp_bytes, config_.session.ids, now_us, "rr_generated");
+    if (!status) {
+      return status;
+    }
+    last_rr_send_time_us_ = now_us;
+    ++snapshot_.receiver_report_count;
     return Status::Ok();
   }
 
@@ -601,8 +760,16 @@ class WebRtcVideoPlayClient final : public VideoPlayClient {
   uint32_t primary_track_id_ = 0;
   std::unordered_map<uint32_t, TrackState> track_states_;
   std::unordered_map<uint32_t, uint32_t> sender_ssrc_to_track_id_;
+  std::unordered_map<uint32_t, SenderReportState> sender_report_states_;
   QosSnapshot snapshot_;
+  std::vector<RtcpAdapterTransportFeedbackPacket> pending_twcc_packets_;
+  std::optional<uint16_t> twcc_base_sequence_;
+  int64_t twcc_base_time_us_ = 0;
+  uint32_t twcc_media_ssrc_ = 0;
   bool started_ = false;
+  uint8_t next_twcc_feedback_sequence_ = 1;
+  int64_t last_twcc_send_time_us_ = -1;
+  int64_t last_rr_send_time_us_ = -1;
   int64_t last_process_tick_time_us_ = -1;
   int64_t last_rtp_input_time_us_ = -1;
 };

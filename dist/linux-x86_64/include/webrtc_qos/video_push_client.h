@@ -7,6 +7,9 @@
 
 #include "webrtc_qos/qos_metrics.h"
 #include "webrtc_qos/rate_cap.h"
+#include "webrtc_qos/runtime_alerts.h"
+#include "webrtc_qos/runtime_logging.h"
+#include "webrtc_qos/runtime_metrics.h"
 #include "webrtc_qos/session_config.h"
 #include "webrtc_qos/status.h"
 #include "webrtc_qos/transport_io.h"
@@ -16,6 +19,9 @@ namespace webrtc_qos {
 struct VideoPushClientConfig {
   SessionConfig session;
   TransportOutput transport_output;
+  RuntimeLogConfig logging;
+  RuntimeMetricsConfig metrics;
+  RuntimeAlertConfig alerts;
 };
 
 class VideoPushClient {
