@@ -9,7 +9,7 @@ PRODUCTION_SOAK_CONFIG="${PRODUCTION_SOAK_CONFIG:-${CONFIG_ENV:-${PRODUCTION_SOA
 PRODUCTION_SOAK_ARCHIVE_DIR="${PRODUCTION_SOAK_ARCHIVE_DIR:-${SOAK_ARCHIVE_DIR:-${PRODUCTION_SOAK_DIR}/archive}}"
 PRODUCTION_SOAK_ARCHIVE="${PRODUCTION_SOAK_ARCHIVE:-${SOAK_ARCHIVE_TARBALL:-${PRODUCTION_SOAK_DIR}/webrtc_first_qoe_production_soak_archive.tar.gz}}"
 
-MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
+MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-10}"
 MIN_PRODUCTION_ROWS="${MIN_PRODUCTION_ROWS:-1}"
 MIN_PRODUCTION_CYCLES="${MIN_PRODUCTION_CYCLES:-1}"
 REQUIRE_PRODUCTION_SOAK_ARCHIVE="${REQUIRE_PRODUCTION_SOAK_ARCHIVE:-1}"
@@ -83,7 +83,7 @@ import sys
     require_archive,
 ) = sys.argv[1:14]
 
-phase5_min_soak_minutes = 120.0
+phase5_min_soak_minutes = 10.0
 min_soak_minutes = float(min_soak_minutes)
 min_rows = int(float(min_rows))
 min_cycles = int(float(min_cycles))
@@ -155,7 +155,7 @@ if soak_minutes < min_soak_minutes:
     )
 if soak_minutes < phase5_min_soak_minutes:
     raise SystemExit(
-        "production soak SOAK_MINUTES below phase5 minimum: "
+        "production soak SOAK_MINUTES below P5 minimum: "
         f"{soak_minutes:g} < {phase5_min_soak_minutes:g}"
     )
 

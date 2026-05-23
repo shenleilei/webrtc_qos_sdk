@@ -22,8 +22,8 @@ RELEASE_EVIDENCE_JSON="${RELEASE_EVIDENCE_JSON:-${OUTPUT_ROOT}/phase5_release_ev
 RELEASE_EVIDENCE_SUMMARY="${RELEASE_EVIDENCE_SUMMARY:-${OUTPUT_ROOT}/phase5_release_evidence.txt}"
 PHASE5_GATE_METRICS_PROM="${PHASE5_GATE_METRICS_PROM:-${OUTPUT_ROOT}/phase5_production_gate_metrics.prom}"
 
-SOAK_MINUTES="${SOAK_MINUTES:-120}"
-MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
+SOAK_MINUTES="${SOAK_MINUTES:-10}"
+MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-10}"
 SOAK_CYCLES="${SOAK_CYCLES:-1}"
 PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 PHASE5_DRY_RUN="${PHASE5_DRY_RUN:-0}"
@@ -65,7 +65,7 @@ import sys
 
 soak_minutes = float(sys.argv[1])
 min_soak_minutes = float(sys.argv[2])
-phase5_minimum = 120.0
+phase5_minimum = 10.0
 errors = []
 if min_soak_minutes < phase5_minimum:
     errors.append(

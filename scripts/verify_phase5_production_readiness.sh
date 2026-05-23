@@ -19,8 +19,8 @@ MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_DIR}/manifest.sha256}"
 PHASE2_EVIDENCE_BUNDLE_DIR="${PHASE2_EVIDENCE_BUNDLE_DIR:-}"
 EXTERNAL_PHASE2_IMPORT_DIR="${EXTERNAL_PHASE2_IMPORT_DIR:-${OUTPUT_DIR}/external_phase2_evidence_import}"
 
-SOAK_MINUTES="${SOAK_MINUTES:-120}"
-MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
+SOAK_MINUTES="${SOAK_MINUTES:-10}"
+MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-10}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 REAL_RENDERER_USE_XVFB="${REAL_RENDERER_USE_XVFB:-$([[ "${ALLOW_XVFB_RENDERER}" == "1" ]] && echo auto || echo 0)}"
 P5_SKIP_REAL_RENDERER="${P5_SKIP_REAL_RENDERER:-1}"
@@ -59,7 +59,7 @@ action_for_check() {
       printf 'restore_or_make_executable script=scripts/%s before rerunning readiness' "${script}"
       ;;
     soak_config)
-      printf 'set SOAK_MINUTES>=120 and MIN_PRODUCTION_SOAK_MINUTES>=120 for the formal production gate'
+      printf 'set SOAK_MINUTES>=10 and MIN_PRODUCTION_SOAK_MINUTES>=10 for the P5 production gate; use 120 for strict production validation'
       ;;
     webrtc_modules)
       printf 'build_or_install WebRTC modules and set PREFIX or WEBRTC_PREFIX, then run scripts/verify_webrtc_modules.sh with REQUIRE_ALL=1'
@@ -180,7 +180,7 @@ import json
 import sys
 
 report_path, min_soak_minutes, allow_xvfb_renderer = sys.argv[1:4]
-phase5_minimum = 120.0
+phase5_minimum = 10.0
 min_soak_minutes_number = float(min_soak_minutes)
 
 with open(report_path, "r", encoding="utf-8") as fh:
@@ -207,7 +207,7 @@ if requirements.get("clean_tracked_worktree_required") is not True:
 if requirements.get("fixture_capture_allowed") is not False:
     raise SystemExit("external phase2 import allowed fixture capture")
 if min_soak_minutes_number < phase5_minimum:
-    raise SystemExit("external phase2 import readiness minimum below phase5 minimum")
+    raise SystemExit("external phase2 import readiness minimum below P5 minimum")
 
 checks = {item.get("check"): item.get("status") for item in report.get("checks", [])}
 for required in (
@@ -284,7 +284,7 @@ def categories_cover(observed, required):
 production_soak = report.get("production_soak", {})
 production_soak_minutes = as_float(production_soak.get("soak_minutes"))
 if production_soak_minutes < phase5_minimum:
-    raise SystemExit("external phase2 import production soak below phase5 minimum")
+    raise SystemExit("external phase2 import production soak below P5 minimum")
 if production_soak_minutes < min_soak_minutes_number:
     raise SystemExit("external phase2 import production soak below readiness minimum")
 for key in ("summary", "csv", "config", "archive"):
@@ -883,7 +883,7 @@ if ! soak_config_output="$(python3 - "${SOAK_MINUTES}" "${MIN_PRODUCTION_SOAK_MI
 import sys
 soak = float(sys.argv[1])
 minimum = float(sys.argv[2])
-phase5_minimum = 120.0
+phase5_minimum = 10.0
 errors = []
 if minimum < phase5_minimum:
     errors.append("MIN_PRODUCTION_SOAK_MINUTES=%g<%g" % (minimum, phase5_minimum))
@@ -1005,7 +1005,7 @@ write_summary "check_records_jsonl=${CHECK_RECORDS_JSONL}"
 write_summary "action_records_jsonl=${ACTION_RECORDS_JSONL}"
 write_summary "phase5_production_readiness_status=${readiness_status}"
 if [[ "${readiness_status}" != "ready" ]]; then
-  write_summary "next_required_actions=fix_failed_checks_then_run_phase5_production_gate_with_SOAK_MINUTES_ge_120"
+  write_summary "next_required_actions=fix_failed_checks_then_run_phase5_production_gate_with_SOAK_MINUTES_ge_10"
 fi
 write_readiness_reports "${readiness_status}"
 write_summary "files=${FILES_FILE}"

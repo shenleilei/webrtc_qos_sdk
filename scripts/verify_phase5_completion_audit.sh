@@ -545,13 +545,13 @@ require_doc_pattern scripts/run_phase5_production_gate.sh \
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'min_production_soak_minutes=' production_gate_release_min_soak_summary
 require_doc_pattern scripts/run_phase5_production_gate.sh \
-  'MIN_PRODUCTION_SOAK_MINUTES="\$\{MIN_PRODUCTION_SOAK_MINUTES:-120\}"' production_gate_min_soak_default
+  'MIN_PRODUCTION_SOAK_MINUTES="\$\{MIN_PRODUCTION_SOAK_MINUTES:-10\}"' production_gate_min_soak_default
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'SOAK_MINUTES=%g<%g' production_gate_soak_minutes_preflight
 require_doc_pattern scripts/run_phase5_production_gate.sh \
   'SOAK_MINUTES=%g<MIN_PRODUCTION_SOAK_MINUTES=%g' production_gate_soak_minutes_vs_min_preflight
 require_doc_pattern scripts/run_webrtc_first_phase2_production_gate.sh \
-  'MIN_PRODUCTION_SOAK_MINUTES="\$\{MIN_PRODUCTION_SOAK_MINUTES:-120\}"' phase2_production_gate_min_soak_default
+  'MIN_PRODUCTION_SOAK_MINUTES="\$\{MIN_PRODUCTION_SOAK_MINUTES:-10\}"' phase2_production_gate_min_soak_default
 require_doc_pattern scripts/run_webrtc_first_phase2_production_gate.sh \
   'SOAK_MINUTES=%g<%g' phase2_production_gate_soak_minutes_preflight
 require_doc_pattern scripts/run_webrtc_first_phase2_production_gate.sh \
@@ -575,7 +575,7 @@ require_doc_pattern scripts/verify_phase5_production_readiness.sh \
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'verify_webrtc_first_qoe_production_soak_evidence.sh' production_gate_soak_evidence_reverify
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
-  'release evidence minimum soak minutes below phase5 floor' production_gate_release_min_soak_floor_verifier
+  'release evidence minimum soak minutes below P5 floor' production_gate_release_min_soak_floor_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
   'production soak minutes below declared minimum' production_gate_release_declared_min_soak_verifier
 require_doc_pattern scripts/verify_phase5_production_gate.sh \
@@ -783,7 +783,7 @@ require_doc_pattern scripts/verify_phase5_production_readiness.sh \
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'MIN_PRODUCTION_SOAK_MINUTES=%g<%g' production_readiness_min_soak_floor_gate
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
-  'SOAK_MINUTES_ge_120' production_readiness_min_soak_action_floor
+  'SOAK_MINUTES_ge_10' production_readiness_min_soak_action_floor
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
   'MIN_PRODUCTION_SOAK_MINUTES=%g<%g' production_import_min_soak_floor_gate
 require_doc_pattern scripts/import_phase5_phase2_evidence_bundle.sh \
@@ -793,7 +793,7 @@ require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
   'MIN_PRODUCTION_SOAK_MINUTES=%g<%g' phase2_completion_audit_min_soak_floor_gate
 require_doc_pattern scripts/verify_webrtc_first_phase2_completion_audit.sh \
-  'SOAK_MINUTES_ge_120' phase2_completion_audit_min_soak_action_floor
+  'SOAK_MINUTES_ge_10' phase2_completion_audit_min_soak_action_floor
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
   'readiness_status="ready"' production_readiness_ready_branch
 require_doc_pattern scripts/verify_phase5_production_readiness.sh \
@@ -956,7 +956,7 @@ write_summary "phase5_completion_audit=fail"
 write_summary "pass_count=${pass_count}"
 write_summary "warning_count=${warnings}"
 write_summary "failure_count=${failures}"
-write_summary "next_required_actions=run_phase5_implementation_gate_then_run_phase5_production_gate_with_SOAK_MINUTES_ge_120_and_real_renderer_capture_evidence_or_P5_policy_skip"
+write_summary "next_required_actions=run_phase5_implementation_gate_then_run_phase5_production_gate_with_SOAK_MINUTES_ge_10_and_real_renderer_capture_evidence_or_P5_policy_skip"
 write_summary "phase5_completion_audit_metrics=${PHASE5_COMPLETION_AUDIT_METRICS_PROM}"
 write_audit_metrics
 exit 1

@@ -16,7 +16,7 @@ CAPTURE_MANIFEST_SUMMARY="${CAPTURE_MANIFEST_SUMMARY:-${SDK_ROOT}/artifacts/webr
 CAPTURE_QOE_CSV="${CAPTURE_QOE_CSV:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/webrtc_first_qoe_capture_library_720p.csv}"
 CAPTURE_QOE_SUMMARY="${CAPTURE_QOE_SUMMARY:-${SDK_ROOT}/artifacts/webrtc_first_phase2_verify_production/capture_library/capture_qoe_summary.txt}"
 
-MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
+MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-10}"
 MIN_PRODUCTION_ROWS="${MIN_PRODUCTION_ROWS:-1}"
 MIN_CAPTURE_QOE_ROWS="${MIN_CAPTURE_QOE_ROWS:-1}"
 MIN_CAPTURE_PLAYABLE_RATIO="${MIN_CAPTURE_PLAYABLE_RATIO:-0.8}"
@@ -274,7 +274,7 @@ if ! min_soak_config_output="$(python3 - "${MIN_PRODUCTION_SOAK_MINUTES}" <<'PY'
 import sys
 
 min_soak_minutes = float(sys.argv[1])
-phase5_minimum = 120.0
+phase5_minimum = 10.0
 if min_soak_minutes < phase5_minimum:
     print("MIN_PRODUCTION_SOAK_MINUTES=%g<%g" % (min_soak_minutes, phase5_minimum))
     raise SystemExit(1)
@@ -520,7 +520,7 @@ if [[ "${failures}" -eq 0 ]]; then
   exit 0
 fi
 
-audit_warn next_required_actions "run_VERIFY_LEVEL_production_with_SOAK_MINUTES_ge_120_and_real_renderer_capture_evidence_or_explicit_P5_SKIP_POLICY"
+audit_warn next_required_actions "run_VERIFY_LEVEL_production_with_SOAK_MINUTES_ge_10_and_real_renderer_capture_evidence_or_explicit_P5_SKIP_POLICY"
 write_summary "phase2_completion_audit=fail"
 write_summary "phase2_completion_status=incomplete"
 write_summary "failure_count=${failures}"

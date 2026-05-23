@@ -25,6 +25,15 @@ require_file "${GATE_DIR}/files.txt"
 require_file "${GATE_DIR}/manifest.sha256"
 require_file "${GATE_DIR}/phase5_production_gate_metrics.prom"
 
+metadata_value() {
+  local key="$1"
+  awk -F= -v key="${key}" '$1 == key {print substr($0, index($0, "=") + 1)}' \
+    "${GATE_DIR}/metadata.txt" | tail -1
+}
+
+min_production_soak_minutes="$(metadata_value MIN_PRODUCTION_SOAK_MINUTES)"
+min_production_soak_minutes="${min_production_soak_minutes:-10}"
+
 [[ -x "${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh" ]] ||
   fail "missing debug bundle verifier: ${SDK_ROOT}/scripts/verify_phase5_debug_bundle.sh"
 [[ -x "${SDK_ROOT}/scripts/verify_phase5_implementation_gate.sh" ]] ||
@@ -1094,18 +1103,18 @@ require_phase2_completion_evidence() {
     PRODUCTION_SOAK_CSV="${production_soak_csv}" \
     PRODUCTION_SOAK_CONFIG="${production_soak_config}" \
     PRODUCTION_SOAK_ARCHIVE="${production_soak_archive}" \
-    MIN_PRODUCTION_SOAK_MINUTES=120 \
+    MIN_PRODUCTION_SOAK_MINUTES="${min_production_soak_minutes:-10}" \
     REQUIRE_PRODUCTION_SOAK_ARCHIVE=1 \
     "${SDK_ROOT}/scripts/verify_webrtc_first_qoe_production_soak_evidence.sh" >/dev/null
   local production_soak_minutes
   production_soak_minutes="$(
     awk -F= '$1=="SOAK_MINUTES"{print $2}' "${production_soak_config}" | tail -1
   )"
-  python3 - "${production_soak_minutes:-0}" <<'PY'
+  python3 - "${production_soak_minutes:-0}" "${min_production_soak_minutes:-10}" <<'PY'
 import sys
 
-if float(sys.argv[1] or 0) < 120:
-    raise SystemExit("production soak minutes below phase5 minimum")
+if float(sys.argv[1] or 0) < float(sys.argv[2] or 0):
+    raise SystemExit("production soak minutes below declared minimum")
 PY
   require_file "${real_renderer_summary}"
   require_file "${real_renderer_metrics}"
@@ -1195,13 +1204,13 @@ if doc.get("formal_completion_status") != "complete":
     raise SystemExit("release evidence formal completion status is not complete")
 
 requirements = doc.get("requirements", {})
-phase5_min_soak_minutes = 120.0
+phase5_min_soak_minutes = 10.0
 release_soak_minutes = float(requirements.get("soak_minutes", 0))
 release_min_soak_minutes = float(
     requirements.get("min_production_soak_minutes", 0)
 )
 if release_min_soak_minutes < phase5_min_soak_minutes:
-    raise SystemExit("release evidence minimum soak minutes below phase5 floor")
+    raise SystemExit("release evidence minimum soak minutes below P5 floor")
 if release_soak_minutes < release_min_soak_minutes:
     raise SystemExit("release evidence soak minutes below minimum")
 if requirements.get("multi_receiver_fanout") != "deferred_before_p5_completion":

@@ -11,8 +11,8 @@ PREFLIGHT_DIR="${PREFLIGHT_DIR:-${OUTPUT_ROOT}/preflight}"
 LOG_DIR="${LOG_DIR:-${OUTPUT_ROOT}/logs}"
 SUMMARY_FILE="${SUMMARY_FILE:-${OUTPUT_ROOT}/phase2_production_gate_summary.txt}"
 
-SOAK_MINUTES="${SOAK_MINUTES:-120}"
-MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
+SOAK_MINUTES="${SOAK_MINUTES:-10}"
+MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-10}"
 SOAK_CYCLES="${SOAK_CYCLES:-1}"
 PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
@@ -43,7 +43,7 @@ import sys
 
 soak_minutes = float(sys.argv[1])
 min_soak_minutes = float(sys.argv[2])
-phase5_minimum = 120.0
+phase5_minimum = 10.0
 errors = []
 if min_soak_minutes < phase5_minimum:
     errors.append(

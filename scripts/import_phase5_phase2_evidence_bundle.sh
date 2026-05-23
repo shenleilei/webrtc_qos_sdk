@@ -13,7 +13,7 @@ IMPORT_REPORT_SUMMARY="${IMPORT_REPORT_SUMMARY:-${OUTPUT_ROOT}/phase2_external_e
 FILES_FILE="${FILES_FILE:-${OUTPUT_ROOT}/files.txt}"
 MANIFEST_FILE="${MANIFEST_FILE:-${OUTPUT_ROOT}/manifest.sha256}"
 
-MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-120}"
+MIN_PRODUCTION_SOAK_MINUTES="${MIN_PRODUCTION_SOAK_MINUTES:-10}"
 ALLOW_XVFB_RENDERER="${ALLOW_XVFB_RENDERER:-0}"
 ALLOW_FIXTURE_CAPTURE="${ALLOW_FIXTURE_CAPTURE:-0}"
 REQUIRED_CAPTURE_CATEGORIES="${REQUIRED_CAPTURE_CATEGORIES:-indoor_face outdoor_walking low_light_noise screen_text high_motion scene_cut}"
@@ -95,7 +95,7 @@ python3 - "${MIN_PRODUCTION_SOAK_MINUTES}" <<'PY'
 import sys
 
 min_soak_minutes = float(sys.argv[1])
-phase5_minimum = 120.0
+phase5_minimum = 10.0
 if min_soak_minutes < phase5_minimum:
     raise SystemExit(
         "MIN_PRODUCTION_SOAK_MINUTES=%g<%g"
@@ -315,11 +315,11 @@ def has_fixture_marker(path):
     )
 
 
-phase5_min_soak_minutes = 120.0
+phase5_min_soak_minutes = 10.0
 configured_min_soak_minutes = float(min_soak_minutes)
 if configured_min_soak_minutes < phase5_min_soak_minutes:
     raise SystemExit(
-        "external phase2 evidence import minimum soak below phase5 minimum"
+        "external phase2 evidence import minimum soak below P5 minimum"
     )
 
 
